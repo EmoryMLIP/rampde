@@ -65,7 +65,7 @@ class FixedGridODESolver(torch.autograd.Function):
         dtype_low = torch.get_autocast_dtype('cuda')
         dtype_t = t.dtype
 
-        print(f"yt: {yt.dtype}, at: {at.dtype}, t: {t.dtype}, dtype_hi: {dtype_hi}, dtype_low: {dtype_low}, dtype_t: {dtype_t}")
+        # print(f"yt: {yt.dtype}, at: {at.dtype}, t: {t.dtype}, dtype_hi: {dtype_hi}, dtype_low: {dtype_low}, dtype_t: {dtype_t}")
         
         N = t.shape[0]
         a = at[-1].to(dtype_hi)
@@ -75,8 +75,6 @@ class FixedGridODESolver(torch.autograd.Function):
         grad_t = None if not t.requires_grad else torch.zeros_like(t)
         
         with autocast(device_type='cuda', enabled=False):
-            # copy named parameters in func
-            # func = copy.deepcopy(func)
             old_params = dict(func.named_parameters())
             for name, param in func.named_parameters():
                 param.data = param.data.to(dtype_low)
@@ -109,5 +107,4 @@ class FixedGridODESolver(torch.autograd.Function):
                 param.data = old_params[name].data
             
         grad_t = grad_t.to(dtype_t) if grad_t is not None else None
-        print(a.dtype)
         return (None, None, a, grad_t,  *grad_theta)

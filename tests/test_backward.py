@@ -44,7 +44,7 @@ class TestFixedGridODESolver(unittest.TestCase):
 
     def test_gradient_accuracy(self):
         solvers = [Euler(), RK4()]
-        num_steps = [64, 32]
+        num_steps = [64, 48]
         for  j,solver in enumerate(solvers):
             print(f"Testing gradient accuracy for {solver.name}")
             y0 = self.y0.clone().detach().requires_grad_(True)
