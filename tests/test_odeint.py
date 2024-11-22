@@ -6,6 +6,7 @@ import os
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
 from torchmpnode import odeint
 from torchmpnode import Euler, RK4, FixedGridODESolver
+from torch.amp import autocast
 
 class TestFixedGridODESolver(unittest.TestCase):
 
@@ -50,7 +51,8 @@ class TestFixedGridODESolver(unittest.TestCase):
                 for _ in range(10):
                     self.num_steps = num_steps
                     self.t = torch.linspace(0, self.T, self.num_steps + 1, dtype=self.dtype, device=self.device)
-                    yt = odeint(self.func, self.y0, self.t, method=solver.name, dtype_hi=self.dtype)
+                    with autocast(device_type='cpu',dtype= self.dtype):
+                        yt = odeint(self.func, self.y0, self.t, method=solver.name)
                     error = torch.norm(yt[-1] - y_analytical, dim=-1).max().item()
                     if previous_error is not None:
                         observed_order = np.log2(previous_error / error)

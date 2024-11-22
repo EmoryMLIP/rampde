@@ -7,11 +7,12 @@ import os
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
 from torchmpnode import odeint
 from torchmpnode import Euler, RK4, FixedGridODESolver
+from torch.amp import autocast
 
 class TestFixedGridODESolver(unittest.TestCase):
 
     def setUp(self):
-        self.dtype = torch.float64
+        self.dtype = torch.float32
         self.device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
         self.A = torch.randn(2, 2, dtype=self.dtype, device=self.device)
         self.A = - self.A @ self.A.T 
@@ -22,7 +23,8 @@ class TestFixedGridODESolver(unittest.TestCase):
                 self.linear.weight = torch.nn.Parameter(A)
 
             def forward(self, t, y):
-                return self.linear(y)
+                z =  self.linear(y)
+                return z
 
         self.func = FuncModule(self.A)
         self.y0 = torch.tensor([1.0, 0.0], dtype=self.dtype, device=self.device)
@@ -47,13 +49,14 @@ class TestFixedGridODESolver(unittest.TestCase):
             y0 = self.y0.clone().detach().requires_grad_(True)
             A = self.A.clone().detach().requires_grad_(True)
             self.num_steps = 64
-            t = torch.linspace(0, self.T, self.num_steps + 1, dtype=self.dtype, device=self.device,requires_grad=True)
-            yt = odeint(self.func, y0, t, method=solver.name, dtype_hi=self.dtype)
-            loss = torch.sum(yt)
-            loss.backward()        
-            dy0 = y0.grad.clone().detach()
-            dA = self.func.linear.weight.grad.clone().detach()
-            gt = t.grad.clone().detach()
+            t = torch.linspace(0, self.T, self.num_steps + 1, dtype=self.dtype, device=self.device,requires_grad=False)
+            with autocast(device_type='cpu',dtype=torch.bfloat16):
+                yt = odeint(self.func, y0, t, method=solver.name)
+                loss = torch.sum(yt)
+                loss.backward()        
+                dy0 = y0.grad.clone().detach()
+                dA = self.func.linear.weight.grad.clone().detach()
+                gt = t.grad.clone().detach()
 
             vy0 =torch.randn_like(y0)
             dt = self.T/self.num_steps
@@ -75,14 +78,15 @@ class TestFixedGridODESolver(unittest.TestCase):
                 t_p = t + h * vt
                 # set weights in self.func.linear.wright to A_p
                 self.func.linear.weight = torch.nn.Parameter(A_p)
-                yt_p = odeint(self.func, y0_p, t_p, method=solver.name, dtype_hi=self.dtype)
-                loss_p = torch.sum(yt_p)
+                with autocast(device_type='cpu',dtype=torch.bfloat16):
+                    yt_p = odeint(self.func, y0_p, t_p, method=solver.name)
+                    loss_p = torch.sum(yt_p)
 
-                E0 = torch.norm(loss_p - loss).item()
-                E1 = torch.norm(loss_p - loss - grad * h).item()
+                E0 = torch.norm(loss_p.to(torch.float64) - loss.to(torch.float64)).item()
+                E1 = torch.norm(loss_p.to(torch.float64)  - loss.to(torch.float64)  - grad.to(torch.float64)  * h).item()
                 
                 if previous_E0 is not None:
-                    observed_order_E0 = np.log2(previous_E0 / E0)
+                    observed_order_E0 = 0.0 if E0==0 else np.log2(previous_E0 / E0)
                     observed_order_E1 = 0 if E1==0 else np.log2(previous_E1 / E1)
                     if observed_order_E0 > 0.8:
                         pass_count_E0 += 1
