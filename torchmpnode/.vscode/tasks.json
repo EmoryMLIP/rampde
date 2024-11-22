@@ -1,0 +1,14 @@
+{
+    "version": "2.0.0",
+    "tasks": [
+        {
+            "label": "Start Debug Server",
+            "type": "shell",
+            "command": "python -m debugpy --listen 0.0.0.0:5678 --wait-for-client ${file}",
+            "problemMatcher": [],
+            "options": {
+                "cwd": "${workspaceFolder}"
+            }
+        }
+    ]
+}

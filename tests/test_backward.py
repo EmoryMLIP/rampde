@@ -44,13 +44,14 @@ class TestFixedGridODESolver(unittest.TestCase):
 
     def test_gradient_accuracy(self):
         solvers = [Euler(), RK4()]
-        for solver in solvers:
+        num_steps = [64, 32]
+        for  j,solver in enumerate(solvers):
             print(f"Testing gradient accuracy for {solver.name}")
             y0 = self.y0.clone().detach().requires_grad_(True)
             A = self.A.clone().detach().requires_grad_(True)
-            self.num_steps = 64
-            t = torch.linspace(0, self.T, self.num_steps + 1, dtype=self.dtype, device=self.device,requires_grad=False)
-            with autocast(device_type='cpu',dtype=torch.bfloat16):
+            self.num_steps = num_steps[j]
+            t = torch.linspace(0, self.T, self.num_steps + 1, dtype=self.dtype, device=self.device,requires_grad=True)
+            with autocast(device_type='cuda',dtype=torch.float16):
                 yt = odeint(self.func, y0, t, method=solver.name)
                 loss = torch.sum(yt)
                 loss.backward()        
@@ -78,7 +79,7 @@ class TestFixedGridODESolver(unittest.TestCase):
                 t_p = t + h * vt
                 # set weights in self.func.linear.wright to A_p
                 self.func.linear.weight = torch.nn.Parameter(A_p)
-                with autocast(device_type='cpu',dtype=torch.bfloat16):
+                with autocast(device_type='cuda',dtype=torch.float16):
                     yt_p = odeint(self.func, y0_p, t_p, method=solver.name)
                     loss_p = torch.sum(yt_p)
 

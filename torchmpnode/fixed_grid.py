@@ -6,8 +6,9 @@ class Euler(torch.nn.Module):
     name = 'euler'
 
     def forward(self, func, y, t, dt):
-        dy = dt * func(t, y)
-        return dy
+        dy =  func(t, y)
+        with autocast(device_type='cuda', enabled=False):
+            return dt * dy
 
 _one_sixth= 1/6
 class RK4(torch.nn.Module):
@@ -20,27 +21,27 @@ class RK4(torch.nn.Module):
         k2 = func(t + half_dt, y + k1*half_dt)
         k3 = func(t + half_dt, y + k2*half_dt)
         k4 = func(t + dt, y + k3*dt)
-        return (k1 + 2*(k2 + k3) + k4) * (dt * _one_sixth)
+        with autocast(device_type='cuda', enabled=False):
+            return (k1 + 2*(k2 + k3) + k4) * (dt * _one_sixth)
 
 class FixedGridODESolver(torch.autograd.Function):
 
     @staticmethod
-    @custom_fwd(device_type='cpu')
+    @custom_fwd(device_type='cuda')
     def forward(ctx, step, func, y0, t, *params):
-        dtype_low = torch.get_autocast_dtype('cpu')
+        dtype_low = torch.get_autocast_dtype('cuda')
         dtype_hi = y0.dtype
         N = t.shape[0]
         y = y0
         yt = torch.zeros(N, *y.shape, dtype=dtype_low, device=y.device)
         yt[0] = y0.to(dtype_low)
         # print(f"yt: {yt.dtype}, y0: {y0.dtype}, t: {t.dtype}, dtype_hi: {dtype_hi}, dtype_low: {dtype_low}")
-        
         with torch.no_grad():
             for i in range(N - 1):
                 dt = t[i + 1] - t[i]
-                with autocast(device_type='cpu', dtype=dtype_low):
+                with autocast(device_type='cuda', dtype=dtype_low):
                     dy = step(func, y, t[i], dt)
-                with autocast(device_type='cpu', enabled=False):
+                with autocast(device_type='cuda', enabled=False):
                     y = y + dy
                 yt[i + 1] = y.to(dtype_low)
                 
@@ -54,50 +55,58 @@ class FixedGridODESolver(torch.autograd.Function):
         return yt
     
     @staticmethod
-    @custom_bwd(device_type='cpu')
+    @custom_bwd(device_type='cuda')
     def backward(ctx, at):
         yt, *params = ctx.saved_tensors
         step = ctx.step
         func = ctx.func
         t = ctx.t
         dtype_hi = ctx.dtype_hi
-        dtype_low = torch.get_autocast_dtype('cpu')
+        dtype_low = torch.get_autocast_dtype('cuda')
         dtype_t = t.dtype
 
         print(f"yt: {yt.dtype}, at: {at.dtype}, t: {t.dtype}, dtype_hi: {dtype_hi}, dtype_low: {dtype_low}, dtype_t: {dtype_t}")
         
         N = t.shape[0]
         a = at[-1].to(dtype_hi)
-        params = tuple(params)        
-
+        params = tuple(params) 
+        
         grad_theta = [torch.zeros_like(param) for param in params]
         grad_t = None if not t.requires_grad else torch.zeros_like(t)
         
-        for i in reversed(range(N-1)):
-            with torch.enable_grad():
-                dt = t[i+1] - t[i]
-                y = yt[i].clone().detach().requires_grad_(True).to(dtype_hi)
-                if t.requires_grad:
-                    ti = t[i].clone().detach().requires_grad_(True)
-                    dti = dt.clone().detach().requires_grad_(True)
-                    with autocast(device_type='cpu', dtype=dtype_low):
+        with autocast(device_type='cuda', enabled=False):
+            # copy named parameters in func
+            # func = copy.deepcopy(func)
+            old_params = dict(func.named_parameters())
+            for name, param in func.named_parameters():
+                param.data = param.data.to(dtype_low)
+
+            
+            for i in reversed(range(N-1)):
+                with torch.enable_grad():
+                    dt = t[i+1] - t[i]
+                    y = yt[i].clone().detach().requires_grad_(True)
+                    if t.requires_grad:
+                        ti = t[i].clone().detach().requires_grad_(True)
+                        dti = dt.clone().detach().requires_grad_(True)
                         dy = step(func, y, ti, dti)
                         da, gti, gdti, *dparams = torch.autograd.grad(dy, (y, ti, dti, *params), a,create_graph=True,allow_unused=True)
-                else:
-                    ti = t[i]
-                    dti = dt
-                    with autocast(device_type='cpu', dtype=dtype_low):
+                    else:
+                        ti = t[i]
+                        dti = dt
                         dy = step(func, y, ti, dti)
-                        da,  *dparams = torch.autograd.grad(dy.to(dtype_hi), (y,  *params), a, create_graph=True)
-
-            with autocast(device_type='cpu',enabled=False):
-                a = a + da + at[i]
+                        da, *dparams = torch.autograd.grad(dy, (y, *params), a, create_graph=True)
+                        
+                a = a + da.to(dtype_hi) + at[i].to(dtype_hi)
                 for j, dparam in enumerate(dparams):
-                    grad_theta[j] = grad_theta[j] + dparam.detach()
+                    grad_theta[j] = grad_theta[j] + dparam.to(grad_theta[j].dtype).detach()
                 if  grad_t is not None:
                     gti = gti if gti is not None else torch.zeros_like(t[i])
                     grad_t[i] = grad_t[i] + gti - gdti
                     grad_t[i+1] = grad_t[i+1] + gdti
+            
+            for name, param in func.named_parameters():
+                param.data = old_params[name].data
             
         grad_t = grad_t.to(dtype_t) if grad_t is not None else None
         print(a.dtype)
