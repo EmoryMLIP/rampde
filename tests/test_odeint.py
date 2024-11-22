@@ -11,13 +11,13 @@ class TestFixedGridODESolver(unittest.TestCase):
 
     def setUp(self):
         self.dtype = torch.float64
-        self.device = torch.device('cpu')
+        self.device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
         self.A = torch.randn(2, 2, dtype=self.dtype, device=self.device)
         self.A = - self.A @ self.A.T 
         class FuncModule(torch.nn.Module):
             def __init__(self, A):
                 super(FuncModule, self).__init__()
-                self.linear = torch.nn.Linear(2, 2, bias=False)
+                self.linear = torch.nn.Linear(2, 2, bias=False,device=A.device)
                 self.linear.weight = torch.nn.Parameter(A)
 
             def forward(self, t, y):
