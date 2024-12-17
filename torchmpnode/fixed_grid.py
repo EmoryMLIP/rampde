@@ -21,15 +21,15 @@ class RK4(torch.nn.Module):
         k2 = func(t + half_dt, y + k1*half_dt)
         k3 = func(t + half_dt, y + k2*half_dt)
         k4 = func(t + dt, y + k3*dt)
-        with autocast(device_type='cuda', enabled=False):
-            return (k1 + 2*(k2 + k3) + k4) * (dt * _one_sixth)
+        # with autocast(device_type='cuda', enabled=False):
+        return (k1 + 2*(k2 + k3) + k4) * (dt * _one_sixth)
 
 class FixedGridODESolver(torch.autograd.Function):
 
     @staticmethod
     @custom_fwd(device_type='cuda')
     def forward(ctx, step, func, y0, t, *params):
-        dtype_low = torch.get_autocast_dtype('cuda')
+        dtype_low = torch.get_autocast_dtype('cuda') if torch.is_autocast_enabled() else torch.float32
         dtype_hi = y0.dtype
         N = t.shape[0]
         y = y0
@@ -62,7 +62,7 @@ class FixedGridODESolver(torch.autograd.Function):
         func = ctx.func
         t = ctx.t
         dtype_hi = ctx.dtype_hi
-        dtype_low = torch.get_autocast_dtype('cuda')
+        dtype_low = torch.get_autocast_dtype('cuda') if torch.is_autocast_enabled() else torch.float32
         dtype_t = t.dtype
 
         # print(f"yt: {yt.dtype}, at: {at.dtype}, t: {t.dtype}, dtype_hi: {dtype_hi}, dtype_low: {dtype_low}, dtype_t: {dtype_t}")

@@ -8,7 +8,7 @@
 #SBATCH --output=interactive_gpu_%j.log
 
 # Load necessary modules (e.g., CUDA)
-module load cuda/12.1
+# module load cuda/12.1
 
 # Activate the virtual environment
 source /home/lruthot/scratch/cot-flow/venv/bin/activate
