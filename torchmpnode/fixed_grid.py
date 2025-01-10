@@ -7,8 +7,8 @@ class Euler(torch.nn.Module):
 
     def forward(self, func, y, t, dt):
         dy =  func(t, y)
-        with autocast(device_type='cuda', enabled=False):
-            return dt * dy
+        # with autocast(device_type='cuda', enabled=False):
+        return dt * dy
 
 _one_sixth= 1/6
 class RK4(torch.nn.Module):

@@ -15,8 +15,6 @@ import time
 
 from utils import RunningAverageMeter, RunningMaximumMeter
 
-
-
 parser = argparse.ArgumentParser()
 parser.add_argument('--adjoint', action='store_true')
 parser.add_argument('--viz', action='store_true')

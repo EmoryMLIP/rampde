@@ -34,7 +34,7 @@ if __name__ == '__main__':
     }
     
     data_size = 20
-    m = tuple([256, 256])
+    m = tuple([1024, 1024])
     omega = torch.tensor([0., 1., 0., 1.])
     domain = RegularGrid2D(omega, m, device=device)
     u0 = torch.randn(m).to(device).unsqueeze(0).unsqueeze(0)
@@ -70,7 +70,7 @@ if __name__ == '__main__':
             start_time = time.perf_counter()
             
             with autocast(device_type='cuda', dtype=chosen_precision):
-                for k in range(100):
+                for k in range(1000):
                     pred = op(x)
             
             torch.cuda.synchronize(device)

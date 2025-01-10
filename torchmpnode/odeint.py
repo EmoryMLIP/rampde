@@ -36,6 +36,9 @@ def odeint(func, y0, t, *, method='rk4', atol=None, rtol=None):
     solver = SOLVERS[method]()
     params = func.parameters()
     solution =  FixedGridODESolver.apply(solver,func, y0, t, *params)
-    return _tensor_to_tuple(solution,numels,shapes,(len(t),))
+    if isinstance(y0, tuple):
+        return _tensor_to_tuple(solution,numels,shapes,(len(t),))
+    else:
+        return solution
 
 

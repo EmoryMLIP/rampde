@@ -89,6 +89,11 @@ if __name__ == '__main__':
             for prec_str in precisions:
                 chosen_precision = precision_map[prec_str]
 
+                if odeint != mpodeint and (prec_str == 'bfloat16' or prec_str == 'float16'):
+                    # Skip this combination, as it is not supported
+                    continue
+
+
                 
                 torch.cuda.reset_peak_memory_stats(device)
                 torch.cuda.synchronize(device)
