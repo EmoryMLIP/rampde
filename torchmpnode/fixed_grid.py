@@ -7,8 +7,7 @@ class Euler(torch.nn.Module):
 
     def forward(self, func, y, t, dt):
         dy =  func(t, y)
-        # with autocast(device_type='cuda', enabled=False):
-        return dt * dy
+        return dy
 
 _one_sixth= 1/6
 class RK4(torch.nn.Module):
@@ -22,7 +21,7 @@ class RK4(torch.nn.Module):
         k3 = func(t + half_dt, y + k2*half_dt)
         k4 = func(t + dt, y + k3*dt)
         # with autocast(device_type='cuda', enabled=False):
-        return (k1 + 2*(k2 + k3) + k4) * (dt * _one_sixth)
+        return (k1 + 2*(k2 + k3) + k4)*_one_sixth
 
 class FixedGridODESolver(torch.autograd.Function):
 
@@ -42,7 +41,7 @@ class FixedGridODESolver(torch.autograd.Function):
                 with autocast(device_type='cuda', dtype=dtype_low):
                     dy = step(func, y, t[i], dt)
                 with autocast(device_type='cuda', enabled=False):
-                    y = y + dy
+                    y = y + dt* dy
                 yt[i + 1] = y.to(dtype_low)
                 
         ctx.save_for_backward(yt, *params)
@@ -78,12 +77,14 @@ class FixedGridODESolver(torch.autograd.Function):
             old_params = dict(func.named_parameters())
             for name, param in func.named_parameters():
                 param.data = param.data.to(dtype_low)
+                # print(f"Parameter name: {name}, dtype: {param.dtype}")
 
             
             for i in reversed(range(N-1)):
                 with torch.enable_grad():
                     dt = t[i+1] - t[i]
                     y = yt[i].clone().detach().requires_grad_(True)
+
                     if t.requires_grad:
                         ti = t[i].clone().detach().requires_grad_(True)
                         dti = dt.clone().detach().requires_grad_(True)
@@ -95,13 +96,14 @@ class FixedGridODESolver(torch.autograd.Function):
                         dy = step(func, y, ti, dti)
                         da, *dparams = torch.autograd.grad(dy, (y, *params), a, create_graph=True)
                         
-                a = a + da.to(dtype_hi) + at[i].to(dtype_hi)
+                a = a + dt*(da.to(dtype_hi) + at[i].to(dtype_hi))
                 for j, dparam in enumerate(dparams):
-                    grad_theta[j] = grad_theta[j] + dparam.to(grad_theta[j].dtype).detach()
+                    grad_theta[j] = grad_theta[j] + dt*dparam.to(grad_theta[j].dtype).detach()
                 if  grad_t is not None:
                     gti = gti if gti is not None else torch.zeros_like(t[i])
-                    grad_t[i] = grad_t[i] + gti - gdti
-                    grad_t[i+1] = grad_t[i+1] + gdti
+                    gdti = gdti if gdti is not None else torch.zeros_like(t[i])
+                    grad_t[i] = grad_t[i] + dt*(gti - gdti)
+                    grad_t[i+1] = grad_t[i+1] + dt*gdti
             
             for name, param in func.named_parameters():
                 param.data = old_params[name].data
