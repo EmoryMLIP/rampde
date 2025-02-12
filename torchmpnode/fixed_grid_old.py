@@ -23,38 +23,6 @@ class RK4(torch.nn.Module):
         # with autocast(device_type='cuda', enabled=False):
         return (k1 + 2*(k2 + k3) + k4)*_one_sixth
 
-class DynamicScaler:
-    def __init__(self, dtype_low, target_factor=None, increase_factor=2.0, decrease_factor=0.5,
-                 small_grad_threshold=1.0, max_attempts=10, delta=1e-6):
-        self.dtype_low = dtype_low
-        # Set a target norm if not provided: 1/epsilon for low precision.
-        self.eps = torch.finfo(dtype_low).eps
-        self.target = target_factor if target_factor is not None else 1.0 / self.eps
-        self.increase_factor = increase_factor
-        self.decrease_factor = decrease_factor
-        self.small_grad_threshold = small_grad_threshold
-        self.max_attempts = max_attempts
-        self.delta = delta
-        self.S = None  # This will be initialized later
-
-    def init_scaling(self, a):
-        # Initialize S such that S * ||a|| ~ target.
-        self.S = self.target / (a.norm() + self.delta)
-
-    def scale(self, tensor):
-        return self.S * tensor
-
-    def unscale(self, tensor):
-        return tensor / self.S
-
-    def update_on_overflow(self):
-        self.S *= self.decrease_factor
-
-    def update_on_small_grad(self):
-        self.S *= self.increase_factor
-
-    
-
 class FixedGridODESolver(torch.autograd.Function):
 
     @staticmethod
@@ -101,10 +69,17 @@ class FixedGridODESolver(torch.autograd.Function):
         N = t.shape[0]
         a = at[-1].to(dtype_hi)
         params = tuple(params) 
+        
+        eps = torch.finfo(dtype_low).eps  # machine epsilon for low precision (e.g. FP16)
+        target_norm = 1.0 / eps # target norm for the gradients
+        delta = 1e-6
+        S = target_norm / (a.norm() + delta)
+        # Set factors for scaling adjustment:
+        increase_factor = 2.0
+        decrease_factor = 0.5
+        # Threshold for small gradients (e.g. norm < 1).
+        small_grad_threshold = 1.0
 
-        # Initialize dynamic scaler.
-        scaler = DynamicScaler(dtype_low=dtype_low)
-        scaler.init_scaling(a)
         
         grad_theta = [torch.zeros_like(param) for param in params]
         grad_t = None if not t.requires_grad else torch.zeros_like(t)
@@ -121,38 +96,18 @@ class FixedGridODESolver(torch.autograd.Function):
                     dt = t[i+1] - t[i]
                     y = yt[i].clone().detach().requires_grad_(True)
 
-                    attempts = 0
-                    gti = None
-                    gdti = None
-                    while attempts < scaler.max_attempts:
-                        # print("attempt: ", attempts, "norm(a)", scaler.scale(a).norm())
-                        if t.requires_grad:
-                            ti = t[i].clone().detach().requires_grad_(True)
-                            dti = dt.clone().detach().requires_grad_(True)
-                            
-                            dy = step(func, y, ti, dti)
-                            da, gti, gdti, *dparams = torch.autograd.grad(dy, (y, ti, dti, *params), scaler.scale(a),create_graph=True,allow_unused=True)
-                            gdti2 = torch.sum(a*dy,dim=-1)   
-                        else:
-                            ti = t[i]
-                            dti = dt
-                            dy = step(func, y, ti, dti)
-                            da, *dparams = torch.autograd.grad(dy, (y, *params), scaler.scale(a), create_graph=True)
-                    
-                        if da.isfinite().all() and (gti is None or gti.isfinite().all()) and (gdti is None or gdti.isfinite().all()) and torch.all(torch.stack([dparam.isfinite().all() for dparam in dparams])):
-                            # print("accepted at attempt ", attempts)
-                            da = scaler.unscale(da)
-                            gti = scaler.unscale(gti) if gti is not None else None
-                            gdti = scaler.unscale(gdti) if gdti is not None else None
-                            for j, dparam in enumerate(dparams):
-                                dparams[j] = scaler.unscale(dparam)                                        
-                            break
-                            continue
-                        else:
-                            scaler.update_on_overflow()
-                            # print("overflow! Attempt: ", attempts)
-                            attempts += 1
-
+                    if t.requires_grad:
+                        ti = t[i].clone().detach().requires_grad_(True)
+                        dti = dt.clone().detach().requires_grad_(True)
+                        dy = step(func, y, ti, dti)
+                        da, gti, gdti, *dparams = torch.autograd.grad(dy, (y, ti, dti, *params), a,create_graph=True,allow_unused=True)
+                        gdti2 = torch.sum(a*dy,dim=-1)   
+                    else:
+                        ti = t[i]
+                        dti = dt
+                        dy = step(func, y, ti, dti)
+                        da, *dparams = torch.autograd.grad(dy, (y, *params), a, create_graph=True)
+                        
                 a = a + dt*(da.to(dtype_hi) + at[i].to(dtype_hi))
                 for j, dparam in enumerate(dparams):
                     grad_theta[j] = grad_theta[j] + dt*dparam.to(grad_theta[j].dtype).detach()

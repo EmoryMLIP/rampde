@@ -22,9 +22,9 @@ parser.add_argument('--viz', action='store_true')
 parser.add_argument('--gpu', type=int, default=0)
 parser.add_argument('--adjoint', action='store_true')
 # new arguments
-parser.add_argument('--method', type=str, choices=['rk4', 'dopri5'], default='rk4')
+parser.add_argument('--method', type=str, choices=['rk4', 'dopri5','euler'], default='rk4')
 parser.add_argument('--precision', type=str, choices=['float32', 'float16','bfloat16'], default='float16')
-parser.add_argument('--odeint', type=str, choices=['torchdiffeq', 'torchmpnode'], default='torchdiffeq')
+parser.add_argument('--odeint', type=str, choices=['torchdiffeq', 'torchmpnode'], default='torchmpnode')
 
 
 args = parser.parse_args()
@@ -32,7 +32,7 @@ from torchdiffeq import odeint as odeint_fwd
 
 if args.odeint == 'torchmpnode':
     print("Using torchmpnode")
-    assert args.method == 'rk4' 
+    # assert args.method == 'rk4' 
     import sys
     import os
     sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
