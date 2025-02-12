@@ -178,12 +178,26 @@ if __name__ == '__main__':
             pred_y = odeint(func, batch_y0, batch_t, method=args.method).to(device)
             loss = torch.mean(torch.abs(pred_y - batch_y))
             loss.backward()
+            print(loss.item())
+        
+        # check if any gradient is inf or nan
+        for name, param in func.named_parameters():
+            if torch.isinf(param.grad).any() or torch.isnan(param.grad).any():
+                print(f'Parameter {name} has inf or nan grad')
+
+            print("Parameter name: ", name, "grad: ",torch.norm(param.grad))    
+                
+    
+
+
+        
         optimizer.step()
 
         time_meter.update(time.time() - end)
         loss_meter.update(loss.item())
         peak_memory = torch.cuda.max_memory_allocated(device) / (1024 * 1024)  # Convert to MB
         mem_meter.update(peak_memory)
+        
 
         if itr % args.test_freq == 1:
             with torch.no_grad():

@@ -56,7 +56,7 @@ class TestGradientPrecisionComparison(unittest.TestCase):
         self.device = torch.device("cuda:0")
         self.dim = 2  # Small state dimension for clarity.
         # Create a time grid from 0 to 1.
-        self.t = torch.linspace(0., 1.0, 10, device=self.device, dtype=torch.float32)
+        self.t = torch.linspace(0., 1.0, 40, device=self.device, dtype=torch.float32)
         # Initial state.
         self.y0 = torch.randn(self.dim, device=self.device, dtype=torch.float32)
         # Create the ODE model.
