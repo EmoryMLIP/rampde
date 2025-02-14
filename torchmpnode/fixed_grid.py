@@ -25,7 +25,7 @@ class RK4(torch.nn.Module):
 
 class DynamicScaler:
     def __init__(self, dtype_low, target_factor=None, increase_factor=2.0, decrease_factor=0.5,
-                 small_grad_threshold=1.0, max_attempts=10, delta=1e-6):
+                 small_grad_threshold=1.0, max_attempts=10, delta=0):
         self.dtype_low = dtype_low
         # Set a target norm if not provided: 1/epsilon for low precision.
         self.eps = torch.finfo(dtype_low).eps
@@ -40,7 +40,13 @@ class DynamicScaler:
     def init_scaling(self, a):
         # Initialize S such that S * ||a|| ~ target.
         self.S = self.target / (a.norm() + self.delta)
-
+        self.S = 2**torch.round(torch.log2(self.S))
+        # make sure S is a power of 2
+        anew = self.S * a
+        while not(anew.isfinite().all()):
+            self.S *= 0.5
+            anew = self.S * a
+        
     def scale(self, tensor):
         return self.S * tensor
 
@@ -97,14 +103,17 @@ class FixedGridODESolver(torch.autograd.Function):
         dtype_t = t.dtype
 
         # print(f"yt: {yt.dtype}, at: {at.dtype}, t: {t.dtype}, dtype_hi: {dtype_hi}, dtype_low: {dtype_low}, dtype_t: {dtype_t}")
-        
         N = t.shape[0]
-        a = at[-1].to(dtype_hi)
         params = tuple(params) 
 
         # Initialize dynamic scaler.
         scaler = DynamicScaler(dtype_low=dtype_low)
-        scaler.init_scaling(a)
+        scaler.init_scaling(at[-1])
+        # print("a", torch.norm(at[-1]), "target", scaler.target, "scale", scaler.S, "scale(a)", scaler.scale(at[-1]).norm())
+
+        at = scaler.scale(at)
+        a = at[-1].to(dtype_hi)
+        # print("a", torch.norm(a), "target", scaler.target)
         
         grad_theta = [torch.zeros_like(param) for param in params]
         grad_t = None if not t.requires_grad else torch.zeros_like(t)
@@ -131,40 +140,111 @@ class FixedGridODESolver(torch.autograd.Function):
                             dti = dt.clone().detach().requires_grad_(True)
                             
                             dy = step(func, y, ti, dti)
-                            da, gti, gdti, *dparams = torch.autograd.grad(dy, (y, ti, dti, *params), scaler.scale(a),create_graph=True,allow_unused=True)
+                            da, gti, gdti, *dparams = torch.autograd.grad(dy, (y, ti, dti, *params), a,create_graph=True,allow_unused=True)
                             gdti2 = torch.sum(a*dy,dim=-1)   
                         else:
                             ti = t[i]
                             dti = dt
                             dy = step(func, y, ti, dti)
-                            da, *dparams = torch.autograd.grad(dy, (y, *params), scaler.scale(a), create_graph=True)
+                            da, *dparams = torch.autograd.grad(dy, (y, *params), a, create_graph=True)
                     
+                           
                         if da.isfinite().all() and (gti is None or gti.isfinite().all()) and (gdti is None or gdti.isfinite().all()) and torch.all(torch.stack([dparam.isfinite().all() for dparam in dparams])):
-                            # print("accepted at attempt ", attempts)
-                            da = scaler.unscale(da)
-                            gti = scaler.unscale(gti) if gti is not None else None
-                            gdti = scaler.unscale(gdti) if gdti is not None else None
-                            for j, dparam in enumerate(dparams):
-                                dparams[j] = scaler.unscale(dparam)                                        
+                            #
+                            # print("i=", i, "accepted at attempt ", attempts)
                             break
-                            continue
                         else:
+                            # print("i=", i,"reduce scaling because of infs")
                             scaler.update_on_overflow()
-                            # print("overflow! Attempt: ", attempts)
+                            # we reduced the scaling, so we need to rescale the gradients we computed so far and remaining adjoint signals
+                            a = scaler.decrease_factor*a
+                            at = scaler.decrease_factor*at
+                            grad_theta = [scaler.decrease_factor*grad for grad in grad_theta]                            
+                            if grad_t is not None:
+                                grad_t = scaler.decrease_factor*grad_t
+                            if gti is not None:
+                                gti = scaler.decrease_factor*gti
                             attempts += 1
 
-                a = a + dt*(da.to(dtype_hi) + at[i].to(dtype_hi))
-                for j, dparam in enumerate(dparams):
-                    grad_theta[j] = grad_theta[j] + dt*dparam.to(grad_theta[j].dtype).detach()
-                if  grad_t is not None:
-                    gti = gti if gti is not None else torch.zeros_like(t[i])
-                    gdti = gdti if gdti is not None else torch.zeros_like(t[i])
-                    print("gti:", gti, "gdti:", gdti, "dt:", dt)
-                    grad_t[i] = grad_t[i] + dt*(gti - gdti) - gdti2
-                    grad_t[i+1] = grad_t[i+1] + dt*gdti + gdti2
-            
+                # print("norm(a): ", a.norm().item(), "norm(at[i]): ", at[i].norm().item(), "norm(scale(a)): ",scaler.scale(a).norm().item())
+                update_attempts = 0
+                while update_attempts < scaler.max_attempts:
+                    a_new = a + dt*(da.to(dtype_hi)) + at[i].to(dtype_hi)
+                    grad_theta_new = [grad + dt*dparam.to(grad.dtype) for grad, dparam in zip(grad_theta, dparams)]        
+                    # print norm of gradients
+                    # print("grad_theta_new", [torch.norm(grad) for grad in dparams])
+                    grad_t_new = None if grad_t is None else torch.clone(grad_t)
+                    if grad_t is not None:
+                        gti = gti if gti is not None else torch.zeros_like(t[i])
+                        gdti = gdti if gdti is not None else torch.zeros_like(t[i])
+                        grad_t_new[i] = grad_t[i] + dt*(gti - gdti) - gdti2
+                        grad_t_new[i+1] = grad_t[i+1] + dt*gdti + gdti2
+                    if a_new.isfinite().all() and (grad_t_new is None or grad_t_new.isfinite().all()) and torch.all(torch.stack([grad.isfinite().all() for grad in grad_theta_new])):
+                        break
+                    else:
+                        # print("i", i, "reduce scaling because of infs in updates")
+                        scaler.update_on_overflow()
+                        # we reduced the scaling, so we need to rescale the gradients we computed so far and remaining adjoint signals
+                        a = scaler.decrease_factor*a
+                        at = scaler.decrease_factor*at
+                        grad_theta = [scaler.decrease_factor*grad for grad in grad_theta]
+                        dparams = [scaler.decrease_factor*dparam for dparam in dparams]
+                        
+                        if grad_t is not None:
+                            gti = scaler.decrease_factor*gti
+                            gdti = scaler.decrease_factor*gdti
+                            grad_t = scaler.decrease_factor*grad_t
+                        at = scaler.decrease_factor*at
+                        
+                        update_attempts += 1
+
+                # if not(torch.all(torch.stack([(grad).isfinite().all() for grad in grad_theta_new]))):
+                    # print("i", i, "grad_theta is infinite after updating")
+                    # assert 1==0
+
+                
+                if update_attempts==0 and torch.norm(a_new)/scaler.target < 0.5:
+                    if (scaler.increase_factor*at).isfinite().all() and (gti is None or (scaler.increase_factor*grad_t_new).isfinite().all()) and (gdti is None or (scaler.increase_factor*gdti).isfinite().all()) and torch.all(torch.stack([(scaler.increase_factor*grad).isfinite().all() for grad in grad_theta_new])):
+                        # print("i", i, "increase scaling because of small adjoint")
+                        scaler.update_on_small_grad()
+                        # we increased the scaling, so we need to rescale the gradients we computed so far and remaining adjoint signals
+                        a_new = scaler.increase_factor*a_new
+                        at = scaler.increase_factor*at
+                        grad_theta_new = [scaler.increase_factor*grad for grad in grad_theta_new]
+                        if grad_t is not None:
+                            grad_t_new = scaler.increase_factor*grad_t_new
+                        if gti is not None:
+                            gti_new = scaler.increase_factor*gti_new
+                elif torch.norm(a_new)/scaler.target > 2:
+                    # print("i", i, "reduce scaling because of large adjoint")
+                    scaler.update_on_overflow()
+                    # we reduced the scaling, so we need to rescale the gradients we computed so far and remaining adjoint signals
+                    a_new = scaler.decrease_factor*a_new
+                    at = scaler.decrease_factor*at
+                    grad_theta_new = [scaler.decrease_factor*grad for grad in grad_theta_new]
+                    if grad_t is not None:
+                        grad_t_new = scaler.decrease_factor*grad_t_new
+                    if gti is not None:
+                        gti_new = scaler.decrease_factor*gti_new
+                                
+                a = a_new
+                # if not(torch.all(torch.stack([(grad).isfinite().all() for grad in grad_theta_new]))):
+                    # print("i", i, "grad_theta_new is infinite before overwriting grad_theta")
+
+                grad_theta = grad_theta_new
+                if grad_t is not None:
+                    grad_t = grad_t_new
+                   
+
+                        
             for name, param in func.named_parameters():
                 param.data = old_params[name].data
+        
+        # Unscale the gradients
+        a = scaler.unscale(a)
+        grad_theta = [scaler.unscale(grad) for grad in grad_theta]
+
+        if grad_t is not None:
+            grad_t = scaler.unscale(grad_t).to(dtype_t)
             
-        grad_t = grad_t.to(dtype_t) if grad_t is not None else None
         return (None, None, a, grad_t,  *grad_theta)
