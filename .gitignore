@@ -179,3 +179,7 @@ examples/.data/mnist/MNIST/raw/t10k-labels-idx1-ubyte.gz
 examples/.data/mnist/MNIST/raw/t10k-labels-idx1-ubyte
 examples/.data/mnist/MNIST/raw/t10k-images-idx3-ubyte.gz
 examples/.data/mnist/MNIST/raw/t10k-images-idx3-ubyte
+.vscode/launch.json
+.vscode/settings.json
+modeleq_demo.csv
+modeleq_demo_grad_memory.csv
