@@ -58,6 +58,10 @@ true_y0 = torch.tensor([[2., 0.]]).to(device)
 t = torch.linspace(0., 25., args.data_size).to(device)
 true_A = torch.tensor([[-0.1, 2.0], [-2.0, -0.1]]).to(device)
 
+# seed the random number generator
+torch.manual_seed(0)
+np.random.seed(0)
+
 
 class Lambda(nn.Module):
 
@@ -160,6 +164,9 @@ class ODEFunc(nn.Module):
 if __name__ == '__main__':
 
     ii = 0
+    # seed the random number generator
+    torch.manual_seed(0)
+    np.random.seed(0)
 
     func = ODEFunc().to(device)
     
@@ -178,15 +185,15 @@ if __name__ == '__main__':
             pred_y = odeint(func, batch_y0, batch_t, method=args.method).to(device)
             loss = torch.mean(torch.abs(pred_y - batch_y))
             loss.backward()
-            print(loss.item())
+            # print(loss.item())
         
-        # check if any gradient is inf or nan
-        for name, param in func.named_parameters():
-            if torch.isinf(param.grad).any() or torch.isnan(param.grad).any():
-                print(f'Parameter {name} has inf or nan grad')
+        # # check if any gradient is inf or nan
+        # for name, param in func.named_parameters():
+        #     if torch.isinf(param.grad).any() or torch.isnan(param.grad).any():
+        #         print(f'Parameter {name} has inf or nan grad')
 
-            print("Parameter name: ", name, "grad: ",torch.norm(param.grad))    
-                
+        #     print("Parameter name: ", name, "grad: ",torch.norm(param.grad), "max: ", torch.max(param), "min: ", torch.min(param)) 
+        #     assert not torch.isinf(param).any() and not torch.isnan(param).any()
     
 
 
