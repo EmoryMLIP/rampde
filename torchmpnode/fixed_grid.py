@@ -102,29 +102,24 @@ class FixedGridODESolver(torch.autograd.Function):
         dtype_low = torch.get_autocast_dtype('cuda') if torch.is_autocast_enabled() else torch.float32
         dtype_t = t.dtype
 
-        # print(f"yt: {yt.dtype}, at: {at.dtype}, t: {t.dtype}, dtype_hi: {dtype_hi}, dtype_low: {dtype_low}, dtype_t: {dtype_t}")
         N = t.shape[0]
         params = tuple(params) 
 
         # Initialize dynamic scaler.
         scaler = DynamicScaler(dtype_low=dtype_low)
         scaler.init_scaling(at[-1])
-        # print("a", torch.norm(at[-1]), "target", scaler.target, "scale", scaler.S, "scale(a)", scaler.scale(at[-1]).norm())
-
+        
         at = scaler.scale(at)
         a = at[-1].to(dtype_hi)
-        # print("a", torch.norm(a), "target", scaler.target)
         
         grad_theta = [torch.zeros_like(param) for param in params]
         grad_t = None if not t.requires_grad else torch.zeros_like(t)
         
         with autocast(device_type='cuda', enabled=False):
-            old_params = dict(func.named_parameters())
+            old_params = {name: param.data.clone() for name, param in func.named_parameters()}
             for name, param in func.named_parameters():
-                param.data = param.data.to(dtype_low)
-                # print(f"Parameter name: {name}, dtype: {param.dtype}")
-
-            
+                param.data = (param.data).to(dtype_low)
+                
             for i in reversed(range(N-1)):
                 with torch.enable_grad():
                     dti = t[i+1] - t[i]
@@ -134,7 +129,6 @@ class FixedGridODESolver(torch.autograd.Function):
                     gti = None
                     gdti = None
                     while attempts < scaler.max_attempts:
-                        # print("attempt: ", attempts, "norm(a)", scaler.scale(a).norm())
                         if t.requires_grad:
                             ti = t[i].clone().detach().requires_grad_(True)
                             dti = dti.clone().detach().requires_grad_(True)
@@ -179,10 +173,11 @@ class FixedGridODESolver(torch.autograd.Function):
                     if grad_t is not None:
                         grad_t_new = grad_t.clone() 
                     
-                        gti = gti if gti is not None else torch.zeros_like(t[i])
-                        gdti = gdti if gdti is not None else torch.zeros_like(t[i])
-                        grad_t_new[i] = grad_t[i] + dti*(gti - gdti) - gdti2
-                        grad_t_new[i+1] = grad_t[i+1] + dti*gdti + gdti2
+                        gti_new = gti.clone() if gti is not None else torch.zeros_like(t[i])
+                        gdti_new = gdti.clone() if gdti is not None else torch.zeros_like(t[i])
+                        gdti2_new = gdti2.clone() if gdti is not None else torch.zeros_like(t[i])
+                        grad_t_new[i] = grad_t[i] + dti*(gti_new - gdti_new) - gdti2_new
+                        grad_t_new[i+1] = grad_t[i+1] + dti*gdti_new + gdti2_new
                     else:
                         grad_t_new = None
                     
@@ -201,6 +196,7 @@ class FixedGridODESolver(torch.autograd.Function):
                         if grad_t is not None:
                             gti = scaler.decrease_factor*gti
                             gdti = scaler.decrease_factor*gdti
+                            gdti2 = scaler.decrease_factor*gdti2
                             grad_t = scaler.decrease_factor*grad_t
                         at = scaler.decrease_factor*at                        
                         update_attempts += 1
@@ -215,7 +211,7 @@ class FixedGridODESolver(torch.autograd.Function):
                 
                 if attempts == 0 and update_attempts==0 and torch.norm(a_new)/scaler.target < 0.5:
                     if (scaler.increase_factor*a_new).isfinite().all() and (scaler.increase_factor*at).isfinite().all() and (gti is None or (scaler.increase_factor*grad_t_new).isfinite().all()) and (gdti is None or (scaler.increase_factor*gdti).isfinite().all()) and torch.all(torch.stack([(scaler.increase_factor*grad).isfinite().all() for grad in grad_theta_new])):
-                        print("i", i, "increase scaling because of small adjoint")
+                        # print("i", i, "increase scaling because of small adjoint")
                         scaler.update_on_small_grad()
                         # we increased the scaling, so we need to rescale the gradients we computed so far and remaining adjoint signals
                         a_new = scaler.increase_factor*a_new

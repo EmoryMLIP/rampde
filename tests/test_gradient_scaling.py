@@ -52,6 +52,7 @@ def compute_gradients(model, y0, t, method, use_autocast=False, working_dtype=to
 class TestGradientPrecisionComparison(unittest.TestCase):
     def setUp(self):
         if not torch.cuda.is_available():
+            print("GPU not available. Skipping tests.")
             self.skipTest("GPU required for these tests.")
         self.device = torch.device("cuda:0")
         self.dim = 2  # Small state dimension for clarity.
