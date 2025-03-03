@@ -25,8 +25,8 @@ class _TupleFunc(torch.nn.Module):
         return _tuple_to_tensor(f)
 
 def odeint(func, y0, t, *, method='rk4', atol=None, rtol=None):
-
-    if isinstance(y0, tuple):
+    y0_tuple = isinstance(y0, tuple)
+    if y0_tuple:
         shapes = [y0_i.shape for y0_i in y0]
         numels = [s[-1] for s in shapes]
 
@@ -36,7 +36,7 @@ def odeint(func, y0, t, *, method='rk4', atol=None, rtol=None):
     solver = SOLVERS[method]()
     params = func.parameters()
     solution =  FixedGridODESolver.apply(solver,func, y0, t, *params)
-    if isinstance(y0, tuple):
+    if y0_tuple:
         return _tensor_to_tuple(solution,numels,shapes,(len(t),))
     else:
         return solution

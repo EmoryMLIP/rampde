@@ -70,14 +70,15 @@ class OTFlow(nn.Module):
 
         z = pad(x, (0,1,0,0), value=t)
 
-        gradPhi, trH = self.net.trHess(z)
+        gradPhi, trH = self.Phi.trHess(z)
 
         dPhi_dx = gradPhi[:,0:self.in_out_dim]
-        dPhi_dt = gradPhi[:,self.in_out_dim]
+        dPhi_dt = gradPhi[:,self.in_out_dim].view(-1,1)
+        
 
         dz_dt = -(1.0/self.alpha[0]) * dPhi_dx
-        dlogp_z_dt = -(1.0/self.alpha[0]) * trH
-        dcost_L_dt = 0.5 * torch.norm(dPhi_dx, dim=1)**2
+        dlogp_z_dt = -(1.0/self.alpha[0]) * trH.view(-1,1)
+        dcost_L_dt = 0.5 * torch.norm(dPhi_dx, dim=1,keepdim=True)**2
         dcost_HJB_dt = torch.abs(-dPhi_dt + self.alpha[0] * dcost_L_dt)
         return (dz_dt, dlogp_z_dt, dcost_L_dt, dcost_HJB_dt)
 
@@ -128,12 +129,16 @@ if __name__ == '__main__':
             
             optimizer.zero_grad()
 
-            x, logp_diff_t1 = get_batch(args.num_samples)
+            x, logp_diff_t1,cost_L, cost_HJB = get_batch(args.num_samples)
             
             start_time = time.perf_counter()
             torch.cuda.reset_peak_memory_stats(device)
 
             with autocast(device_type='cuda', dtype=args.precision):
+                # print(x.shape, logp_diff_t1.shape, cost_L.shape, cost_HJB.shape)
+                # out = func(torch.tensor(t0).to(device), (x, logp_diff_t1, cost_L, cost_HJB))
+                # print shapes of all elements in out
+                # print([o.shape for o in out])
                 z_t, logp_diff_t, cost_L, cost_HJB = odeint(
                     func,
                     (x, logp_diff_t1, cost_L, cost_HJB),
@@ -165,11 +170,11 @@ if __name__ == '__main__':
                     x_val, logp_diff_t_val, cost_L_val, cost_HJB_val = get_batch(args.num_samples_val)
                     z_val, logp_diff_t_val, cost_L_val, cost_HJB_val = odeint(
                         func,
-                        (x_val, logp_diff_t_val, cost_L, cost_HJB),
+                        (x_val, logp_diff_t_val, cost_L_val, cost_HJB_val),
                         torch.linspace(t0, t1, args.num_timesteps).to(device),
                         method=args.method
                     )
-                    z_val, logp_diff_t_val, cost_L_val, cost_HJB_val = z_val[-1], logp_diff_t_val[-1], cost_L[-1], cost_HJB[-1]
+                    z_val, logp_diff_t_val, cost_L_val, cost_HJB_val = z_val[-1], logp_diff_t_val[-1], cost_L_val[-1], cost_HJB_val[-1]
                     logp_x_val = p_z0.log_prob(z_val).to(device) - logp_diff_t_val.view(-1)
                     loss_val = -logp_x_val.mean(0) + alpha[0]* cost_L_val.mean(0) + alpha[1] * cost_HJB_val.mean(0)
 
@@ -188,7 +193,7 @@ if __name__ == '__main__':
                         logp_x_val_mp = p_z0.log_prob(z_val_mp).to(device) - logp_diff_t_val_mp.view(-1)
                         loss_val_mp = -logp_x_val_mp.mean(0) + alpha[0]* cost_L_val_mp.mean(0) + alpha[1] * cost_HJB_val_mp.mean(0)
 
-            print('Iter: {}, running loss: {:.4f}, val loss {:.4f}, val loss (mp) :.4f}'.format(itr, loss_meter.avg, NLL_meter.avg, loss_val.item()), loss_val_mp.item(),
+                print('Iter: {}, running loss: {:.4f}, val loss {:.4f}, val loss (mp) {:.4f}'.format(itr, loss_meter.avg, NLL_meter.avg, loss_val.item()), loss_val_mp.item(),
                   'running NLL: {:.4f}, val NLL: {:.4f}, val NLL (mp): {:.4f}'.format(NLL_meter.avg, logp_x_val.mean(0).item(), logp_x_val_mp.mean(0).item()), 
                    'time: {:.4f}s'.format(time_meter.avg), 'max memory: {:.0f}MB'.format(mem_meter.max))
 
