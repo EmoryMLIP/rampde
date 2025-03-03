@@ -115,7 +115,7 @@ if __name__ == '__main__':
                 results.append((method, prec_str, elapsed_time, peak_memory, logits.dtype, loss.dtype))
 
         # Print results as a table
-        print(f"{'Method':<10} {'Precision':<10} {'Time (s)':<10} {'Peak Mem (MB)':<15} {'logits dtype':<12} {'loss dtype'}")
+        print(f"{'Method':<10} {'Precision':<10} {'Time (s)':<10} {'Peak Mem (MB)':<15} ")
         print("-" * 50)
         for (method, prec_str, elapsed_time, peak_memory, dtype_logits, dtype_loss) in results:
-            print(f"{method:<10} {prec_str:<10} {elapsed_time:<10.4f} {peak_memory:<15.2f} {str(dtype_logits):<12} {str(dtype_loss)}")
+            print(f"{method:<10} {prec_str:<10} {elapsed_time:<10.4f} {peak_memory:<15.2f} ")

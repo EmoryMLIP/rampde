@@ -1,3 +1,7 @@
+# import debugpy
+# debugpy.listen(("0.0.0.0",58783))
+# debugpy.wait_for_client()  
+
 import os
 import argparse
 import time
@@ -87,6 +91,7 @@ def makedirs(dirname):
 
 
 if args.viz:
+    print("Creating directory")
     makedirs('png')
     import matplotlib.pyplot as plt
     fig = plt.figure(figsize=(12, 4), facecolor='white')
@@ -183,21 +188,11 @@ if __name__ == '__main__':
         torch.cuda.reset_peak_memory_stats(device)
         with autocast(device_type='cuda', dtype=args.precision):
             pred_y = odeint(func, batch_y0, batch_t, method=args.method).to(device)
+            if not torch.all(torch.isfinite(pred_y)):
+                raise ValueError("pred_y is not finite")
             loss = torch.mean(torch.abs(pred_y - batch_y))
             loss.backward()
-            # print(loss.item())
-        
-        # # check if any gradient is inf or nan
-        # for name, param in func.named_parameters():
-        #     if torch.isinf(param.grad).any() or torch.isnan(param.grad).any():
-        #         print(f'Parameter {name} has inf or nan grad')
-
-        #     print("Parameter name: ", name, "grad: ",torch.norm(param.grad), "max: ", torch.max(param), "min: ", torch.min(param)) 
-        #     assert not torch.isinf(param).any() and not torch.isnan(param).any()
-    
-
-
-        
+ 
         optimizer.step()
 
         time_meter.update(time.time() - end)
@@ -205,12 +200,16 @@ if __name__ == '__main__':
         peak_memory = torch.cuda.max_memory_allocated(device) / (1024 * 1024)  # Convert to MB
         mem_meter.update(peak_memory)
         
-
         if itr % args.test_freq == 1:
             with torch.no_grad():
                 pred_y = odeint(func, true_y0, t, method=args.method)
                 loss = torch.mean(torch.abs(pred_y - true_y))
-                print('Iter {:04d} | Total Loss {:.6f} | Time {:.4f}s | Max Memory {:.1f}MB'.format(itr, loss.item(), time_meter.avg, mem_meter.max))
+                with autocast(device_type='cuda', dtype=args.precision):
+                        pred_y_mp = odeint(func, true_y0, t, method=args.method)
+                        loss_mp = torch.mean(torch.abs(pred_y_mp - true_y))
+                    
+                
+                print('Iter {:04d} | Total Loss (fp32) {:.6f} | Total Loss (mp) {:.6f} |Time {:.4f}s | Max Memory {:.1f}MB'.format(itr, loss.item(), loss_mp.item(), time_meter.avg, mem_meter.max))
                 visualize(true_y, pred_y, func, ii)
                 ii += 1
 
