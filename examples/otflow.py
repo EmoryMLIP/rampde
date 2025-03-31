@@ -19,17 +19,22 @@ from utils import RunningAverageMeter, RunningMaximumMeter
 parser = argparse.ArgumentParser()
 parser.add_argument('--adjoint', action='store_true')
 parser.add_argument('--viz', action='store_true')
-parser.add_argument('--niters', type=int, default=100)
-parser.add_argument('--num_timesteps', type=int, default=64)
+parser.add_argument('--niters', type=int, default=5000)
+parser.add_argument('--num_timesteps', type=int, default=32)
 parser.add_argument('--test_freq', type=int, default=10)
-parser.add_argument('--lr', type=float, default=1e-3)
+parser.add_argument('--lr', type=float, default=1e-2)
+parser.add_argument('--lr_decay', type=float, default=.5)
+parser.add_argument('--lr_decay_steps', type=int, default=20)
+
 parser.add_argument('--num_samples', type=int, default=512)
 parser.add_argument('--num_samples_val', type=int, default=1024)
-parser.add_argument('--hidden_dim', type=int, default=32)
+parser.add_argument('--hidden_dim', type=int, default=64)
 parser.add_argument('--gpu', type=int, default=0)
 parser.add_argument('--train_dir', type=str, default=None)
+parser.add_argument('--seed', type=int, default=None, help="Random seed; if not provided, no seeding will occur")
+
 # new arguments
-parser.add_argument('--method', type=str, choices=['rk4', 'dopri5'], default='rk4')
+parser.add_argument('--method', type=str, choices=['rk4', 'euler'], default='rk4')
 parser.add_argument('--precision', type=str, choices=['float32', 'float16','bfloat16'], default='float32')
 parser.add_argument('--odeint', type=str, choices=['torchdiffeq', 'torchmpnode'], default='torchdiffeq')
 parser.add_argument('--results_dir', type=str, default="./results")
@@ -37,7 +42,6 @@ args = parser.parse_args()
 
 if args.odeint == 'torchmpnode':
     print("Using torchmpnode")
-    assert args.method == 'rk4' 
     import sys
     import os
     sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
@@ -56,6 +60,11 @@ precision_map = {
 }
 args.precision = precision_map[args.precision]
 
+if args.seed is not None:
+    torch.manual_seed(args.seed)
+    np.random.seed(args.seed)
+
+
 from Phi import Phi
 class OTFlow(nn.Module):
     def __init__(self, in_out_dim, hidden_dim,alpha=[1.0] * 2):
@@ -63,7 +72,7 @@ class OTFlow(nn.Module):
         self.in_out_dim = in_out_dim
         self.hidden_dim = hidden_dim
         self.alpha= alpha
-        self.Phi = Phi(2, hidden_dim, in_out_dim, r=10, alph=alpha)
+        self.Phi = Phi(2, hidden_dim, in_out_dim, r=2, alph=alpha)
 
     def forward(self, t, states):
         x = states[0]
@@ -74,8 +83,6 @@ class OTFlow(nn.Module):
 
         dPhi_dx = gradPhi[:,0:self.in_out_dim]
         dPhi_dt = gradPhi[:,self.in_out_dim].view(-1,1)
-        
-
         dz_dt = -(1.0/self.alpha[0]) * dPhi_dx
         dlogp_z_dt = -(1.0/self.alpha[0]) * trH.view(-1,1)
         dcost_L_dt = 0.5 * torch.norm(dPhi_dx, dim=1,keepdim=True)**2
@@ -94,13 +101,13 @@ def get_batch(num_samples):
 
 
 if __name__ == '__main__':
-    t0 = 0
-    t1 = 10
+    t0 = 0.0
+    t1 = 1.0
     device = torch.device('cuda:' + str(args.gpu)
                           if torch.cuda.is_available() else 'cpu')
 
     # model
-    alpha = [1.0, 5.0] 
+    alpha = [1.0, 1.0] 
     func = OTFlow(in_out_dim=2, hidden_dim=args.hidden_dim, alpha=alpha).to(device)
     optimizer = optim.Adam(func.parameters(), lr=args.lr)
     p_z0 = torch.distributions.MultivariateNormal(
@@ -129,29 +136,29 @@ if __name__ == '__main__':
             
             optimizer.zero_grad()
 
-            x, logp_diff_t1,cost_L, cost_HJB = get_batch(args.num_samples)
+            z_t0, logp_diff_t0,cost_L_t0, cost_HJB_t0 = get_batch(args.num_samples)
             
             start_time = time.perf_counter()
             torch.cuda.reset_peak_memory_stats(device)
 
             with autocast(device_type='cuda', dtype=args.precision):
-                # print(x.shape, logp_diff_t1.shape, cost_L.shape, cost_HJB.shape)
-                # out = func(torch.tensor(t0).to(device), (x, logp_diff_t1, cost_L, cost_HJB))
-                # print shapes of all elements in out
-                # print([o.shape for o in out])
-                z_t, logp_diff_t, cost_L, cost_HJB = odeint(
+                z_t, logp_diff_t, cost_L_t, cost_HJB_t = odeint(
                     func,
-                    (x, logp_diff_t1, cost_L, cost_HJB),
+                    (z_t0, logp_diff_t0, cost_L_t0, cost_HJB_t0),
                     torch.linspace(t0, t1, args.num_timesteps).to(device),
                     method=args.method
                 )
 
-                z_t0, logp_diff_t0, cost_L, cost_HJB = z_t[-1], logp_diff_t[-1], cost_L[-1], cost_HJB[-1]
+                z_t1, logp_diff_t1, cost_L_t1, cost_HJB_t1 = z_t[-1], logp_diff_t[-1], cost_L_t[-1], cost_HJB_t[-1]
 
-                logp_x = p_z0.log_prob(z_t0).to(device) - logp_diff_t0.view(-1)
-                loss = -logp_x.mean(0) + alpha[0]* cost_L.mean(0) + alpha[1] * cost_HJB.mean(0)
+                logp_x = p_z0.log_prob(z_t1).view(-1,1) + logp_diff_t1
+                loss = -logp_x.mean(0) + alpha[0]* cost_L_t1.mean(0) +alpha[1] * cost_HJB_t1.mean(0)
 
                 loss.backward()
+                # print name and norm of every parameter 
+                # for name, param in func.named_parameters():
+                    # print(name, param.grad.norm())
+                
             optimizer.step()
 
             elapsed_time = time.perf_counter() - start_time
@@ -161,41 +168,47 @@ if __name__ == '__main__':
             mem_meter.update(peak_memory)
             loss_meter.update(loss.item())
             NLL_meter.update(-logp_x.mean(0).item())
-            cost_L_meter.update(cost_L.mean(0).item())
-            cost_HJB_meter.update(cost_HJB.mean(0).item())
+            cost_L_meter.update(cost_L_t1.mean(0).item())
+            cost_HJB_meter.update(cost_HJB_t1.mean(0).item())
 
             if itr % args.test_freq == 0:
                 with torch.no_grad():
 
-                    x_val, logp_diff_t_val, cost_L_val, cost_HJB_val = get_batch(args.num_samples_val)
-                    z_val, logp_diff_t_val, cost_L_val, cost_HJB_val = odeint(
+                    z_val_t0, logp_diff_val_t0, cost_L_val_t0, cost_HJB_val_t0 = get_batch(args.num_samples_val)
+                    z_val_t, logp_diff_val_t, cost_L_val_t, cost_HJB_val_t = odeint(
                         func,
-                        (x_val, logp_diff_t_val, cost_L_val, cost_HJB_val),
+                        (z_val_t0, logp_diff_val_t0, cost_L_val_t0, cost_HJB_val_t0),
                         torch.linspace(t0, t1, args.num_timesteps).to(device),
                         method=args.method
                     )
-                    z_val, logp_diff_t_val, cost_L_val, cost_HJB_val = z_val[-1], logp_diff_t_val[-1], cost_L_val[-1], cost_HJB_val[-1]
-                    logp_x_val = p_z0.log_prob(z_val).to(device) - logp_diff_t_val.view(-1)
-                    loss_val = -logp_x_val.mean(0) + alpha[0]* cost_L_val.mean(0) + alpha[1] * cost_HJB_val.mean(0)
+                    z_val_t1, logp_diff_val_t1, cost_L_val_t1, cost_HJB_val_t1 = z_val_t[-1], logp_diff_val_t[-1], cost_L_val_t[-1], cost_HJB_val_t[-1]
+                    logp_x_val = p_z0.log_prob(z_val_t1).to(device) + logp_diff_val_t1.view(-1)
+                    loss_val = -logp_x_val.mean(0) + alpha[0]* cost_L_val_t1.mean(0) + alpha[1] * cost_HJB_val_t1.mean(0)
 
                     with autocast(device_type='cuda', dtype=args.precision):
-                        logp_diff_t_val_mp = torch.zeros_like(logp_diff_t_val)
-                        cost_L_val_mp = torch.zeros_like(cost_L_val)
-                        cost_HJB_val_mp = torch.zeros_like(cost_HJB_val)
+                        logp_diff_val_mp_t0 = torch.zeros_like(logp_diff_val_t0)
+                        cost_L_val_mp_t0 = torch.zeros_like(cost_L_val_t0)
+                        cost_HJB_val_mp_t0 = torch.zeros_like(cost_HJB_val_t0)
                         
-                        z_val_mp, logp_diff_t_val_mp, cost_L_val_mp, cost_HJB_val_mp = odeint(
+                        z_val_mp_t, logp_diff_val_mp_t, cost_L_val_mp_t, cost_HJB_val_mp_t = odeint(
                             func,
-                            (x_val, logp_diff_t_val_mp, cost_L_val_mp, cost_HJB_val_mp),
+                            (z_val_t0, logp_diff_val_mp_t0, cost_L_val_mp_t0, cost_HJB_val_mp_t0),
                             torch.linspace(t0, t1, args.num_timesteps).to(device),
                             method=args.method
                         )
-                        z_val_mp, logp_diff_t_val_mp, cost_L_val_mp, cost_HJB_val_mp = z_val_mp[-1], logp_diff_t_val_mp[-1], cost_L_val_mp[-1], cost_HJB_val_mp[-1]
-                        logp_x_val_mp = p_z0.log_prob(z_val_mp).to(device) - logp_diff_t_val_mp.view(-1)
-                        loss_val_mp = -logp_x_val_mp.mean(0) + alpha[0]* cost_L_val_mp.mean(0) + alpha[1] * cost_HJB_val_mp.mean(0)
+                        z_val_mp_t1, logp_diff_val_mp_t1, cost_L_val_mp_t1, cost_HJB_val_mp_t1 = z_val_mp_t[-1], logp_diff_val_mp_t[-1], cost_L_val_mp_t[-1], cost_HJB_val_mp_t[-1]
+                        logp_x_val_mp = p_z0.log_prob(z_val_mp_t1).to(device) + logp_diff_val_mp_t1.view(-1)
+                        loss_val_mp = -logp_x_val_mp.mean(0) + alpha[0]* cost_L_val_mp_t1.mean(0) + alpha[1] * cost_HJB_val_mp_t1.mean(0)
 
-                print('Iter: {}, running loss: {:.4f}, val loss {:.4f}, val loss (mp) {:.4f}'.format(itr, loss_meter.avg, NLL_meter.avg, loss_val.item()), loss_val_mp.item(),
+                print('Iter: {}, running loss: {:.4f}, val loss {:.4f}, val loss (mp) {:.4f}'.format(itr, loss_meter.avg, loss_val.item(), loss_val_mp.item()),
                   'running NLL: {:.4f}, val NLL: {:.4f}, val NLL (mp): {:.4f}'.format(NLL_meter.avg, logp_x_val.mean(0).item(), logp_x_val_mp.mean(0).item()), 
                    'time: {:.4f}s'.format(time_meter.avg), 'max memory: {:.0f}MB'.format(mem_meter.max))
+            
+            # decay learning rate
+            if itr == args.lr_decay_steps:
+                for param_group in optimizer.param_groups:
+                    param_group['lr'] *= args.lr_decay
+                    print("new learning rate: {}".format(param_group['lr']))
 
     except KeyboardInterrupt:
         if args.train_dir is not None:
@@ -223,7 +236,7 @@ if __name__ == '__main__':
             z_t_samples, _, _, _ = odeint(
                 func,
                 (z_t0, logp_diff_t0, cost_L_t0, cost_HJB_t0),
-                torch.tensor(np.linspace(t0, t1, viz_timesteps)).to(device),
+                torch.tensor(np.linspace(t1, t0, viz_timesteps)).to(device),
                 method=args.method
             )
 
@@ -239,10 +252,8 @@ if __name__ == '__main__':
             z_t_density, logp_diff_t,_,_ = odeint(
                 func,
                 (z_t1, logp_diff_t1, cost_L_t1, cost_HJB_t1),
-                torch.tensor(np.linspace(t1, t0, viz_timesteps)).to(device),
-                atol=1e-5,
-                rtol=1e-5,
-                method='dopri5',
+                torch.tensor(np.linspace(t0, t1, viz_timesteps)).to(device),
+                method=args.method
             )
 
             # Create plots for each timestep
@@ -252,22 +263,22 @@ if __name__ == '__main__':
             ):
                 fig = plt.figure(figsize=(12, 4), dpi=200)
                 plt.tight_layout()
-                plt.axis('off')
+                # plt.axis('off')
                 plt.margins(0, 0)
                 fig.suptitle(f'{t:.2f}s')
 
                 ax1 = fig.add_subplot(1, 3, 1)
                 ax1.set_title('Target')
-                ax1.get_xaxis().set_ticks([])
-                ax1.get_yaxis().set_ticks([])
+                # ax1.get_xaxis().set_ticks([])
+                # ax1.get_yaxis().set_ticks([])
                 ax2 = fig.add_subplot(1, 3, 2)
                 ax2.set_title('Samples')
-                ax2.get_xaxis().set_ticks([])
-                ax2.get_yaxis().set_ticks([])
+                # ax2.get_xaxis().set_ticks([])
+                # ax2.get_yaxis().set_ticks([])
                 ax3 = fig.add_subplot(1, 3, 3)
                 ax3.set_title('Log Probability')
-                ax3.get_xaxis().set_ticks([])
-                ax3.get_yaxis().set_ticks([])
+                # ax3.get_xaxis().set_ticks([])
+                # ax3.get_yaxis().set_ticks([])
 
                 ax1.hist2d(*target_sample.detach().cpu().numpy().T, bins=300, density=True,
                            range=[[-1.5, 1.5], [-1.5, 1.5]])
@@ -275,7 +286,7 @@ if __name__ == '__main__':
                 ax2.hist2d(*z_sample.detach().cpu().numpy().T, bins=300, density=True,
                            range=[[-1.5, 1.5], [-1.5, 1.5]])
 
-                logp = p_z0.log_prob(z_density) - logp_diff.view(-1)
+                logp = p_z0.log_prob(z_density) + logp_diff.view(-1)
                 ax3.tricontourf(*z_t1.detach().cpu().numpy().T,
                                 np.exp(logp.detach().cpu().numpy()), 200)
 

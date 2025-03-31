@@ -2,10 +2,10 @@ import unittest
 import math
 import torch
 import torch.nn as nn
-from torchdiffeq import odeint
+from torchdiffeq import odeint 
 import sys,os
-sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
-from torchmpnode import odeint
+# sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
+# from torchmpnode import odeint
 from torch.amp import autocast
 
 
@@ -83,8 +83,8 @@ class TestGradientPrecisionComparison(unittest.TestCase):
         final_low = sol_low[-1].to(torch.float32)
         grad_y0_low = grad_y0_low.to(torch.float32)
         grad_A_low = grad_A_low.to(torch.float32)
-        print(grad_A_full)
-        print(grad_A_low)
+        # print(grad_A_full)
+        # print(grad_A_low)
 
 
 
@@ -92,8 +92,8 @@ class TestGradientPrecisionComparison(unittest.TestCase):
         rel_err_state = torch.norm(final_full - final_low) / (torch.norm(final_full))
         rel_err_grad_y0 = torch.norm(grad_y0_full - grad_y0_low) / (torch.norm(grad_y0_full))
         rel_err_grad_A = torch.norm(grad_A_full - grad_A_low) / (torch.norm(grad_A_full))
-        print(f"grad_A_full: {grad_A_full}")
-        print(f"grad_A_low: {grad_A_low}")
+        # print(f"grad_A_full: {grad_A_full}")
+        # print(f"grad_A_low: {grad_A_low}")
         
         print(f"Working dtype: {working_dtype}")
         print("Relative error in terminal state: %1.4e" % rel_err_state.item())
@@ -103,22 +103,22 @@ class TestGradientPrecisionComparison(unittest.TestCase):
         # We expect differences that reveal inaccuracies when no adaptive scaling is used.
         return rel_err_state.item(), rel_err_grad_y0.item(), rel_err_grad_A.item()
 
-    # def test_positive_definite_system(self):
-    #     # For positive definite A, we set A to be symmetric and with positive eigenvalues.
-    #     A_pos = torch.tensor([[1.0, 0.5],
-    #                           [0.5, 1.0]], device=self.device, dtype=torch.float32)
-    #     self.model.A.data.copy_(A_pos)
-    #     print("\nTesting positive definite A")
-    #     for working_dtype in [torch.float16, torch.bfloat16, torch.float32]:
-    #         rel_errs = self._compare_precision(working_dtype)
-    #         # Here you might assert that the relative errors are within a tolerance
-    #         # if you expect low-precision without scaling to give reasonable results.
-    #         # For this example, we do not impose a strict tolerance because we expect discrepancies.
-    #         # self.assertTrue(all(err < 0.1 for err in rel_errs))
+    def test_positive_definite_system(self):
+        # For positive definite A, we set A to be symmetric and with positive eigenvalues.
+        A_pos = 5*torch.tensor([[1.0, 0.5],
+                              [0.5, 1.0]], device=self.device, dtype=torch.float32)
+        self.model.A.data.copy_(A_pos)
+        print("\nTesting positive definite A")
+        for working_dtype in [torch.float16, torch.bfloat16, torch.float32]:
+            rel_errs = self._compare_precision(working_dtype)
+            # Here you might assert that the relative errors are within a tolerance
+            # if you expect low-precision without scaling to give reasonable results.
+            # For this example, we do not impose a strict tolerance because we expect discrepancies.
+            # self.assertTrue(all(err < 0.1 for err in rel_errs))
 
     def test_negative_definite_system(self):
         # For negative definite A, set A = -A_pos.
-        A_neg = -1*torch.tensor([[1.0, 0.5],
+        A_neg = -10*torch.tensor([[1.0, 0.5],
                                [0.5, 1.0]], device=self.device, dtype=torch.float32)
         self.model.A.data.copy_(A_neg)
         print("\nTesting negative definite A")
