@@ -59,7 +59,7 @@ args.precision = precision_map[args.precision]
 device = torch.device('cuda:' + str(args.gpu) if torch.cuda.is_available() else 'cpu')
 
 true_y0 = torch.tensor([[2., 0.]]).to(device)
-t = torch.linspace(0., 25., args.data_size).to(device)
+t = torch.linspace(0., 12., args.data_size).to(device)
 true_A = torch.tensor([[-0.1, 2.0], [-2.0, -0.1]]).to(device)
 
 # seed the random number generator
@@ -151,9 +151,9 @@ class ODEFunc(nn.Module):
         super(ODEFunc, self).__init__()
 
         self.net = nn.Sequential(
-            nn.Linear(2, 50),
+            nn.Linear(2, 128),
             nn.Tanh(),
-            nn.Linear(50, 2),
+            nn.Linear(128, 2),
         )
 
         for m in self.net.modules():
