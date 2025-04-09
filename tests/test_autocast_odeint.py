@@ -1,26 +1,29 @@
+import torch
+import torch.nn as nn
+from torch.amp import autocast
+from torchdiffeq import odeint
 import sys
 import os
 # os.environ["CUDA_VISIBLE_DEVICES"]="2"
-import torch
-import torch.nn as nn
-from torch.amp import autocast, GradScaler
-from torchdiffeq import odeint
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
 from torchmpnode import odeint as mpodeint
-import torch.optim as optim
+import csv
+import matplotlib.pyplot as plt
+
 
 prec = torch.bfloat16
-
 
 class ODEFunc(nn.Module):
     def __init__(self, dim):
         super().__init__()
-        stiff_matrix = torch.tensor([[-500.0,    0.0],
-                                     [   0.0 , -0.1]], dtype=torch.float32)
-        self.theta = nn.Parameter(stiff_matrix)
+        A = torch.tensor([[0.5, 0.0],
+                                     [0.0, 0.5]], dtype=torch.float32)
+        # stiff_matrix = torch.tensor([[-30, 0.0, 0.0],
+        #                              [0.0, -10, 0.0],
+        #                              [0.0, 0.0, -0.1]], dtype=torch.float32)
+        self.theta = nn.Parameter(A)
     
     def forward(self, t, z):
-        # z'(t) = theta * z(t).
         return torch.matmul(self.theta, z)
 
 def euler_forward_manual_fp16(z0, func, t0, t1, N):
@@ -74,118 +77,163 @@ def manual_pseudoac(z_list, func, t0, t1):
         dL_dtheta_half = dL_dtheta_half.float()
     return dL_dz_half[0], dL_dtheta_half
 
-
-if __name__ == '__main__':
-    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-    t0, t1 = 0.0, 2.0
-    N = 1000
-    dim = 2 
-    
+# Full precision under torchdiffeq
+def run_baseline(method, N, device, t0, t1, dim):
     t_span = torch.linspace(t0, t1, N, device=device)
+    func = ODEFunc(dim).to(device)
+
+    z0 = torch.ones((dim, 1), dtype=torch.float32, device=device, requires_grad=True)
     target = torch.full((dim, 1), 2.0, dtype=torch.float32, device=device)
-    
-    z0_auto = torch.ones((dim, 1), dtype=torch.float32, device=device, requires_grad=True)
-    z0_autoac = torch.ones((dim, 1), dtype=torch.float32, device=device, requires_grad=True)
-    z0_automp = torch.ones((dim, 1), dtype=torch.float32, device=device, requires_grad=True)
-    func_auto = ODEFunc(dim).to(device)
-    func_autoac = ODEFunc(dim).to(device)
-    func_automp = ODEFunc(dim).to(device)
-    
-    # ==============================
-    # 1) odeint full precision
-    # ==============================
-    sol_auto = odeint(func_auto, z0_auto, t_span, method="euler")
-    L_auto = 0.5 * ((sol_auto[-1] - target)**2).sum()
-    L_auto.backward()
-    grad_z0_auto = z0_auto.grad.clone()
-    grad_theta_auto = func_auto.theta.grad.clone()
-    
-    # ==============================
-    # 2) odeint with autocast
-    # ==============================
-    with autocast(device_type='cuda', dtype=prec):
-        sol_autoac = odeint(func_autoac, z0_autoac, t_span, method="euler")
-        L_autoac = 0.5 * ((sol_autoac[-1] - target)**2).sum()
-        L_autoac.backward()
-    grad_z0_autoac = z0_autoac.grad.clone()
-    grad_theta_autoac = func_autoac.theta.grad.clone()
+    # sol = odeint(func, z0, t_span, method=method)[-1]
+    # Analytical solution for the ODE: z(t) = exp(theta * t) * z0
+    sol = torch.matmul(torch.matrix_exp(func.theta * t_span[-1]), z0)
+    loss = 0.5 * ((sol - target)**2).sum()
+    loss.backward()
+    # Return the final solution and the gradients.
+    return sol.detach().clone(), z0.grad.detach().clone(), func.theta.grad.detach().clone()
 
-    # ==============================
-    # 3) mpodeint with autocast
-    # ==============================
+# Run torchdiffe under autocast
+def run_autocast_odeint(method, N, device, t0, t1, dim, prec):
+    t_span = torch.linspace(t0, t1, N, device=device)
+    func = ODEFunc(dim).to(device)
+    z0 = torch.ones((dim, 1), dtype=torch.float32, device=device, requires_grad=True)
+    target = torch.full((dim, 1), 2.0, dtype=torch.float32, device=device)
     with autocast(device_type='cuda', dtype=prec):
-        z_list_automp = mpodeint(func_automp, z0_automp, t_span, method="euler")
-        L_automp = 0.5 * ((z_list_automp[-1] - target)**2).sum()
-        L_automp.backward()
-    grad_z0_automp = z0_automp.grad.clone()
-    grad_theta_automp = func_automp.theta.grad.clone()
+        sol = odeint(func, z0, t_span, method=method)
+        loss = 0.5 * ((sol[-1] - target)**2).sum()
+        loss.backward()
+    return sol[-1].detach().clone(), z0.grad.detach().clone(), func.theta.grad.detach().clone()
 
-    # ==============================
-    # 4) Manual pseudo-autocast
-    # ==============================
+# Run torchmpnode under autocast
+def run_autocast_mpodeint(method, N, device, t0, t1, dim, prec):
+    t_span = torch.linspace(t0, t1, N, device=device)
+    func = ODEFunc(dim).to(device)
+    z0 = torch.ones((dim, 1), dtype=torch.float32, device=device, requires_grad=True)
+    target = torch.full((dim, 1), 2.0, dtype=torch.float32, device=device)
+    with autocast(device_type='cuda', dtype=prec):
+        sol = mpodeint(func, z0, t_span, method=method)
+        loss = 0.5 * ((sol[-1] - target)**2).sum()
+        loss.backward()
+    return sol[-1].detach().clone(), z0.grad.detach().clone(), func.theta.grad.detach().clone()
+
+def pseudo_autocast(N, device, t0, t1, dim):
     z0_manual_noac = torch.ones((dim, 1), dtype=torch.float32, device=device)
     func_manual_noac = ODEFunc(dim).to(device)
     z_list_manual_noac = euler_forward_manual_pseudoac(z0_manual_noac, func_manual_noac, t0, t1, N)
     dL_dz0_manual_noac, dL_dtheta_manual_noac = manual_pseudoac(z_list_manual_noac, func_manual_noac, t0, t1)
     
-    
-    # ==============================
-    # 5) Manual pseudo-autocast check
-    # ==============================
-    with autocast(device_type='cuda', dtype=prec):
-        z0_manual_ac = torch.ones((dim, 1), dtype=torch.float32, device=device)
-        func_manual_ac = ODEFunc(dim).to(device)
-        z_list_manual_ac = euler_forward_manual_pseudoac(z0_manual_ac, func_manual_ac, t0, t1, N)
-        dL_dz0_manual_ac, dL_dtheta_manual_ac = manual_pseudoac(z_list_manual_ac, func_manual_ac, t0, t1)
-    
+    return z_list_manual_noac[-1].detach().clone(), dL_dz0_manual_noac, dL_dtheta_manual_noac
 
-    torch.set_printoptions(precision=8)
-    print("=== odeint full precision ===")
-    print("dL/dz0:", grad_z0_auto)
-    print("dL/dtheta:\n", grad_theta_auto)
-    print("=== odeint with autocast ===")
-    print("dL/dz0:", grad_z0_autoac)
-    print("dL/dtheta:\n", grad_theta_autoac)
-    print("=== Manual pseudo-autocast ===")
-    print("dL/dz0:", dL_dz0_manual_noac)
-    print("dL/dtheta:\n", dL_dtheta_manual_noac)
-    print("=== Manual pseudo-aaacast ===")
-    print("dL/dz0:", dL_dz0_manual_ac)
-    print("dL/dtheta:\n", dL_dtheta_manual_ac)
-    print("=== mpodeint with autocast ===")
-    print("dL/dz0:", grad_z0_automp)
-    print("dL/dtheta:\n", grad_theta_automp)
 
-    scaler = GradScaler()
-    optimizer = optim.Adam(func_autoac.parameters(), lr=1e-3)
-    optimizer1 = optim.Adam(func_autoac.parameters(), lr=1e-3)
-    n_epochs = 2
-    for epoch in range(n_epochs):
-        optimizer.zero_grad()
-        optimizer1.zero_grad()
+
+device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+t0, t1 = 0.0, 2.0
+dim = 2
+steps_list = [32, 64, 128, 256, 512, 1024, 2048, 4096, 8192]
+method_list = ['euler', 'rk4']
+
+results = []  
+error_data = {}
+for meth in method_list:
+    error_data[meth] = {
+        'steps': [],
+        'odeint': {'sol': [], 'grad_z0': [], 'grad_theta': []},
+        'mpodeint': {'sol': [], 'grad_z0': [], 'grad_theta': []}
+    }
+
+for meth in method_list:
+    print("Processing method:", meth)
+    for N in steps_list:
+
+        baseline_sol, baseline_grad_z0, baseline_grad_theta = run_baseline(meth, N, device, t0, t1, dim)
+        ac_sol, ac_grad_z0, ac_grad_theta = run_autocast_odeint(meth, N, device, t0, t1, dim, prec)
+        acmp_sol, acmp_grad_z0, acmp_grad_theta = run_autocast_mpodeint(meth, N, device, t0, t1, dim, prec)
+        manual_sol, manual_grad_z0, manual_grad_theta = pseudo_autocast(N, device, t0, t1, dim)
+
+        rel_err_sol_odeint = torch.norm(ac_sol - baseline_sol) / torch.norm(baseline_sol)
+        rel_err_grad_z0_odeint = torch.norm(ac_grad_z0 - baseline_grad_z0) / torch.norm(baseline_grad_z0)
+        rel_err_grad_theta_odeint = torch.norm(ac_grad_theta - baseline_grad_theta) / torch.norm(baseline_grad_theta)
         
-        with autocast(device_type="cuda", dtype=prec):
-            sol_autoac = odeint(func_autoac, z0_autoac, t_span, method="euler")
-            loss = 0.5 * ((sol_autoac[-1] - target)**2).sum()
-            
-            sol_auto = odeint(func_auto, z0_auto, t_span, method="euler")
-            L_auto = 0.5 * ((sol_auto[-1] - target)**2).sum()
-            L_auto.backward()
-            optimizer1.step()
-            
-            scaler.scale(loss).backward()
-            scaler.step(optimizer)
-            scaler.update()
+        
+        rel_err_sol_mpodeint = torch.norm(acmp_sol - baseline_sol) / torch.norm(baseline_sol)
+        rel_err_grad_z0_mpodeint = torch.norm(acmp_grad_z0 - baseline_grad_z0) / torch.norm(baseline_grad_z0)
+        rel_err_grad_theta_mpodeint = torch.norm(acmp_grad_theta - baseline_grad_theta) / torch.norm(baseline_grad_theta)
 
-        grad_z0_auto = z0_auto.grad.clone()
-        grad_theta_auto = func_auto.theta.grad.clone()
-        grad_z0_autoaca = z0_autoac.grad.clone()
-        grad_theta_autoaca = func_autoac.theta.grad.clone()
-        print(f"Epoch {epoch:4d}, Loss: {loss.item():.6f}")
-        print("=== after ===")
-        print("dL/dz0 with scaling:", grad_z0_autoaca)
-        print("dL/dtheta with:\n", grad_theta_autoaca)
-        print("---")
-        print("dL/dz0 without scaling:", grad_z0_auto)
-        print("dL/dtheta without:\n", grad_theta_auto)
+
+        rel_err_sol_manual = torch.norm(manual_sol - baseline_sol) / torch.norm(baseline_sol)
+        rel_err_grad_z0_manual = torch.norm(manual_grad_z0 - baseline_grad_z0) / torch.norm(baseline_grad_z0)
+        rel_err_grad_theta_manual = torch.norm(manual_grad_theta - baseline_grad_theta) / torch.norm(baseline_grad_theta)
+
+        results.append([
+            meth, N,
+            rel_err_sol_odeint.item(), rel_err_grad_z0_odeint.item(), rel_err_grad_theta_odeint.item(),
+            rel_err_sol_mpodeint.item(), rel_err_grad_z0_mpodeint.item(), rel_err_grad_theta_mpodeint.item()
+        ])
+
+        error_data[meth]['steps'].append(N)
+        error_data[meth]['odeint']['sol'].append(rel_err_sol_odeint.item())
+        error_data[meth]['odeint']['grad_z0'].append(rel_err_grad_z0_odeint.item())
+        error_data[meth]['odeint']['grad_theta'].append(rel_err_grad_theta_odeint.item())
+        
+        error_data[meth]['mpodeint']['sol'].append(rel_err_sol_mpodeint.item())
+        error_data[meth]['mpodeint']['grad_z0'].append(rel_err_grad_z0_mpodeint.item())
+        error_data[meth]['mpodeint']['grad_theta'].append(rel_err_grad_theta_mpodeint.item())
+        
+        print(f"Method: {meth}, Steps: {N}\n"
+              f"  torchdiffeq: sol error = {rel_err_sol_odeint.item():.2e}, dL/dz0 error = {rel_err_grad_z0_odeint.item():.2e}, "
+              f"dL/dtheta error = {rel_err_grad_theta_odeint.item():.2e}\n"
+              f"  torchmpnode: sol error = {rel_err_sol_mpodeint.item():.2e}, dL/dz0 error = {rel_err_grad_z0_mpodeint.item():.2e}, "
+              f"dL/dtheta error = {rel_err_grad_theta_mpodeint.item():.2e}"
+              f"\n  Manual pseudo-autocast: sol error = {rel_err_sol_manual:.2e}, dL/dz0 error = {rel_err_grad_z0_manual:.2e}, "
+              f"dL/dtheta error = {rel_err_grad_theta_manual:.2e}\n")
+
+csv_filename = "relative_errors.csv"
+with open(csv_filename, mode='w', newline='') as csv_file:
+    writer = csv.writer(csv_file)
+    writer.writerow(["method", "n_steps", 
+                     "rel_err_sol_odeint", "rel_err_grad_z0_odeint", "rel_err_grad_theta_odeint",
+                     "rel_err_sol_mpodeint", "rel_err_grad_z0_mpodeint", "rel_err_grad_theta_mpodeint"])
+    writer.writerows(results)
+print("CSV file saved as", csv_filename)
+
+for meth in method_list:
+    steps = error_data[meth]['steps']
+    # Plot relative error for final solution (z_T)
+    plt.figure()
+    plt.plot(steps, error_data[meth]['odeint']['sol'], marker='o', label='torchdiffeq (autocast)', color='blue')
+    plt.plot(steps, error_data[meth]['mpodeint']['sol'], marker='s', label='torchmpnode (autocast)', color='red')
+    plt.xscale('log')
+    plt.yscale('log')
+    # plt.xlabel('Number of Steps')
+    # plt.ylabel('Relative Error (Final Solution)')
+    # plt.title(f"Relative Error in Final Solution - Method: {meth}")
+    plt.legend()
+    plt.grid(True)
+    plt.savefig(f'relative_error_solution_{meth}.png')
+
+    # Plot relative error for gradient wrt initial condition (dL/dz0)
+    plt.figure()
+    plt.plot(steps, error_data[meth]['odeint']['grad_z0'], marker='o', label='torchdiffeq (autocast)', color='blue')
+    plt.plot(steps, error_data[meth]['mpodeint']['grad_z0'], marker='s', label='torchmpnode (autocast)', color='red')
+    plt.xscale('log')
+    plt.yscale('log')
+    # plt.xlabel('Number of Steps')
+    # plt.ylabel('Relative Error (dL/dz0)')
+    # plt.title(f"Relative Error in dL/dz0 - Method: {meth}")
+    plt.legend()
+    plt.grid(True)
+    plt.savefig(f'relative_error_grad_z0_{meth}.png')
+
+    # Plot relative error for gradient wrt theta (dL/dtheta)
+    plt.figure()
+    plt.plot(steps, error_data[meth]['odeint']['grad_theta'], marker='o', label='torchdiffeq (autocast)', color='blue')
+    plt.plot(steps, error_data[meth]['mpodeint']['grad_theta'], marker='s', label='torchmpnode (autocast)', color='red')
+    plt.xscale('log')
+    plt.yscale('log')
+    # plt.xlabel('Number of Steps')
+    # plt.ylabel('Relative Error (dL/dtheta)')
+    # plt.title(f"Relative Error in dL/dtheta - Method: {meth}")
+    plt.legend()
+    plt.grid(True)
+    plt.savefig(f'relative_error_grad_theta_{meth}.png')
 
