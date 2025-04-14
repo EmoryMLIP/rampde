@@ -22,8 +22,7 @@ class NonlinearODE(torch.nn.Module):
         self.b = torch.nn.Parameter(torch.randn(dim, dtype=torch.float32))
 
     def forward(self, t, x):
-        # Cast input to float32 so that the parameters are used in float32.
-        return self.B @ torch.tanh(self.A @ x + self.b)
+        return self.B @ torch.tanh(torch.matmul(self.A,x) + self.b)
 
 class TestTaylorExpansionODE(unittest.TestCase):
     def setUp(self):
@@ -79,7 +78,7 @@ class TestTaylorExpansionODE(unittest.TestCase):
                         x0.grad = None
 
                     # Choose a set of perturbation scales.
-                    h_vals = [(0.95 ** i) for i in range(50)]  # e.g., 1e-5, 2e-5, 4e-5, 8e-5, 1.6e-4
+                    h_vals = [(0.92 ** i) for i in range(50)]  # e.g., 1e-5, 2e-5, 4e-5, 8e-5, 1.6e-4
                     # h_vals.append(0.0)
                     errors0 = []  # zero‐order error: ||f(x0+h*v)-f(x0)||
                     errors1 = []  # first‐order error: ||f(x0+h*v)-f(x0)-h*Jv||

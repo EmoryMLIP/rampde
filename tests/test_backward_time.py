@@ -70,7 +70,7 @@ class TestTaylorExpansionODE(unittest.TestCase):
                         t.grad = None
 
                     # Choose a set of perturbation scales.
-                    h_vals = [(0.95 ** i) for i in range(50)]  # e.g., 1e-5, 2e-5, 4e-5, 8e-5, 1.6e-4
+                    h_vals = [(0.92 ** i) for i in range(50)]  # e.g., 1e-5, 2e-5, 4e-5, 8e-5, 1.6e-4
                     # h_vals.append(0.0)
                     errors0 = []  # zero‐order error: ||f(x0+h*v)-f(x0)||
                     errors1 = []  # first‐order error: ||f(x0+h*v)-f(x0)-h*Jv||

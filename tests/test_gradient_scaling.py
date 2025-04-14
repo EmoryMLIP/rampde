@@ -75,7 +75,8 @@ class TestGradientPrecisionComparison(unittest.TestCase):
         self.model.zero_grad()
         sol_low, grad_y0_low, grad_A_low = compute_gradients(
             self.model, self.y0, self.t, method=method, use_autocast=True, working_dtype=working_dtype)
-        # print(sol_low)
+        # print(sol_full[-1].to(working_dtype))
+        # print(sol_low[-1])
         # assert sol_low.isfinite().all()
         
         # Cast low-precision results back to FP32 for comparison.
