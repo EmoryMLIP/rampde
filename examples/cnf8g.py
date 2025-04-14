@@ -13,6 +13,7 @@ import torch.optim as optim
 from torch.amp import autocast
 import time
 import math
+from torch.nn.functional import pad
 
 device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 
@@ -21,7 +22,7 @@ from utils import RunningAverageMeter, RunningMaximumMeter
 parser = argparse.ArgumentParser()
 parser.add_argument('--adjoint', action='store_true')
 parser.add_argument('--viz', default=True, action='store_true')
-parser.add_argument('--niters', type=int, default=1000)
+parser.add_argument('--niters', type=int, default=100)
 parser.add_argument('--lr', type=float, default=1e-2)
 parser.add_argument('--num_samples', type=int, default=1024)
 parser.add_argument('--width', type=int, default=128)
@@ -29,11 +30,11 @@ parser.add_argument('--hidden_dim', type=int, default=32)
 parser.add_argument('--gpu', type=int, default=0)
 parser.add_argument('--train_dir', type=str, default=None)
 # new arguments
-parser.add_argument('--method', type=str, choices=['rk4', 'dopri5'], default='rk4')
+parser.add_argument('--method', type=str, choices=['rk4', 'euler'], default='rk4')
 parser.add_argument('--precision', type=str, choices=['float32', 'float16', 'bfloat16'], default='float16')
 # This argument is now only used as a default; we will loop over both options.
 parser.add_argument('--odeint', type=str, choices=['torchdiffeq', 'torchmpnode'], default='torchmpnode')
-parser.add_argument('--results_dir', type=str, default="./results8both1kt128")
+parser.add_argument('--results_dir', type=str, default="./results/cnf")
 args = parser.parse_args()
 
 precision_map = {
@@ -42,6 +43,34 @@ precision_map = {
     'bfloat16': torch.bfloat16
 }
 args.precision = precision_map[args.precision]
+
+
+def hyper_trace(W, B, U, x, target_dtype):
+
+    W = W.to(target_dtype)  # [w, d, 1]
+    B = B #.to(target_dtype)  # [w, 1, 1]
+    U = U.to(target_dtype)  # [w, 1, d]
+    x = x.to(target_dtype)  # [n, d]
+
+    w, d, _ = W.shape
+    n = x.shape[0]
+    x_exp = x.unsqueeze(0).expand(w, -1, -1)  # [w, n, d]
+
+    # s_j = x @ w_j + b_j
+    s = torch.bmm(x_exp, W).squeeze(-1)       # [w, n]
+    s = s.to(torch.float32) + B.to(torch.float32).squeeze(-1)                     # [w, n]
+    deriv = 1 - torch.tanh(s.to(target_dtype))**2              # [w, n]
+
+    # u_j ⋅ w_j per neuron
+    uw_dot = torch.bmm(U, W).squeeze(-1).squeeze(-1)  # [w]
+    uw_dot = uw_dot.view(w, 1)                        # [w, 1]
+
+    trace_all = deriv.to(target_dtype) * uw_dot       # [w, n]
+    trace_sum = trace_all.to(torch.float32).sum(dim=0) 
+    trace_est = trace_sum / w        
+    trace_est = trace_est.to(target_dtype)  
+    # print('tracedtype:', trace_est.dtype)
+    return trace_est.view(n, 1)   
 
 class CNF(nn.Module):
     """Adapted from the NumPy implementation at:
@@ -52,32 +81,38 @@ class CNF(nn.Module):
         self.in_out_dim = in_out_dim
         self.hidden_dim = hidden_dim
         self.width = width
-        self.hyper_net = HyperNetwork(in_out_dim, hidden_dim, width)
+        self.hyper_net = HyperNetwork(in_out_dim, hidden_dim, width)  
 
     def forward(self, t, states):
         z = states[0]
         logp_z = states[1]
         batchsize = z.shape[0]
-        with torch.set_grad_enabled(True):
-            z.requires_grad_(True)
-            W, B, U = self.hyper_net(t)
-            Z = torch.unsqueeze(z, 0).repeat(self.width, 1, 1)
-            h = torch.tanh(torch.matmul(Z, W) + B)
-            dz_dt = torch.matmul(h, U).mean(0)
-            dlogp_z_dt = -trace_df_dz(dz_dt, z).view(batchsize, 1)
+        W, B, U = self.hyper_net(t) 
+
+        z = z.to(W.dtype)
+        Z = z.unsqueeze(0).repeat(self.width, 1, 1)
+        h = torch.tanh(torch.matmul(Z, W) + B)
+        f = torch.matmul(h, U).mean(0) 
+
+        target_dtype = torch.get_autocast_dtype('cuda') if torch.is_autocast_enabled() else torch.float32
+        trace_est = hyper_trace(W, B, U, z, target_dtype)  
+        # dlogp_z_dt = -trace_df_dz(dz_dt, z).view(batchsize, 1) # this stays in f32
+        dlogp_z_dt = -trace_est
+        dz_dt = f
+
+        # print("dz_dt dtype:", dz_dt.dtype, "trace_est dtype:", trace_est.dtype)
         return (dz_dt, dlogp_z_dt)
 
 def trace_df_dz(f, z):
     """Calculates the trace of the Jacobian df/dz.
     Stolen from: https://github.com/rtqichen/ffjord/blob/master/lib/layers/odefunc.py#L13
     """
+
     sum_diag = 0.
     for i in range(z.shape[1]):
         sum_diag += torch.autograd.grad(f[:, i].sum(), z, create_graph=True)[0].contiguous()[:, i].contiguous()
-
     return sum_diag.contiguous()
-
-
+    
 class HyperNetwork(nn.Module):
     """Hyper-network allowing f(z(t), t) to change with time.
 
@@ -86,44 +121,36 @@ class HyperNetwork(nn.Module):
     """
     def __init__(self, in_out_dim, hidden_dim, width):
         super().__init__()
-
         blocksize = width * in_out_dim
-
         self.fc1 = nn.Linear(1, hidden_dim)
         self.fc2 = nn.Linear(hidden_dim, hidden_dim)
         self.fc3 = nn.Linear(hidden_dim, 3 * blocksize + width)
-
         self.in_out_dim = in_out_dim
         self.hidden_dim = hidden_dim
         self.width = width
         self.blocksize = blocksize
 
     def forward(self, t):
-        # predict params
+
         params = t.reshape(1, 1)
+        params = params.to(self.fc1.weight.dtype)
         params = torch.tanh(self.fc1(params))
         params = torch.tanh(self.fc2(params))
         params = self.fc3(params)
 
-        # restructure
         params = params.reshape(-1)
         W = params[:self.blocksize].reshape(self.width, self.in_out_dim, 1)
-
         U = params[self.blocksize:2 * self.blocksize].reshape(self.width, 1, self.in_out_dim)
-
         G = params[2 * self.blocksize:3 * self.blocksize].reshape(self.width, 1, self.in_out_dim)
         U = U * torch.sigmoid(G)
-
         B = params[3 * self.blocksize:].reshape(self.width, 1, 1)
         return [W, B, U]
 
 def gaussian_logpdf(x, mu, sigma):
-
     d = x.shape[1]
     return -0.5 * d * np.log(2 * np.pi) - d * np.log(sigma) - ((x - mu)**2).sum(dim=1) / (2 * sigma**2)
 
 def mixture_logpdf(x, sigma = 0.1, R = 2.0, N = 8):
-     
     logpdfs = []
     for k in range(N):
         theta = 2 * math.pi * k / N
@@ -136,7 +163,6 @@ def mixture_logpdf(x, sigma = 0.1, R = 2.0, N = 8):
     return log_sum_exp - math.log(N)
 
 def sample_mixture(num_samples, device, sigma = 0.1, R = 2.0, N = 8):
-
     comps = torch.randint(0, N, (num_samples,), device=device)
     means = []
     for k in range(N):
@@ -161,8 +187,7 @@ t0 = 0
 t1 = 1
 combined_t = np.linspace(t0, t1, viz_timesteps)
 
-for odeint_option in ['torchdiffeq', 'torchmpnode']:
-
+for odeint_option in ['torchdiffeq', 'torchmpnode']: 
     
     results_dir_exp = args.results_dir + '_' + odeint_option
     if not os.path.exists(results_dir_exp):
@@ -189,7 +214,6 @@ for odeint_option in ['torchdiffeq', 'torchmpnode']:
         else:
             from torchdiffeq import odeint as odeint_fn
 
-
     func = CNF(in_out_dim=2, hidden_dim=args.hidden_dim, width=args.width).to(device)
     optimizer = optim.Adam(func.parameters(), lr=args.lr)
     scheduler = optim.lr_scheduler.StepLR(optimizer, step_size=1000, gamma=0.1)
@@ -211,7 +235,7 @@ for odeint_option in ['torchdiffeq', 'torchmpnode']:
             optimizer.load_state_dict(checkpoint['optimizer_state_dict'])
             print('Loaded ckpt from {}'.format(ckpt_path))
 
-    try:
+    else:
         for itr in range(1, args.niters + 1):
             optimizer.zero_grad()
             x, logp_diff_t1 = get_batch(args.num_samples, device)
@@ -232,6 +256,7 @@ for odeint_option in ['torchdiffeq', 'torchmpnode']:
                 z_t0, logp_diff_t0 = z_t[-1], logp_diff_t[-1]
                 logp_x = p_z0.log_prob(z_t0) - logp_diff_t0.view(-1)
                 loss = -logp_x.mean(0)
+
                 loss.backward()
                 optimizer.step()
                 scheduler.step()
@@ -242,16 +267,24 @@ for odeint_option in ['torchdiffeq', 'torchmpnode']:
             mem_meter.update(peak_memory)
             loss_meter.update(loss.item())
 
-            if itr % 100 == 0:
-                print('Iter: {}, running avg loss: {:.4f}'.format(itr, loss_meter.avg))
-    except KeyboardInterrupt:
-        if train_dir_option is not None:
-            ckpt_path = os.path.join(train_dir_option, 'ckpt.pth')
-            torch.save({
-                'func_state_dict': func.state_dict(),
-                'optimizer_state_dict': optimizer.state_dict(),
-            }, ckpt_path)
-            print('Stored checkpoint at {}'.format(ckpt_path))
+            # if itr % 20 == 0:
+            #     print('Iter: {}, running avg loss: {:.4f}'.format(itr, loss_meter.avg))
+
+            if itr % 20 == 0:
+                print(f"Iter: {itr}, Loss: {loss_meter.avg:.4f}, Time (s): {time_meter.avg:.4f}, Peak Mem (MB): {mem_meter.val:.2f}")
+
+    # except KeyboardInterrupt:
+    #     if train_dir_option is not None:
+    #         ckpt_path = os.path.join(train_dir_option, 'ckpt.pth')
+    #         torch.save({
+    #             'func_state_dict': func.state_dict(),
+    #             'optimizer_state_dict': optimizer.state_dict(),
+    #         }, ckpt_path)
+    #         print('Stored checkpoint at {}'.format(ckpt_path))
+    model_name = f"{odeint_option}_{itr}.pth"
+    torch.save({'func_state_dict': func.state_dict(), 'optimizer_state_dict': optimizer.state_dict(),}, os.path.join(results_dir_exp, model_name))
+    print(f"Saved final model to {model_name}")
+
     print('Training complete after {} iters for {}'.format(itr, odeint_option))
 
     if args.viz:
@@ -286,7 +319,7 @@ for odeint_option in ['torchdiffeq', 'torchmpnode']:
             grid_tensor = torch.tensor(grid_points, dtype=torch.float32).to(device)
             logp_diff_grid = torch.zeros(grid_tensor.shape[0], 1, device=device, dtype=torch.float32)
             ts_density = torch.linspace(t1, t0, viz_timesteps).to(device)
-
+            # Compute the learned density evolution on the grid
             z_t_density, logp_diff_density = odeint_fn(
                 func,
                 (grid_tensor, logp_diff_grid),
@@ -307,12 +340,11 @@ for odeint_option in ['torchdiffeq', 'torchmpnode']:
             fig.colorbar(cs1, ax=axs[0])
             cs2 = axs[1].tricontourf(grid_points[:, 0], grid_points[:, 1],
                                      analytical_logp_grid.detach().cpu().numpy(), levels=50)
-            axs[1].set_title("Analytical log density")
+            axs[1].set_title("Target log density")
             fig.colorbar(cs2, ax=axs[1])
             plt.savefig(os.path.join(results_dir_exp, "density_comparison.png"))
             plt.close()
 
-            # Generate animated visualization of sample evolution
             for (t, z_sample, z_density, logp_diff) in zip(
                     np.linspace(t0, t1, viz_timesteps),
                     z_t_samples, z_t_density, logp_diff_density
@@ -322,7 +354,6 @@ for odeint_option in ['torchdiffeq', 'torchmpnode']:
                 plt.axis('off')
                 plt.margins(0, 0)
                 fig.suptitle(f'{t:.2f}s')
-
                 ax1 = fig.add_subplot(1, 3, 1)
                 ax1.set_title('Target')
                 ax1.get_xaxis().set_ticks([])
@@ -336,7 +367,6 @@ for odeint_option in ['torchdiffeq', 'torchmpnode']:
                 ax3.get_xaxis().set_ticks([])
                 ax3.get_yaxis().set_ticks([])
 
-                # For target, use a fixed batch from get_batch
                 target_sample, _ = get_batch(viz_samples, device)
                 ax1.hist2d(*target_sample.detach().cpu().numpy().T, bins=300, density=True,
                            range=[[-4, 4], [-4, 4]])
@@ -345,7 +375,6 @@ for odeint_option in ['torchdiffeq', 'torchmpnode']:
                 logp_model = p_z0.log_prob(z_density) - logp_diff.view(-1)
                 ax3.tricontourf(*grid_points.T,
                                 np.exp(logp_model.detach().cpu().numpy()), 200)
-
                 plt.savefig(os.path.join(results_dir_exp, f"cnf-viz-{int(t*1000):05d}.jpg"),
                            pad_inches=0.2, bbox_inches='tight')
                 plt.close()
@@ -363,12 +392,18 @@ if not os.path.exists(combined_dir):
     os.makedirs(combined_dir)
 
 plt.figure(figsize=(6, 4))
-# Plot each method's curve (assume the same time grid for both)
+
+plot_styles = {
+    'torchdiffeq':  {'color': 'blue', 'linestyle': '-', 'marker': 'o'},
+    'torchmpnode':  {'color': 'red',  'linestyle': '-', 'marker': 'o'},
+}
+
 for method, diffs in comparison_logp_diff.items():
-    plt.plot(combined_t, diffs, marker='o', label=method)
+    style = plot_styles.get(method, {})
+    plt.plot(combined_t, diffs, label=method, markersize=2, **style)
+
 plt.xlabel("Time t")
 plt.ylabel("Log density difference")
-# plt.title("Log density difference")
 plt.legend()
 combined_path = os.path.join(combined_dir, "logp_path_diff.png")
 plt.savefig(combined_path)

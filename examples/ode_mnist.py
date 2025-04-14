@@ -151,7 +151,7 @@ class ODEBlock(nn.Module):
     def forward(self, x):
         self.integration_time = self.integration_time.type_as(x)
         out = self.odeint(self.odefunc, x, self.integration_time, rtol=self.tol, atol=self.tol,method=self.method)
-        return out[1]
+        return out[-1]
 
     @property
     def nfe(self):
@@ -365,7 +365,7 @@ if __name__ == '__main__':
                 nfe_forward = feature_layers[0].nfe
                 feature_layers[0].nfe = 0
 
-        loss.backward()
+            loss.backward()
         optimizer.step()
 
         if is_odenet:

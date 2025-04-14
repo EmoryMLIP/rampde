@@ -40,10 +40,12 @@ class DynamicScaler:
     def init_scaling(self, a):
         # Initialize S such that S * ||a|| ~ target.
         self.S = self.target / (a.norm() + self.delta)
-        self.S = 2**torch.round(torch.log2(self.S))
+        self.S = 2**(torch.round(torch.log2(self.S))).item()
+
         # make sure S is a power of 2
         anew = self.S * a
         while not(anew.isfinite().all()):
+            print('inf')
             self.S *= 0.5
             anew = self.S * a
         
@@ -132,15 +134,13 @@ class FixedGridODESolver(torch.autograd.Function):
                         if t.requires_grad:
                             ti = t[i].clone().detach().requires_grad_(True)
                             dti = dti.clone().detach().requires_grad_(True)
-                            
                             dy = step(func, y, ti, dti)
                             da, gti, gdti, *dparams = torch.autograd.grad(dy, (y, ti, dti, *params), a,create_graph=True,allow_unused=True)
                             gdti2 = torch.sum(a*dy,dim=-1)   
                         else:
                             ti = t[i]
                             dy = step(func, y, ti, dti)
-                            da, *dparams = torch.autograd.grad(dy, (y, *params), a, create_graph=True)
-                    
+                            da, *dparams = torch.autograd.grad(dy, (y, *params), a, create_graph=True)                        
                            
                         if da.isfinite().all() and (gti is None or gti.isfinite().all()) and (gdti is None or gdti.isfinite().all()) and torch.all(torch.stack([dparam.isfinite().all() for dparam in dparams])):
                             #
@@ -262,3 +262,16 @@ class FixedGridODESolver(torch.autograd.Function):
             grad_t = scaler.unscale(grad_t).to(dtype_t)
             
         return (None, None, a, grad_t,  *grad_theta)
+    
+
+if __name__ == "__main__":
+    x = torch.tensor([1e-7, 2e-7, 3e-7], dtype=torch.float16)
+    y = torch.tensor(1e5, dtype=torch.float32)
+
+    exp = torch.round(torch.log2(y))
+    expp = 2**exp
+    print(expp)             
+
+    print(expp * x) 
+    print((2**int(exp)) * x)
+    print((2**(exp.item())) * x)
