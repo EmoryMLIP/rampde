@@ -71,7 +71,7 @@ class FixedGridODESolver(torch.autograd.Function):
 
         # Initialize the dynamic scaler and scale the output adjoints
         scaler = ctx.loss_scaler
-        if scaler.S is None:
+        if scaler.is_initialized==False:
             scaler.init_scaling(at[-1])
         
         at = scaler.scale(at)
@@ -97,36 +97,32 @@ class FixedGridODESolver(torch.autograd.Function):
                     if t.requires_grad:
                         ti.requires_grad_(True)
                         dti_local.requires_grad_(True)
-                    with torch.enable_grad():
-                        # Evaluate step function
-                        dy = step(func, y, ti, dti_local)
-                        # Compute a scalar loss (using the current adjoint a)
-                        loss = torch.sum(dy * a)
-                        # Zero the gradients for the intermediates and network parameters.
-                        for name, param in func.named_parameters():
-                            param.grad = None
-                        y.grad = None
-                        ti.grad = None
-                        dti_local.grad = None
-                        # Do the backward pass on the scalar loss.
-                        loss.backward()
-                        # Extract gradients: da from y, and, if available, gradients for ti and dti_local.
-                    da = y.grad
-                    if t.requires_grad:
-                        gti = ti.grad
-                        gdti = dti_local.grad
-                        gdti2 = torch.sum(a * dy, dim=-1)
-                    else:
-                        gti = gdti = gdti2 = None
+                        with torch.enable_grad():
+                            dy = step(func, y, ti, dti_local)
+                    
+                            grads = torch.autograd.grad(
+                                dy, (y, ti, dti_local, *params), a,
+                                create_graph=True, allow_unused=True
+                            )
+                            da, gti, gdti, *dparams = grads
+                            gdti2 = torch.sum(a * dy, dim=-1)
+                    else: 
+                        with torch.enable_grad():
+                            dy = step(func, y, ti, dti_local)
+                            grads = torch.autograd.grad(
+                                dy, (y, *params), a,
+                                create_graph=True
+                            )
+                            da, *dparams = grads
+                            gti = gdti = gdti2 = None
+                        
+                        
                     # Always extract parameter gradients as a tuple.
-                    dparams = tuple(param.grad for param in func.parameters())
                     if scaler._is_any_infinite((da, gti, gdti, dparams)):
-                        scaler.update_on_overflow(a,at,grad_theta,grad_t,gti)
+                        scaler.update_on_overflow(a,at,grad_theta,grad_t,gti,in_place=True)
                         attempts+=1
                         continue
                     else:
-                        if t.requires_grad:
-                            gdti2 = torch.sum(a * dy, dim=-1)
                         break
                 
                 if attempts >= scaler.max_attempts:
@@ -148,7 +144,7 @@ class FixedGridODESolver(torch.autograd.Function):
                         grad_t_new = None
 
                     if scaler._is_any_infinite((a_new, grad_t_new, grad_theta_new)):
-                        a, at, da, grad_theta, dparams, grad_t, gti, gdti, gdti2 = scaler.update_on_overflow(a,at,da,grad_theta,dparams,grad_t,gti,gdti,gdti2)
+                        scaler.update_on_overflow(a,at,da,grad_theta,dparams,grad_t,gti,gdti,gdti2,in_place=True)
                         update_attempts += 1
                         if update_attempts >= scaler.max_attempts:
                             raise RuntimeError(f"Reached maximum number of update attempts in backward pass at time step i={i}")
@@ -156,23 +152,22 @@ class FixedGridODESolver(torch.autograd.Function):
                         break
 
                 # Adjust upward scaling if the norm is too small
-                if attempts == 0 and update_attempts == 0 and (torch.norm(a_new) / scaler.target < 0.5):
+                if attempts == 0 and update_attempts == 0 and scaler.check_for_increase(a_new):
                     temp = scaler.update_on_small_grad(a_new,at,grad_theta_new, grad_t_new)
                     if not scaler._is_any_infinite(temp):
                         a_new,at,grad_theta_new, grad_t_new = temp
-                elif torch.norm(a_new) / scaler.target > 2:
-                    a_new,at,grad_theta_new, grad_t_new = scaler.update_on_overflow(a_new,at,grad_theta_new, grad_t_new)
+
 
                 a = a_new
                 grad_theta = grad_theta_new
                 if grad_t is not None:
                     grad_t = grad_t_new
 
-            for name, param in func.named_parameters():
-                param.data = old_params[name].data
+        for name, param in func.named_parameters():
+            param.data = old_params[name].data
 
         # Unscale the gradients before returning
-        a, grad_theta, grad_t = scaler.unscale((a, grad_theta,grad_t))
+        scaler.unscale((a, grad_theta,grad_t),in_place=True)
         if t.requires_grad:
             grad_t = grad_t.to(dtype_t)
        

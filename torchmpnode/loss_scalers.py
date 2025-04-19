@@ -2,32 +2,25 @@ import torch
 
 
 
-
-class DynamicScaler:
-    def __init__(self, dtype_low, target_factor=None, increase_factor=2.0, decrease_factor=0.5,
-                 small_grad_threshold=1.0, max_attempts=10, delta=0):
+class NoScaler:
+    """
+    A dummy class that does not perform any scaling.
+    This is useful for debugging or when scaling is not needed.
+    """
+    def __init__(self, dtype_low):
         self.dtype_low = dtype_low
-        # Set a target norm if not provided: 1/epsilon for low precision.
-        self.eps = torch.finfo(dtype_low).eps
-        self.target = target_factor if target_factor is not None else 1.0 / self.eps
-        self.increase_factor = increase_factor
-        self.decrease_factor = decrease_factor
-        self.small_grad_threshold = small_grad_threshold
-        self.max_attempts = max_attempts
-        self.delta = delta
-        self.S = None  # This will be initialized later
+        self.is_initialized=True
+        self.max_attempts = 1
+        self.__name__="NoScaler"
 
     def init_scaling(self, a):
-        # Initialize S such that S * ||a|| ~ target.
-        self.S = self.target / (a.norm() + self.delta).to(torch.float32)
-        self.S = 2**(torch.round(torch.log2(self.S))).item()
+        # No scaling needed, so we do nothing.
+        pass
 
-        # make sure S is a power of 2
-        anew = self.S * a
-        while not(anew.isfinite().all()):
-            print('inf')
-            self.S *= 0.5
-            anew = self.S * a
+    def scale(self, tensor, in_place=False):
+        # No scaling needed, so we return the tensor as is.
+        return tensor
+
     def _is_any_infinite(self, x):
         """
         Recursively check if x (a tensor, list, or tuple of tensors) contains any non-finite values.
@@ -44,7 +37,54 @@ class DynamicScaler:
             return not torch.tensor(x).isfinite().all().item()
         except Exception:
             return False
+        
+    def check_for_increase(self,a):
+        return False
+    
+    def unscale(self, tensor, in_place=False):
+        return tensor
+
+    def update_on_overflow(self, *args, in_place=False):
+        # throw an error
+        raise RuntimeError("Overflow detected, but NoScaler does not handle scaling.")
+        return args
+
+    def update_on_small_grad(self, *args, in_place=False):
+        return args
+
+
+class DynamicScaler(NoScaler):
+    def __init__(self, dtype_low, target_factor=None, increase_factor=2.0, decrease_factor=0.5,
+                 small_grad_threshold=1.0, max_attempts=10, delta=0):
+        super().__init__(dtype_low)
+        # Set a target norm if not provided: 1/epsilon for low precision.
+        self.eps = torch.finfo(dtype_low).eps
+        self.target = target_factor if target_factor is not None else 1.0 / self.eps
+        self.increase_factor = increase_factor
+        self.decrease_factor = decrease_factor
+        self.small_grad_threshold = small_grad_threshold
+        self.max_attempts = max_attempts
+        self.delta = delta
+        self.is_initialized=False
+        self.S = None  # This will be initialized later
+        self.__name__=  "DynamicScaler"
+
+    def init_scaling(self, a):
+        # Initialize S such that S * ||a|| ~ target.
+        self.S = self.target / (a.norm() + self.delta).to(torch.float32)
+        self.S = 2**(torch.round(torch.log2(self.S))).item()
+        
+
+        # make sure S is a power of 2
+        anew = self.S * a
+        while not(anew.isfinite().all()):
+            print('inf')
+            self.S *= 0.5
+            anew = self.S * a
+        self.is_initialized=True
+    
             
+    
     def _apply_scaling(self, x, factor, in_place=False):
         """
         Multiply x by factor. If in_place is True and x is a tensor, modify it in-place.
@@ -85,6 +125,9 @@ class DynamicScaler:
             scaled_args.append(self._apply_scaling(arg, self.decrease_factor, in_place=in_place))
         return tuple(scaled_args)
 
+    def check_for_increase(self, a):
+        return  (torch.norm(a) / self.target < 0.5)
+                 
     def update_on_small_grad(self, *args, in_place=False):
         """
         Update the scaling factor on small gradients (multiply S by increase_factor) and

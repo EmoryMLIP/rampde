@@ -1,6 +1,6 @@
 import torch
 from .fixed_grid import Euler, RK4, FixedGridODESolver
-from .loss_scalers import DynamicScaler
+from .loss_scalers import DynamicScaler, NoScaler
 
 SOLVERS = {'euler': Euler, 'rk4': RK4}
 
