@@ -148,7 +148,7 @@ class Phi(nn.Module):
                 term = z[i+1]
 
             # z_i = z_{i+1} + h K_i' diag(...) z_{i+1}
-            dz = N.h * torch.mm( N.layers[i].weight.t() , tanhopen.t() * term )
+            dz = N.h * torch.mm( N.layers[i].weight.t() , torch.tanh(N.layers[i].forward(u[i-1])).t() * term )
             if print_prec:
                 print("dz dtype", dz.dtype, "dz device", dz.device)
             z[i] = term + dz
