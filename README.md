@@ -44,9 +44,10 @@ python otflow.py
 
 ## Tests
 
-1. Torchdiffeq behavior under Autocast
+In tests/test_torchmpnode.py, we see that torchdiffeq and torchmpnode performs consistently in terms of numerical solution and gradients under the same high precision (f32). However, tests/test_backward_input.py, test_backward_weights.py and test_backward_time.py show that torchmpnode yields better gradient approximations. We can see explicitly the behavior of torchdiffeq under Autocast in
 ```
 python tests/test_autocast_odeint.py
 ```
+Further tests on torchmpnode and gradient scaling can be found in tests/test_odeint.py and tests/test_gradient_scaling.py.
 
 
