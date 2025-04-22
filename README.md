@@ -17,6 +17,9 @@ Key features include:
 python modeleq_demo.py
 ```
 
+Use tests/test_backward_input.py, test_backward_weights.py and test_backward_time.py to test the quality of the gradient approximation based on Taylor expansion.
+
+
 2. Learning the dynamics of a nonlinear ODE
 
 ```
@@ -38,4 +41,12 @@ python cnf8g.py
 ```
 python otflow.py
 ```
+
+## Tests
+
+1. Torchdiffeq behavior under Autocast
+```
+python tests/test_autocast_odeint.py
+```
+
 
