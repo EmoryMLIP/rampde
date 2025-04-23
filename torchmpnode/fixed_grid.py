@@ -111,11 +111,12 @@ class FixedGridODESolver(torch.autograd.Function):
                             dy = step(func, y, ti, dti_local)
                             grads = torch.autograd.grad(
                                 dy, (y, *params), a,
-                                create_graph=True
+                                create_graph=True, allow_unused=True
                             )
                             da, *dparams = grads
                             gti = gdti = gdti2 = None
                         
+                    dparams = [d if d is not None else torch.zeros_like(p) for d, p in zip(dparams, params)]
                         
                     # Always extract parameter gradients as a tuple.
                     if scaler._is_any_infinite((da, gti, gdti, dparams)):
