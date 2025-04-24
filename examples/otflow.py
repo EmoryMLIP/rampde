@@ -6,7 +6,7 @@ import numpy as np
 import matplotlib
 matplotlib.use('agg')
 import matplotlib.pyplot as plt
-from sklearn.datasets import make_circles
+from sklearn.datasets import make_circles, make_moons
 import torch
 import torch.nn as nn
 import torch.optim as optim
@@ -18,9 +18,9 @@ from utils import RunningAverageMeter, RunningMaximumMeter
 
 parser = argparse.ArgumentParser()
 parser.add_argument('--adjoint', action='store_true')
-parser.add_argument('--viz', action='store_true')
-parser.add_argument('--niters', type=int, default=5000)
-parser.add_argument('--num_timesteps', type=int, default=32)
+parser.add_argument('--viz', action='store_true', default=True)
+parser.add_argument('--niters', type=int, default=8000)
+parser.add_argument('--num_timesteps', type=int, default=8)
 parser.add_argument('--test_freq', type=int, default=10)
 parser.add_argument('--lr', type=float, default=1e-2)
 parser.add_argument('--lr_decay', type=float, default=.5)
@@ -28,7 +28,7 @@ parser.add_argument('--lr_decay_steps', type=int, default=20)
 
 parser.add_argument('--num_samples', type=int, default=512)
 parser.add_argument('--num_samples_val', type=int, default=1024)
-parser.add_argument('--hidden_dim', type=int, default=64)
+parser.add_argument('--hidden_dim', type=int, default=32)
 parser.add_argument('--gpu', type=int, default=0)
 parser.add_argument('--train_dir', type=str, default=None)
 parser.add_argument('--seed', type=int, default=None, help="Random seed; if not provided, no seeding will occur")
@@ -37,7 +37,7 @@ parser.add_argument('--seed', type=int, default=None, help="Random seed; if not 
 parser.add_argument('--method', type=str, choices=['rk4', 'euler'], default='rk4')
 parser.add_argument('--precision', type=str, choices=['float32', 'float16','bfloat16'], default='float32')
 parser.add_argument('--odeint', type=str, choices=['torchdiffeq', 'torchmpnode'], default='torchdiffeq')
-parser.add_argument('--results_dir', type=str, default="./results")
+parser.add_argument('--results_dir', type=str, default="./results/ot")
 args = parser.parse_args()
 
 if args.odeint == 'torchmpnode':
@@ -92,6 +92,7 @@ class OTFlow(nn.Module):
 
 def get_batch(num_samples):
     points, _ = make_circles(n_samples=num_samples, noise=0.06, factor=0.5)
+    # points,_ = make_moons(n_samples=num_samples, noise=0.06)
     x = torch.tensor(points).type(torch.float32).to(device)
     logp_diff_t1 = torch.zeros(num_samples, 1).type(torch.float32).to(device)
     cost_L = torch.zeros_like(logp_diff_t1)
@@ -107,7 +108,7 @@ if __name__ == '__main__':
                           if torch.cuda.is_available() else 'cpu')
 
     # model
-    alpha = [1.0, 1.0] 
+    alpha = [1.0, 5.0, 100] 
     func = OTFlow(in_out_dim=2, hidden_dim=args.hidden_dim, alpha=alpha).to(device)
     optimizer = optim.Adam(func.parameters(), lr=args.lr)
     p_z0 = torch.distributions.MultivariateNormal(
@@ -152,7 +153,7 @@ if __name__ == '__main__':
                 z_t1, logp_diff_t1, cost_L_t1, cost_HJB_t1 = z_t[-1], logp_diff_t[-1], cost_L_t[-1], cost_HJB_t[-1]
 
                 logp_x = p_z0.log_prob(z_t1).view(-1,1) + logp_diff_t1
-                loss = -logp_x.mean(0) + alpha[0]* cost_L_t1.mean(0) +alpha[1] * cost_HJB_t1.mean(0)
+                loss = -alpha[2]*logp_x.mean(0) + alpha[0]* cost_L_t1.mean(0) +alpha[1] * cost_HJB_t1.mean(0)
 
                 loss.backward()
                 # print name and norm of every parameter 
@@ -221,8 +222,8 @@ if __name__ == '__main__':
     print('Training complete after {} iters.'.format(itr))
 
     if args.viz:
-        viz_samples = 30000
-        viz_timesteps = 41
+        viz_samples = 1000
+        viz_timesteps = args.num_timesteps
         target_sample, _, _, _ = get_batch(viz_samples)
 
         if not os.path.exists(args.results_dir):
