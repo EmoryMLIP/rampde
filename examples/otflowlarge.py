@@ -12,6 +12,7 @@ import torch.nn as nn
 import torch.optim as optim
 from torch.amp import autocast
 import time
+from mmd import mmd
 from torch.nn.functional import pad
 
 import datasets
@@ -21,16 +22,17 @@ from utils import RunningAverageMeter, RunningMaximumMeter
 
 parser = argparse.ArgumentParser()
 parser.add_argument('--adjoint', action='store_true')
-parser.add_argument('--viz', action='store_true', default=True)
-parser.add_argument('--niters', type=int, default=1000)
+parser.add_argument('--viz', action='store_true', default=True,
+                    help="2D‐slice visualization on high-D data")
+parser.add_argument('--niters', type=int, default=15000)
 parser.add_argument('--num_timesteps', type=int, default=8)
-parser.add_argument('--test_freq', type=int, default=10)
-parser.add_argument('--lr', type=float, default=1e-1)
+parser.add_argument('--test_freq', type=int, default=500)
+parser.add_argument('--lr', type=float, default=1e-2)
 parser.add_argument('--lr_decay', type=float, default=.5)
 parser.add_argument('--lr_decay_steps', type=int, default=20)
 parser.add_argument('--num_samples', type=int, default=512)
 parser.add_argument('--num_samples_val', type=int, default=1024)
-parser.add_argument('--hidden_dim', type=int, default=32)
+parser.add_argument('--hidden_dim', type=int, default=256)
 parser.add_argument('--gpu', type=int, default=0)
 parser.add_argument('--seed', type=int, default=None)
 parser.add_argument('--method', type=str, choices=['rk4', 'euler'], default='rk4')
@@ -38,13 +40,14 @@ parser.add_argument('--precision', type=str,
                     choices=['float32', 'float16','bfloat16'], default='float16')
 parser.add_argument('--odeint', type=str,
                     choices=['torchdiffeq', 'torchmpnode'], default='torchmpnode')
-parser.add_argument('--results_dir', type=str, default="./results/otminiboone")
+parser.add_argument('--results_dir', type=str, default="./results/otminiboone256")
 args = parser.parse_args()
 
 if args.seed is not None:
     torch.manual_seed(args.seed)
     np.random.seed(args.seed)
 
+# choose ODE solver
 if args.odeint == 'torchmpnode':
     print("Using torchmpnode")
     import sys
@@ -57,6 +60,8 @@ else:
     else:
         from torchdiffeq import odeint
 
+os.makedirs(args.results_dir, exist_ok=True)
+# precision mapping
 precision_map = {
     'float32': torch.float32,
     'float16': torch.float16,
@@ -77,7 +82,7 @@ class OTFlow(nn.Module):
         self.in_out_dim = in_out_dim
         self.hidden_dim = hidden_dim
         self.alpha = alpha
-        self.Phi = Phi(2, hidden_dim, in_out_dim, r=2, alph=alpha)
+        self.Phi = Phi(2, hidden_dim, in_out_dim, alph=alpha)
 
     def forward(self, t, states):
         x = states[0]
@@ -124,66 +129,94 @@ if __name__ == '__main__':
     func_dtype     = dtype
 
     try:
-        for itr in range(1, args.niters+1):
-            optimizer.zero_grad()
-            z0, logp0, cL0, cH0 = get_minibatch(train_x, args.num_samples)
-            torch.cuda.reset_peak_memory_stats(device)
-            start = time.perf_counter()
+        # Check if a saved model exists and load it
+        checkpoint_files = glob.glob(os.path.join(args.results_dir, "model_iter_*.pt"))
+        if checkpoint_files:
+            latest_checkpoint = max(checkpoint_files, key=os.path.getctime)
+            checkpoint = torch.load(latest_checkpoint, map_location=device)
+            func.load_state_dict(checkpoint['model_state_dict'])
+            optimizer.load_state_dict(checkpoint['optimizer_state_dict'])
 
-            with autocast(device_type='cuda', dtype=func_dtype):
-                z_t, logp_t, cL_t, cH_t = odeint(
-                    func,
-                    (z0, logp0, cL0, cH0),
-                    torch.linspace(t0, t1, args.num_timesteps, device=device),
-                    method=args.method
-                )
-                z1, logp1, cL1, cH1 = z_t[-1], logp_t[-1], cL_t[-1], cH_t[-1]
-                logp_x = p_z0.log_prob(z1).view(-1,1) + logp1
-                loss   = (-alpha[2]*logp_x.mean()
-                          + alpha[0]*cL1.mean()
-                          + alpha[1]*cH1.mean())
-                loss.backward()
+        else:
 
-            optimizer.step()
-            elapsed = time.perf_counter() - start
-            peak_m  = torch.cuda.max_memory_allocated(device)/(1024**2)
-            time_meter.update(elapsed)
-            mem_meter.update(peak_m)
-            loss_meter.update(loss.item())
-            NLL_meter.update(-logp_x.mean().item())
-            cost_L_meter.update(cL1.mean().item())
-            cost_HJB_meter.update(cH1.mean().item())
+            clampMax = 5
+            clampMin = -5
+            for itr in range(1, args.niters+1):
+                optimizer.zero_grad()
+                z0, logp0, cL0, cH0 = get_minibatch(train_x, args.num_samples)
+                torch.cuda.reset_peak_memory_stats(device)
+                start = time.perf_counter()
+                # clip parameters
+                for p in func.parameters():
+                    p.data = torch.clamp(p.data, clampMin, clampMax)
 
-            if itr % args.test_freq == 0:
-                with torch.no_grad():
-                    vz0, vpl0, vL0, vH0 = get_minibatch(val_x, args.num_samples_val)
-                    
-                    vz_t, vpl_t, vL_t, vH_t = odeint(
+                # Gradient clipping
+                torch.nn.utils.clip_grad_norm_(func.parameters(), max_norm=2.0)
+
+                with autocast(device_type='cuda', dtype=func_dtype):
+                    z_t, logp_t, cL_t, cH_t = odeint(
                         func,
-                        (vz0, vpl0, vL0, vH0),
+                        (z0, logp0, cL0, cH0),
                         torch.linspace(t0, t1, args.num_timesteps, device=device),
                         method=args.method
                     )
-                    vz1, vpl1, vL1, vH1 = vz_t[-1], vpl_t[-1], vL_t[-1], vH_t[-1]
-                    logp_val = p_z0.log_prob(vz1).view(-1,1) + vpl1
-                    loss_val = (-alpha[2]*logp_val.mean()
-                                + alpha[0]*vL1.mean()
-                                + alpha[1]*vH1.mean())
-                print(f"[Iter {itr:5d}] train loss {loss_meter.avg:.4f}, "
-                      f"val loss {loss_val:.4f}, time {time_meter.avg:.3f}s, "
-                      f"mem {mem_meter.max:.0f}MB")
+                    z1, logp1, cL1, cH1 = z_t[-1], logp_t[-1], cL_t[-1], cH_t[-1]
+                    logp_x = p_z0.log_prob(z1).view(-1,1) + logp1
+                    loss   = (-alpha[2]*logp_x.mean()
+                            + alpha[0]*cL1.mean()
+                            + alpha[1]*cH1.mean())
+                    loss.backward()
 
-            if itr == args.lr_decay_steps:
-                for g in optimizer.param_groups:
-                    g['lr'] *= args.lr_decay
-                print("Decayed LR to", optimizer.param_groups[0]['lr'])
+                optimizer.step()
+                elapsed = time.perf_counter() - start
+                peak_m  = torch.cuda.max_memory_allocated(device)/(1024**2)
+                time_meter.update(elapsed)
+                mem_meter.update(peak_m)
+                loss_meter.update(loss.item())
+                NLL_meter.update(-logp_x.mean().item())
+                cost_L_meter.update(cL1.mean().item())
+                cost_HJB_meter.update(cH1.mean().item())
+
+                if itr % args.test_freq == 0:
+                    with torch.no_grad():
+                        vz0, vpl0, vL0, vH0 = get_minibatch(val_x, args.num_samples_val)
+                        
+                        vz_t, vpl_t, vL_t, vH_t = odeint(
+                            func,
+                            (vz0, vpl0, vL0, vH0),
+                            torch.linspace(t0, t1, args.num_timesteps, device=device),
+                            method=args.method
+                        )
+                        vz1, vpl1, vL1, vH1 = vz_t[-1], vpl_t[-1], vL_t[-1], vH_t[-1]
+                        logp_val = p_z0.log_prob(vz1).view(-1,1) + vpl1
+                        loss_val = (-alpha[2]*logp_val.mean()
+                                    + alpha[0]*vL1.mean()
+                                    + alpha[1]*vH1.mean())
+                    print(f"[Iter {itr:5d}] train loss {loss_meter.avg:.4f}, "
+                        f"val loss {loss_val:.4f}, time {time_meter.avg:.3f}s, "
+                        f"mem {mem_meter.max:.0f}MB")
+                    
+                    # Save the model checkpoint
+                    checkpoint_path = os.path.join(args.results_dir, f"model_iter_{itr}.pt")
+                    torch.save({
+                        'iteration': itr,
+                        'model_state_dict': func.state_dict(),
+                        'optimizer_state_dict': optimizer.state_dict(),
+                        'loss': loss_meter.avg,
+                    }, checkpoint_path)
+                    print(f"Model checkpoint saved at {checkpoint_path}")
+
+                if itr == args.lr_decay_steps:
+                    for g in optimizer.param_groups:
+                        g['lr'] *= args.lr_decay
+                    print("Decayed LR to", optimizer.param_groups[0]['lr'])
 
     except KeyboardInterrupt:
         print("Interrupted. No checkpointing implemented.")
-    print(f"Training complete after {itr} iters.")
+
 
     if args.viz:
-        os.makedirs(args.results_dir, exist_ok=True)
+        
         print("Generating 2D‐slice visualizations…")
 
         val_np = val_x.cpu().numpy()
@@ -223,6 +256,13 @@ if __name__ == '__main__':
         modelGen    = z_inv[:, :d].cpu().numpy()
         normSamples = y.cpu().numpy()
 
+        nSamples = min(testData.shape[0], modelGen.shape[0])
+        testSamps  = testData[:nSamples, :]
+        modelSamps = modelGen[:nSamples, :]
+
+        mmd_val = mmd(modelSamps, testSamps)
+        print(f"MMD( ourGen , ρ0 )  num(ourGen)={modelSamps.shape[0]}, "
+              f"num(ρ0)={testSamps.shape[0]} : {mmd_val:.5e}")
 
         nBins = 33
         LOW, HIGH = -4, 4
@@ -235,35 +275,37 @@ if __name__ == '__main__':
 
         for d1 in range(0, d-1, 2):
             d2 = d1 + 1
-            fig, axs = plt.subplots(2, 2, figsize=(20, 12))
-            fig.suptitle(f"Miniboone slices: dims {d1} vs {d2}", y=0.95)
+            fig, axs = plt.subplots(2, 2, figsize=(10, 10))
+            fig.suptitle(f"Miniboone slices: dims {d1} vs {d2}", y=0.98, fontsize=18)
 
             im1 = axs[0,0].hist2d(testData[:,d1], testData[:,d2],
-                                 bins=nBins, range=boundsR0)[3]
-            axs[0,0].set_title(r"$x\sim\rho_0(x)$")
+                 bins=nBins, range=boundsR0)[3]
+            axs[0,0].set_title(r"$x\sim\rho_0(x)$", fontsize=16)
 
             im2 = axs[0,1].hist2d(modelFx[:,d1], modelFx[:,d2],
-                                 bins=nBins, range=bounds)[3]
-            axs[0,1].set_title(r"$f(x)$")
+                 bins=nBins, range=bounds)[3]
+            axs[0,1].set_title(r"$f(x)$", fontsize=16)
 
             im3 = axs[1,0].hist2d(normSamples[:,d1], normSamples[:,d2],
-                                 bins=nBins, range=bounds)[3]
-            axs[1,0].set_title(r"$y\sim\rho_1(y)$")
+                 bins=nBins, range=bounds)[3]
+            axs[1,0].set_title(r"$y\sim\rho_1(y)$", fontsize=16)
 
             im4 = axs[1,1].hist2d(modelGen[:,d1], modelGen[:,d2],
-                                 bins=nBins, range=boundsR0)[3]
-            axs[1,1].set_title(r"$f^{-1}(y)$")
+                 bins=nBins, range=boundsR0)[3]
+            axs[1,1].set_title(r"$f^{-1}(y)$", fontsize=16)
 
             for ax, im in zip(axs.flatten(), [im1,im2,im3,im4]):
-                fig.colorbar(im, ax=ax, fraction=0.046, pad=0.04)
+                fig.colorbar(im, ax=ax, fraction=0.04, pad=0.02)
                 ax.set_xticks([]); ax.set_yticks([]); ax.set_aspect('equal')
 
-            plt.tight_layout(rect=[0,0,1,0.95])
+            plt.tight_layout(rect=[0, 0, 1, 0.96])
             out_file = os.path.join(args.results_dir,
-                                    f"slice_{d1}v{d2}.pdf")
+                f"slice_{d1}v{d2}.pdf")
             plt.savefig(out_file, dpi=400)
             plt.close(fig)
 
         print(f"Saved visualizations in {args.results_dir}")
     else:
         print("Visualization skipped (use --viz).")
+
+
