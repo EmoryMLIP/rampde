@@ -1,5 +1,4 @@
 import os
-os.environ["CUDA_VISIBLE_DEVICES"] = "1"
 import argparse
 import glob
 from PIL import Image
@@ -31,13 +30,13 @@ parser.add_argument('--num_samples', type=int, default=1024)
 parser.add_argument('--width', type=int, default=128)
 parser.add_argument('--hidden_dim', type=int, default=32)
 parser.add_argument('--gpu', type=int, default=0)
-parser.add_argument('--train_dir', type=str, default="./results/cnfnoscaler")
+parser.add_argument('--train_dir', type=str, default="./results/cnf")
 # new arguments
 parser.add_argument('--method', type=str, choices=['rk4', 'euler'], default='rk4')
 parser.add_argument('--precision', type=str, choices=['float32', 'float16', 'bfloat16'], default='float16')
 # This argument is now only used as a default; we will loop over both options.
 parser.add_argument('--odeint', type=str, choices=['torchdiffeq', 'torchmpnode'], default='torchmpnode')
-parser.add_argument('--results_dir', type=str, default="./results/cnfnoscaler")
+parser.add_argument('--results_dir', type=str, default="./results/cnf")
 parser.add_argument('--scaler', type=str, choices=['noscaler', 'dynamicscaler'], default='noscaler')
 
 args = parser.parse_args()
