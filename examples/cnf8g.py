@@ -1,5 +1,4 @@
 import os
-os.environ["CUDA_VISIBLE_DEVICES"] = "1"
 import argparse
 import glob
 from PIL import Image
@@ -14,6 +13,9 @@ from torch.amp import autocast
 import time
 import math
 from torch.nn.functional import pad
+from torchvision import transforms as T
+from torchvision.datasets import CIFAR10
+from torch.utils.data import DataLoader
 
 device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 
@@ -22,20 +24,24 @@ from utils import RunningAverageMeter, RunningMaximumMeter
 parser = argparse.ArgumentParser()
 parser.add_argument('--adjoint', action='store_true')
 parser.add_argument('--viz', default=True, action='store_true')
-parser.add_argument('--niters', type=int, default=100)
+parser.add_argument('--niters', type=int, default=2000)
 parser.add_argument('--lr', type=float, default=1e-2)
 parser.add_argument('--num_samples', type=int, default=1024)
 parser.add_argument('--width', type=int, default=128)
 parser.add_argument('--hidden_dim', type=int, default=32)
 parser.add_argument('--gpu', type=int, default=0)
-parser.add_argument('--train_dir', type=str, default=None)
+parser.add_argument('--train_dir', type=str, default="./results/cnf")
 # new arguments
 parser.add_argument('--method', type=str, choices=['rk4', 'euler'], default='rk4')
 parser.add_argument('--precision', type=str, choices=['float32', 'float16', 'bfloat16'], default='float16')
 # This argument is now only used as a default; we will loop over both options.
 parser.add_argument('--odeint', type=str, choices=['torchdiffeq', 'torchmpnode'], default='torchmpnode')
 parser.add_argument('--results_dir', type=str, default="./results/cnf")
+parser.add_argument('--scaler', type=str, choices=['noscaler', 'dynamicscaler'], default='noscaler')
+
 args = parser.parse_args()
+
+
 
 precision_map = {
     'float32': torch.float32,
@@ -187,7 +193,7 @@ t0 = 0
 t1 = 1
 combined_t = np.linspace(t0, t1, viz_timesteps)
 
-for odeint_option in ['torchdiffeq', 'torchmpnode']: 
+for odeint_option in ['torchdiffeq','torchmpnode']: # 
     
     results_dir_exp = args.results_dir + '_' + odeint_option
     if not os.path.exists(results_dir_exp):
@@ -207,12 +213,20 @@ for odeint_option in ['torchdiffeq', 'torchmpnode']:
         import sys
         sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
         from torchmpnode import odeint as odeint_fn
+        from torchmpnode import NoScaler, DynamicScaler
+        scaler_map = {
+            'noscaler': NoScaler(dtype_low=args.precision),
+            'dynamicscaler': DynamicScaler(dtype_low=args.precision)
+        }
+        scaler = scaler_map[args.scaler]
+        solver_kwargs = {'loss_scaler': scaler}
     else:
         print("Using torchdiffeq")
         if args.adjoint:
             from torchdiffeq import odeint_adjoint as odeint_fn
         else:
             from torchdiffeq import odeint as odeint_fn
+        solver_kwargs = {}
 
     func = CNF(in_out_dim=2, hidden_dim=args.hidden_dim, width=args.width).to(device)
     optimizer = optim.Adam(func.parameters(), lr=args.lr)
@@ -227,13 +241,12 @@ for odeint_option in ['torchdiffeq', 'torchmpnode']:
     time_meter = RunningAverageMeter()
     mem_meter = RunningMaximumMeter()
 
-    if train_dir_option is not None:
-        ckpt_path = os.path.join(train_dir_option, 'ckpt.pth')
-        if os.path.exists(ckpt_path):
-            checkpoint = torch.load(ckpt_path)
-            func.load_state_dict(checkpoint['func_state_dict'])
-            optimizer.load_state_dict(checkpoint['optimizer_state_dict'])
-            print('Loaded ckpt from {}'.format(ckpt_path))
+    ckpt_path = os.path.join(train_dir_option, 'ckpt.pth')
+    if os.path.exists(ckpt_path):
+        checkpoint = torch.load(ckpt_path)
+        func.load_state_dict(checkpoint['func_state_dict'])
+        optimizer.load_state_dict(checkpoint['optimizer_state_dict'])
+        print('Loaded ckpt from {}'.format(ckpt_path))
 
     else:
         for itr in range(1, args.niters + 1):
@@ -251,6 +264,7 @@ for odeint_option in ['torchdiffeq', 'torchmpnode']:
                     atol=1e-5,
                     rtol=1e-5,
                     method=args.method,
+                    **solver_kwargs
                 )
 
                 z_t0, logp_diff_t0 = z_t[-1], logp_diff_t[-1]
@@ -267,25 +281,14 @@ for odeint_option in ['torchdiffeq', 'torchmpnode']:
             mem_meter.update(peak_memory)
             loss_meter.update(loss.item())
 
-            # if itr % 20 == 0:
-            #     print('Iter: {}, running avg loss: {:.4f}'.format(itr, loss_meter.avg))
-
             if itr % 20 == 0:
                 print(f"Iter: {itr}, Loss: {loss_meter.avg:.4f}, Time (s): {time_meter.avg:.4f}, Peak Mem (MB): {mem_meter.val:.2f}")
 
-    # except KeyboardInterrupt:
-    #     if train_dir_option is not None:
-    #         ckpt_path = os.path.join(train_dir_option, 'ckpt.pth')
-    #         torch.save({
-    #             'func_state_dict': func.state_dict(),
-    #             'optimizer_state_dict': optimizer.state_dict(),
-    #         }, ckpt_path)
-    #         print('Stored checkpoint at {}'.format(ckpt_path))
-    model_name = f"{odeint_option}_{itr}.pth"
-    torch.save({'func_state_dict': func.state_dict(), 'optimizer_state_dict': optimizer.state_dict(),}, os.path.join(results_dir_exp, model_name))
-    print(f"Saved final model to {model_name}")
+        model_name = f"{odeint_option}_{itr}.pth"
+        torch.save({'func_state_dict': func.state_dict(), 'optimizer_state_dict': optimizer.state_dict(),}, os.path.join(results_dir_exp, model_name))
+        print(f"Saved final model to {model_name}")
 
-    print('Training complete after {} iters for {}'.format(itr, odeint_option))
+        print('Training complete after {} iters for {}'.format(itr, odeint_option))
 
     if args.viz:
         with torch.no_grad():
@@ -326,12 +329,13 @@ for odeint_option in ['torchdiffeq', 'torchmpnode']:
                 ts_density,
                 atol=1e-5,
                 rtol=1e-5,
-                method='rk4',
+                method='rk4', 
+                **solver_kwargs
             )
             z_final = z_t_density[-1]
             logp_final = logp_diff_density[-1]
-            learned_logp_grid = p_z0.log_prob(z_final) - logp_final.view(-1)
-            analytical_logp_grid = mixture_logpdf(grid_tensor)
+            learned_logp_grid = torch.exp(p_z0.log_prob(z_final) - logp_final.view(-1))
+            analytical_logp_grid = torch.exp(mixture_logpdf(grid_tensor)) 
 
             fig, axs = plt.subplots(1, 2, figsize=(12, 5))
             cs1 = axs[0].tricontourf(grid_points[:, 0], grid_points[:, 1],
