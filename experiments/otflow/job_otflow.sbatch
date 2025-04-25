@@ -19,10 +19,10 @@ python -u otflow_exp.py "$@"
 # Wait a few seconds to ensure the driver has finished writing result_dir.txt.
 sleep 10
 
-# Read the result directory from the file.
-RESULT_DIR=$(cat result_dir.txt)
+RESULT_FILE="result_dir_${SLURM_JOB_ID}.txt"
+RESULT_DIR=$(cat "${RESULT_FILE}")
 echo "Moving SLURM logs to ${RESULT_DIR}"
 
 # Move the SLURM log files into the results directory.
-mv slurm_logs/otflow_${SLURM_JOB_ID}.out ${RESULT_DIR}/slurm_log.out
-mv slurm_logs/otflow_${SLURM_JOB_ID}.err ${RESULT_DIR}/slurm_log.err
+# mv slurm_logs/otflow_${SLURM_JOB_ID}.out ${RESULT_DIR}/slurm_log.out
+# mv slurm_logs/otflow_${SLURM_JOB_ID}.err ${RESULT_DIR}/slurm_log.err

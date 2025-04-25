@@ -1,4 +1,6 @@
 import os, sys
+ # Get Slurm job ID for unique result_dir file
+job_id = os.environ.get("SLURM_JOB_ID", "")
 import argparse
 import datetime
 import time
@@ -64,7 +66,9 @@ timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
 folder_name = f"{precision_str}_{args.odeint}_{args.method}_{seed_str}_{timestamp}"
 result_dir = os.path.join(base_dir, "results", "otflow", folder_name)
 os.makedirs(result_dir, exist_ok=True)
-with open("result_dir.txt", "w") as f:
+# Write result directory to a Slurm-job-specific file
+result_file = f"result_dir_{job_id}.txt" if job_id else "result_dir.txt"
+with open(result_file, "w") as f:
     f.write(result_dir)
 if args.viz:
     png_dir = os.path.join(result_dir, "png")
@@ -85,12 +89,13 @@ sys.stderr = log_file
 print("Experiment started at", datetime.datetime.now())
 print("Arguments:", vars(args))
 print("Results will be saved in:", result_dir)
+print("SLURM job id",job_id )
 
 # Set up CSV file to log numerical data.
 csv_path = os.path.join(result_dir, folder_name + ".csv")
 csv_file = open(csv_path, "w", newline="", buffering=1)
 csv_writer = csv.writer(csv_file)
-csv_writer.writerow(["iteration","running loss","val loss", "val loss (mp)", "running NLL", "val NLL", "val NLL (mp)", "running HJB", "val HJB", "val HJB (mp)",  "elapsed time (s)", "max memory (MB)"])
+csv_writer.writerow(["iteration", "learning rate","running loss","val loss", "val loss (mp)","running L", "val L", "val L(mp)", "running NLL", "val NLL", "val NLL (mp)", "running HJB", "val HJB", "val HJB (mp)",  "elapsed time (s)", "max memory (MB)"])
 
 # ------------------------------
 # Set device and seeds
@@ -161,8 +166,9 @@ if __name__ == '__main__':
 
     # model
     alpha = args.alpha
+    lr = args.lr
     func = OTFlow(in_out_dim=2, hidden_dim=args.hidden_dim, alpha=alpha).to(device)
-    optimizer = optim.Adam(func.parameters(), lr=args.lr)
+    optimizer = optim.Adam(func.parameters(), lr=lr)
     p_z0 = torch.distributions.MultivariateNormal(
         loc=torch.tensor([0.0, 0.0]).to(device),
         covariance_matrix=torch.tensor([[1.0, 0.0], [0.0, 1.0]]).to(device)
@@ -176,6 +182,7 @@ if __name__ == '__main__':
 
     ckpt_path = os.path.join(result_dir, 'ckpt.pth')
     try:
+        training_start = time.perf_counter()
         for itr in range(1, args.niters + 1):
             
             optimizer.zero_grad()
@@ -246,21 +253,24 @@ if __name__ == '__main__':
                         loss_val_mp = alpha[0]* cost_L_val_mp_t1.mean(0) - alpha[1]*logp_x_val_mp.mean(0) +  alpha[2] * cost_HJB_val_mp_t1.mean(0)
 
 
-                print('Iter: {}, running loss: {:.4f}, val loss {:.4f}, val loss (mp) {:.4f}'.format(itr, loss_meter.avg, loss_val.item(), loss_val_mp.item()),
-                  'running NLL: {:.4f}, val NLL: {:.4f}, val NLL (mp): {:.4f}'.format(NLL_meter.avg, logp_x_val.mean(0).item(), logp_x_val_mp.mean(0).item()), 
-                  'running HJB: {:.4f}, val HJB: {:.4f}, val HJB (mp): {:.4f}'.format(cost_HJB_meter.avg, cost_HJB_val_t1.mean(0).item(), cost_HJB_val_mp_t1.mean(0).item()), 
-                   'time: {:.4f}s'.format(time_meter.avg), 'max memory: {:.0f}MB'.format(peak_memory))
+                print('Iter: {}, lr {:.3e} running loss: {:.3e}, val loss {:.3e}, val loss (mp) {:.3e}'.format(itr, lr, loss_meter.avg, loss_val.item(), loss_val_mp.item()),
+                      'running L: {:.3e}, val L: {:.3e}, val L (mp): {:.3e}'.format(cost_L_meter.avg, cost_L_val_t1.mean(0).item(), cost_L_val_mp_t1.mean(0).item()), 
+                      'running NLL: {:.3e}, val NLL: {:.3e}, val NLL (mp): {:.3e}'.format(NLL_meter.avg, logp_x_val.mean(0).item(), logp_x_val_mp.mean(0).item()), 
+                      'running HJB: {:.3e}, val HJB: {:.3e}, val HJB (mp): {:.3e}'.format(cost_HJB_meter.avg, cost_HJB_val_t1.mean(0).item(), cost_HJB_val_mp_t1.mean(0).item()), 
+                      'time: {:.4f}s'.format(time_meter.avg), 'max memory: {:.0f}MB'.format(peak_memory))
                 sys.stdout.flush()
-                csv_writer.writerow([itr, loss_meter.avg, loss_val.item(), loss_val_mp.item(), NLL_meter.avg, logp_x_val.mean(0).item(), logp_x_val_mp.mean(0).item(), cost_HJB_meter.avg, cost_HJB_val_t1.mean(0).item(), cost_HJB_val_t1.mean(0).item(), time_meter.avg, peak_memory])
+                csv_writer.writerow([itr, lr, loss_meter.avg, loss_val.item(), loss_val_mp.item(), cost_L_meter.avg, cost_L_val_t1.mean(0).item(), cost_L_val_mp_t1.mean(0).item(), NLL_meter.avg, logp_x_val.mean(0).item(), logp_x_val_mp.mean(0).item(), cost_HJB_meter.avg, cost_HJB_val_t1.mean(0).item(), cost_HJB_val_t1.mean(0).item(), time_meter.avg, peak_memory])
                 csv_file.flush()
-            # decay learning rate at every lr_decay_steps interval
+            
             if itr % args.lr_decay_steps == 0:
                 for param_group in optimizer.param_groups:
                     param_group['lr'] *= args.lr_decay
-                    print("new learning rate: {}".format(param_group['lr']))
+                    lr = param_group['lr']
+                    print("new learning rate: {}".format(lr))
                     sys.stdout.flush()
 
-        print('Training complete after {} iters.'.format(itr))
+        total_training_time = time.perf_counter() - training_start
+        print('Training complete after {} iters and {:.2f} seconds.'.format(itr, total_training_time))
     except KeyboardInterrupt:
         if args.train_dir is not None:
             ckpt_path = os.path.join(args.train_dir, 'ckpt.pth')
@@ -345,6 +355,91 @@ if __name__ == '__main__':
             img, *imgs = [Image.open(f) for f in sorted(glob.glob(os.path.join(png_dir, f"otflow-viz-*.jpg")))]
             img.save(fp=os.path.join(png_dir, "otflow-viz.gif"), format='GIF', append_images=imgs,
                      save_all=True, duration=250, loop=0)
+        
+        # ------------------------------
+        # Create optimization stats plots
+        # ------------------------------
+        
+        # Read data from CSV file
+        with open(csv_path, "r") as f:
+            reader = csv.reader(f)
+            header = next(reader)
+            data = np.array(list(reader)).astype(np.float32)
+
+        iters = data[:, 0]
+        lr_vals = data[:, 1]
+        running_loss = data[:, 2]
+        val_loss = data[:, 3]
+        val_loss_mp = data[:, 4]
+        running_L = data[:, 5]
+        val_L = data[:, 6]
+        val_L_mp = data[:, 7]
+        running_NLL = data[:, 8]
+        val_NLL = data[:, 9]
+        val_NLL_mp = data[:, 10]
+        running_HJB = data[:, 11]
+        val_HJB = data[:, 12]
+        val_HJB_mp = data[:, 13]
+        max_memory = data[:, 15]
+
+        fig, axs = plt.subplots(2, 3, figsize=(15, 8))
+
+        # 1) Loss function subplot
+        axs[0, 0].plot(iters, running_loss, label="running loss")
+        axs[0, 0].plot(iters, val_loss, label="val loss")
+        axs[0, 0].plot(iters, val_loss_mp,"--", label="val loss (mp)")
+        axs[0, 0].set_title("Loss Function")
+        axs[0, 0].set_xlabel("Iteration")
+        axs[0, 0].set_ylabel("Loss")
+        axs[0, 0].legend()
+
+        # 2) Transport costs subplot
+        axs[0, 1].plot(iters, running_L, label="running L")
+        axs[0, 1].plot(iters, val_L, label="val L")
+        axs[0, 1].plot(iters, val_L_mp,"--", label="val L (mp)")
+        axs[0, 1].set_title("Transport Costs")
+        axs[0, 1].set_xlabel("Iteration")
+        axs[0, 1].set_ylabel("Cost")
+        axs[0, 1].legend()
+
+        # 3) NLL subplot
+        axs[0, 2].plot(iters, running_NLL, label="running NLL")
+        axs[0, 2].plot(iters, val_NLL, label="val NLL")
+        axs[0, 2].plot(iters, val_NLL_mp,"--", label="val NLL (mp)")
+        axs[0, 2].set_title("NLL")
+        axs[0, 2].set_xlabel("Iteration")
+        axs[0, 2].set_ylabel("NLL")
+        axs[0, 2].legend()
+
+        # 4) HJB Penalty subplot
+        axs[1, 0].plot(iters, running_HJB, label="running HJB")
+        axs[1, 0].plot(iters, val_HJB, label="val HJB")
+        axs[1, 0].plot(iters, val_HJB_mp,"--", label="val HJB (mp)")
+        axs[1, 0].set_title("HJB Penalty")
+        axs[1, 0].set_xlabel("Iteration")
+        axs[1, 0].set_ylabel("HJB")
+        axs[1, 0].legend()
+
+        # 5) Learning rate subplot (semilogy)
+        axs[1, 1].semilogy(iters, lr_vals, label="learning rate")
+        axs[1, 1].set_title("Learning Rate")
+        axs[1, 1].set_xlabel("Iteration")
+        axs[1, 1].set_ylabel("Learning Rate")
+        axs[1, 1].legend()
+
+        # 6) Max memory subplot
+        axs[1, 2].plot(iters, max_memory, label="max memory (MB)")
+        axs[1, 2].set_title("Max Memory")
+        axs[1, 2].set_xlabel("Iteration")
+        axs[1, 2].set_ylabel("Memory (MB)")
+        axs[1, 2].legend()
+
+        plt.tight_layout()
+        stats_fig_path = os.path.join(png_dir, "optimization_stats.png")
+        plt.savefig(stats_fig_path, bbox_inches='tight')
+        plt.close()
+
+        print('Saved optimization stats plot at {}'.format(stats_fig_path))
 
         print('Saved visualization animation at {}'.format(os.path.join(png_dir, "otflow-viz.gif")))
 
