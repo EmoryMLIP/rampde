@@ -78,7 +78,7 @@ shutil.copy(script_path, os.path.join(result_dir, os.path.basename(script_path))
 
 # Redirect stdout and stderr to a log file.
 log_path = os.path.join(result_dir, folder_name + ".txt")
-log_file = open(log_path, "w")
+log_file = open(log_path, "w", buffering=1)
 sys.stdout = log_file
 sys.stderr = log_file
 
@@ -88,7 +88,7 @@ print("Results will be saved in:", result_dir)
 
 # Set up CSV file to log numerical data.
 csv_path = os.path.join(result_dir, folder_name + ".csv")
-csv_file = open(csv_path, "w", newline="")
+csv_file = open(csv_path, "w", newline="", buffering=1)
 csv_writer = csv.writer(csv_file)
 csv_writer.writerow(["iteration","running loss","val loss", "val loss (mp)", "running NLL", "val NLL", "val NLL (mp)", "running HJB", "val HJB", "val HJB (mp)",  "elapsed time (s)", "max memory (MB)"])
 
@@ -106,10 +106,9 @@ print("Running on device:", device)
 
 sys.path.insert(0, base_dir)
 sys.path.insert(0, os.path.join(base_dir, "examples"))
+from utils import RunningAverageMeter, RunningMaximumMeter
 if args.odeint == 'torchmpnode':
     print("Using torchmpnode")
-    from utils import RunningAverageMeter, RunningMaximumMeter
-
     from torchmpnode import odeint
 else:    
     print("using torchdiffeq")
@@ -251,15 +250,17 @@ if __name__ == '__main__':
                   'running NLL: {:.4f}, val NLL: {:.4f}, val NLL (mp): {:.4f}'.format(NLL_meter.avg, logp_x_val.mean(0).item(), logp_x_val_mp.mean(0).item()), 
                   'running HJB: {:.4f}, val HJB: {:.4f}, val HJB (mp): {:.4f}'.format(cost_HJB_meter.avg, cost_HJB_val_t1.mean(0).item(), cost_HJB_val_mp_t1.mean(0).item()), 
                    'time: {:.4f}s'.format(time_meter.avg), 'max memory: {:.0f}MB'.format(peak_memory))
+                sys.stdout.flush()
                 csv_writer.writerow([itr, loss_meter.avg, loss_val.item(), loss_val_mp.item(), NLL_meter.avg, logp_x_val.mean(0).item(), logp_x_val_mp.mean(0).item(), cost_HJB_meter.avg, cost_HJB_val_t1.mean(0).item(), cost_HJB_val_t1.mean(0).item(), time_meter.avg, peak_memory])
-
-            
-            # decay learning rate
-            if itr == args.lr_decay_steps:
+                csv_file.flush()
+            # decay learning rate at every lr_decay_steps interval
+            if itr % args.lr_decay_steps == 0:
                 for param_group in optimizer.param_groups:
                     param_group['lr'] *= args.lr_decay
                     print("new learning rate: {}".format(param_group['lr']))
+                    sys.stdout.flush()
 
+        print('Training complete after {} iters.'.format(itr))
     except KeyboardInterrupt:
         if args.train_dir is not None:
             ckpt_path = os.path.join(args.train_dir, 'ckpt.pth')
@@ -268,16 +269,11 @@ if __name__ == '__main__':
                 'optimizer_state_dict': optimizer.state_dict(),
             }, ckpt_path)
             print('Stored ckpt at {}'.format(ckpt_path))
-    finally:
-        csv_file.close()
-        log_file.close()
-    print('Training complete after {} iters.'.format(itr))
-
+    
     if args.viz:
         viz_samples = 30000
         viz_timesteps = 41
         target_sample, _, _, _ = get_batch(viz_samples)
-
 
         with torch.no_grad():
             # Generate evolution of samples
@@ -342,12 +338,16 @@ if __name__ == '__main__':
                 ax3.tricontourf(*z_t1.detach().cpu().numpy().T,
                                 np.exp(logp.detach().cpu().numpy()), 200)
 
-                plt.savefig(os.path.join(png_dir, f"cnf-viz-{int(t*1000):05d}.jpg"),
+                plt.savefig(os.path.join(png_dir, f"otflow-viz-{int(t*1000):05d}.jpg"),
                            pad_inches=0.2, bbox_inches='tight')
                 plt.close()
 
-            img, *imgs = [Image.open(f) for f in sorted(glob.glob(os.path.join(png_dir, f"cnf-viz-*.jpg")))]
-            img.save(fp=os.path.join(png_dir, "cnf-viz.gif"), format='GIF', append_images=imgs,
+            img, *imgs = [Image.open(f) for f in sorted(glob.glob(os.path.join(png_dir, f"otflow-viz-*.jpg")))]
+            img.save(fp=os.path.join(png_dir, "otflow-viz.gif"), format='GIF', append_images=imgs,
                      save_all=True, duration=250, loop=0)
 
-        print('Saved visualization animation at {}'.format(os.path.join(png_dir, "cnf-viz.gif")))
+        print('Saved visualization animation at {}'.format(os.path.join(png_dir, "otflow-viz.gif")))
+
+# Close log and CSV after all output is done
+csv_file.close()
+log_file.close()
