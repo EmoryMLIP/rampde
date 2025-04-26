@@ -255,11 +255,11 @@ if __name__ == '__main__':
 
                 print('Iter: {}, lr {:.3e} running loss: {:.3e}, val loss {:.3e}, val loss (mp) {:.3e}'.format(itr, lr, loss_meter.avg, loss_val.item(), loss_val_mp.item()),
                       'running L: {:.3e}, val L: {:.3e}, val L (mp): {:.3e}'.format(cost_L_meter.avg, cost_L_val_t1.mean(0).item(), cost_L_val_mp_t1.mean(0).item()), 
-                      'running NLL: {:.3e}, val NLL: {:.3e}, val NLL (mp): {:.3e}'.format(NLL_meter.avg, logp_x_val.mean(0).item(), logp_x_val_mp.mean(0).item()), 
+                      'running NLL: {:.3e}, val NLL: {:.3e}, val NLL (mp): {:.3e}'.format(NLL_meter.avg, -logp_x_val.mean(0).item(), -logp_x_val_mp.mean(0).item()), 
                       'running HJB: {:.3e}, val HJB: {:.3e}, val HJB (mp): {:.3e}'.format(cost_HJB_meter.avg, cost_HJB_val_t1.mean(0).item(), cost_HJB_val_mp_t1.mean(0).item()), 
                       'time: {:.4f}s'.format(time_meter.avg), 'max memory: {:.0f}MB'.format(peak_memory))
                 sys.stdout.flush()
-                csv_writer.writerow([itr, lr, loss_meter.avg, loss_val.item(), loss_val_mp.item(), cost_L_meter.avg, cost_L_val_t1.mean(0).item(), cost_L_val_mp_t1.mean(0).item(), NLL_meter.avg, logp_x_val.mean(0).item(), logp_x_val_mp.mean(0).item(), cost_HJB_meter.avg, cost_HJB_val_t1.mean(0).item(), cost_HJB_val_t1.mean(0).item(), time_meter.avg, peak_memory])
+                csv_writer.writerow([itr, lr, loss_meter.avg, loss_val.item(), loss_val_mp.item(), cost_L_meter.avg, cost_L_val_t1.mean(0).item(), cost_L_val_mp_t1.mean(0).item(), NLL_meter.avg, -logp_x_val.mean(0).item(), -logp_x_val_mp.mean(0).item(), cost_HJB_meter.avg, cost_HJB_val_t1.mean(0).item(), cost_HJB_val_t1.mean(0).item(), time_meter.avg, peak_memory])
                 csv_file.flush()
             
             if itr % args.lr_decay_steps == 0:

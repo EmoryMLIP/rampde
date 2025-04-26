@@ -6,12 +6,29 @@ import copy
 from torch.amp import custom_fwd
 
 
-def antiderivTanh(x): # activation function aka the antiderivative of tanh
-    # print("antiderivTanh dtype", x.dtype, "antiderivTanh device", x.device)
-    return torch.abs(x) + torch.log(1+torch.exp(-2.0*torch.abs(x)))
+# def antiderivTanh(x): # activation function aka the antiderivative of tanh
+#     # print("antiderivTanh dtype", x.dtype, "antiderivTanh device", x.device)
+#     return torch.abs(x) + torch.log(1+torch.exp(-2.0*torch.abs(x)))
 
-def derivTanh(x): # act'' aka the second derivative of the activation function antiderivTanh
-    return 1 - torch.pow( torch.tanh(x) , 2 )
+# def derivTanh(x): # act'' aka the second derivative of the activation function antiderivTanh
+#     return 1 - torch.pow( torch.tanh(x) , 2 )
+def antiderivTanh(x, cast=True):
+    if cast:
+        dtype = x.dtype
+        x = x.to(torch.float16)
+    act =  torch.abs(x) + torch.log(1 + torch.exp(-2.0 * torch.abs(x)))
+    if cast:
+        act = act.to(dtype)
+    return act
+
+def derivTanh(x, cast=True):
+    if cast:
+        dtype = x.dtype
+        x = x.to(torch.float16)
+    act =  1 - torch.tanh(x).pow(2)
+    if cast:
+        act = act.to(dtype)
+    return act
 
 class ResNN(nn.Module):
     def __init__(self, d, m, nTh=2):
@@ -78,7 +95,7 @@ class Phi(nn.Module):
 
         self.A  = nn.Parameter(torch.zeros(r, d+1) , requires_grad=True)
         self.A  = nn.init.xavier_uniform_(self.A)
-        self.c  = nn.Linear( d+1  , 1  , bias=True)  # b'*[x;t] + c
+        self.c  = nn.Linear( d+1  , 1  , bias=False)  # b'*[x;t] + c
         self.w  = nn.Linear( m    , 1  , bias=False)
 
         self.N = ResNN(d, m, nTh=nTh)
@@ -86,7 +103,8 @@ class Phi(nn.Module):
         # set initial values
         self.w.weight.data = torch.ones(self.w.weight.data.shape)
         self.c.weight.data = torch.zeros(self.c.weight.data.shape)
-        self.c.bias.data   = torch.zeros(self.c.bias.data.shape)
+        if self.c.bias is not None:
+            self.c.bias.data   = torch.zeros(self.c.bias.data.shape)
 
 
 
