@@ -1,55 +1,57 @@
+#!/usr/bin/env python3
 import os
 import argparse
 import glob
+import csv
+import time
+import math
+
 from PIL import Image
 import numpy as np
 import matplotlib
 matplotlib.use('agg')
 import matplotlib.pyplot as plt
+
 import torch
 import torch.nn as nn
 import torch.optim as optim
 from torch.amp import autocast
-import time
-import math
-from torch.nn.functional import pad
+
 from torchvision import transforms as T
 from torchvision.datasets import CIFAR10
 from torch.utils.data import DataLoader
-
-device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 
 from utils import RunningAverageMeter, RunningMaximumMeter
 
 parser = argparse.ArgumentParser()
 parser.add_argument('--adjoint', action='store_true')
-parser.add_argument('--viz', default=True, action='store_true')
+parser.add_argument('--viz', default=False, action='store_true')
 parser.add_argument('--niters', type=int, default=2000)
 parser.add_argument('--lr', type=float, default=1e-2)
 parser.add_argument('--num_samples', type=int, default=1024)
+parser.add_argument('--num_samples_val', type=int, default=1024)
+parser.add_argument('--num_timesteps', type=int, default=128)
 parser.add_argument('--width', type=int, default=128)
 parser.add_argument('--hidden_dim', type=int, default=32)
 parser.add_argument('--gpu', type=int, default=0)
-parser.add_argument('--train_dir', type=str, default="./results/cnf")
-# new arguments
+parser.add_argument('--train_dir', type=str, default="./results/cnfcsv32t")
 parser.add_argument('--method', type=str, choices=['rk4', 'euler'], default='rk4')
-parser.add_argument('--precision', type=str, choices=['float32', 'float16', 'bfloat16'], default='float16')
-# This argument is now only used as a default; we will loop over both options.
+parser.add_argument('--precision', type=str, choices=['float32', 'float16', 'bfloat16'], default='float32')
 parser.add_argument('--odeint', type=str, choices=['torchdiffeq', 'torchmpnode'], default='torchmpnode')
-parser.add_argument('--results_dir', type=str, default="./results/cnf")
-parser.add_argument('--scaler', type=str, choices=['noscaler', 'dynamicscaler'], default='noscaler')
+parser.add_argument('--results_dir', type=str, default="./results/cnfcsv32t")
+parser.add_argument('--scaler', type=str, choices=['noscaler', 'dynamicscaler'], default='dynamicscaler')
+parser.add_argument('--test_freq', type=int, default=20)
 
 args = parser.parse_args()
 
-
-
+# Map precision string to torch dtype
 precision_map = {
     'float32': torch.float32,
     'float16': torch.float16,
     'bfloat16': torch.bfloat16
 }
 args.precision = precision_map[args.precision]
-
+device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 
 def hyper_trace(W, B, U, x, target_dtype):
 
@@ -67,7 +69,7 @@ def hyper_trace(W, B, U, x, target_dtype):
     s = s.to(torch.float32) + B.to(torch.float32).squeeze(-1)                     # [w, n]
     deriv = 1 - torch.tanh(s.to(target_dtype))**2              # [w, n]
 
-    # u_j ⋅ w_j per neuron
+    # u_j * w_j 
     uw_dot = torch.bmm(U, W).squeeze(-1).squeeze(-1)  # [w]
     uw_dot = uw_dot.view(w, 1)                        # [w, 1]
 
@@ -76,7 +78,7 @@ def hyper_trace(W, B, U, x, target_dtype):
     trace_est = trace_sum / w        
     trace_est = trace_est.to(target_dtype)  
     # print('tracedtype:', trace_est.dtype)
-    return trace_est.view(n, 1)   
+    return trace_est.view(n, 1)  
 
 class CNF(nn.Module):
     """Adapted from the NumPy implementation at:
@@ -186,109 +188,165 @@ def get_batch(num_samples, device):
     logp_diff_t1 = torch.zeros(num_samples, 1, device=device, dtype=torch.float32)
     return x, logp_diff_t1
 
+
+
 comparison_logp_diff = {}
 viz_samples = 30000
 viz_timesteps = 41
-t0 = 0
-t1 = 1
+t0, t1 = 0.0, 1.0
 combined_t = np.linspace(t0, t1, viz_timesteps)
 
-for odeint_option in ['torchdiffeq','torchmpnode']: # 
-    
-    results_dir_exp = args.results_dir + '_' + odeint_option
-    if not os.path.exists(results_dir_exp):
-        os.makedirs(results_dir_exp)
-    
-    if args.train_dir is not None:
-        train_dir_option = args.train_dir + '_' + odeint_option
-        if not os.path.exists(train_dir_option):
-            os.makedirs(train_dir_option)
-    else:
-        train_dir_option = None
+for odeint_option in ['torchmpnode', 'torchdiffeq']: # 
 
-    if odeint_option == 'torchmpnode':
-        print("Using torchmpnode")
-        # For torchmpnode, method must be 'rk4'
-        assert args.method == 'rk4'
-        import sys
-        sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
-        from torchmpnode import odeint as odeint_fn
-        from torchmpnode import NoScaler, DynamicScaler
-        scaler_map = {
-            'noscaler': NoScaler(dtype_low=args.precision),
-            'dynamicscaler': DynamicScaler(dtype_low=args.precision)
-        }
-        scaler = scaler_map[args.scaler]
-        solver_kwargs = {'loss_scaler': scaler}
-    else:
-        print("Using torchdiffeq")
-        if args.adjoint:
-            from torchdiffeq import odeint_adjoint as odeint_fn
+    results_dir_exp = f"{args.results_dir}_{odeint_option}"
+    os.makedirs(results_dir_exp, exist_ok=True)
+    train_dir_option = f"{args.train_dir}_{odeint_option}" if args.train_dir else None
+    if train_dir_option:
+        os.makedirs(train_dir_option, exist_ok=True)
+
+    # Prepare CSV for metrics logging
+    csv_path = os.path.join(train_dir_option, "metrics.csv")
+    with open(csv_path, "w", newline='') as csv_file:
+        csv_writer = csv.writer(csv_file)
+        print(f"[INFO] Writing metrics CSV to: {csv_path}")
+        csv_writer.writerow([
+            "iter", "lr",
+            "running_loss", "val_loss", "val_loss_mp",
+            "running_NLL", "val_NLL", "val_NLL_mp",
+            "time", "max_memory"
+        ])
+
+
+        if odeint_option == 'torchmpnode':
+            print("Using torchmpnode")
+            # For torchmpnode, method must be 'rk4'
+            assert args.method == 'rk4'
+            import sys
+            sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
+            from torchmpnode import odeint as odeint_fn
+            from torchmpnode import NoScaler, DynamicScaler
+            scaler_map = {
+                'noscaler': NoScaler(dtype_low=args.precision),
+                'dynamicscaler': DynamicScaler(dtype_low=args.precision)
+            }
+            scaler = scaler_map[args.scaler]
+            solver_kwargs = {'loss_scaler': scaler}
         else:
-            from torchdiffeq import odeint as odeint_fn
-        solver_kwargs = {}
+            print("Using torchdiffeq")
+            if args.adjoint:
+                from torchdiffeq import odeint_adjoint as odeint_fn
+            else:
+                from torchdiffeq import odeint as odeint_fn
+            solver_kwargs = {}
 
-    func = CNF(in_out_dim=2, hidden_dim=args.hidden_dim, width=args.width).to(device)
-    optimizer = optim.Adam(func.parameters(), lr=args.lr)
-    scheduler = optim.lr_scheduler.StepLR(optimizer, step_size=1000, gamma=0.1)
+        func = CNF(in_out_dim=2, hidden_dim=args.hidden_dim, width=args.width).to(device)
+        optimizer = optim.Adam(func.parameters(), lr=args.lr)
+        scheduler = optim.lr_scheduler.StepLR(optimizer, step_size=1000, gamma=0.1)
 
-    p_z0 = torch.distributions.MultivariateNormal(
-        loc=torch.tensor([0.0, 0.0], device=device),
-        covariance_matrix=torch.tensor([[1, 0.0], [0.0, 1]], device=device)
-    )
+        p_z0 = torch.distributions.MultivariateNormal(
+            loc=torch.tensor([0.0, 0.0], device=device),
+            covariance_matrix=torch.tensor([[1, 0.0], [0.0, 1]], device=device)
+        )
 
-    loss_meter = RunningAverageMeter()
-    time_meter = RunningAverageMeter()
-    mem_meter = RunningMaximumMeter()
+        loss_meter = RunningAverageMeter()
+        time_meter = RunningAverageMeter()
+        mem_meter = RunningMaximumMeter()
 
-    ckpt_path = os.path.join(train_dir_option, 'ckpt.pth')
-    if os.path.exists(ckpt_path):
-        checkpoint = torch.load(ckpt_path)
-        func.load_state_dict(checkpoint['func_state_dict'])
-        optimizer.load_state_dict(checkpoint['optimizer_state_dict'])
-        print('Loaded ckpt from {}'.format(ckpt_path))
 
-    else:
-        for itr in range(1, args.niters + 1):
-            optimizer.zero_grad()
-            x, logp_diff_t1 = get_batch(args.num_samples, device)
-            start_time = time.perf_counter()
-            torch.cuda.reset_peak_memory_stats(device)
+        checkpoint_files = glob.glob(os.path.join(train_dir_option, f'{odeint_option}_*.pth'))
+        if checkpoint_files:
+            latest_checkpoint = max(checkpoint_files, key=os.path.getctime)
+            cp = torch.load(latest_checkpoint, map_location=device)
+            func.load_state_dict(cp['func_state_dict'])
+            optimizer.load_state_dict(cp['optimizer_state_dict'])
+            print(f"Loaded checkpoint from {latest_checkpoint}")
+        else:
+            for itr in range(1, args.niters + 1):
+                optimizer.zero_grad()
+                x, logp_diff_t1 = get_batch(args.num_samples, device)
+                start_time = time.perf_counter()
+                torch.cuda.reset_peak_memory_stats(device)
 
-            with autocast(device_type='cuda', dtype=args.precision):
-                ts = torch.linspace(t1, t0, 128).to(device)
-                z_t, logp_diff_t = odeint_fn(
-                    func,
-                    (x, logp_diff_t1),
-                    ts,
-                    atol=1e-5,
-                    rtol=1e-5,
-                    method=args.method,
-                    **solver_kwargs
-                )
+                with autocast(device_type='cuda', dtype=args.precision):
+                    ts = torch.linspace(t1, t0, args.num_timesteps, device=device)
+                    z_t, logp_diff_t = odeint_fn(
+                        func,
+                        (x, logp_diff_t1),
+                        ts,
+                        atol=1e-5,
+                        rtol=1e-5,
+                        method=args.method,
+                        **solver_kwargs
+                    )
+                    z_t0, logp_diff_t0 = z_t[-1], logp_diff_t[-1]
+                    logp_x = p_z0.log_prob(z_t0) - logp_diff_t0.view(-1)
+                    loss = -logp_x.mean(0)
 
-                z_t0, logp_diff_t0 = z_t[-1], logp_diff_t[-1]
-                logp_x = p_z0.log_prob(z_t0) - logp_diff_t0.view(-1)
-                loss = -logp_x.mean(0)
+                    loss.backward()
+                    optimizer.step()
+                    scheduler.step()
 
-                loss.backward()
-                optimizer.step()
-                scheduler.step()
+                elapsed_time = time.perf_counter() - start_time
+                peak_memory = torch.cuda.max_memory_allocated(device) / (1024 * 1024)
+                time_meter.update(elapsed_time)
+                mem_meter.update(peak_memory)
+                loss_meter.update(loss.item())
 
-            elapsed_time = time.perf_counter() - start_time
-            peak_memory = torch.cuda.max_memory_allocated(device) / (1024 * 1024)
-            time_meter.update(elapsed_time)
-            mem_meter.update(peak_memory)
-            loss_meter.update(loss.item())
+                if itr % args.test_freq == 0:
 
-            if itr % 20 == 0:
-                print(f"Iter: {itr}, Loss: {loss_meter.avg:.4f}, Time (s): {time_meter.avg:.4f}, Peak Mem (MB): {mem_meter.val:.2f}")
+                    # compute validation losses
+                    with torch.no_grad():
+                        x_val, lpv1 = get_batch(args.num_samples_val, device)
+                        ts_val = torch.linspace(t1, t0, args.num_timesteps, device=device)
+                        z_v, lp_v = odeint_fn(func, (x_val, lpv1), ts_val,
+                                            atol=1e-5, rtol=1e-5,
+                                            method=args.method,
+                                            **solver_kwargs)
+                        z0_v, lp0_v = z_v[-1], lp_v[-1]
+                        logp_val = p_z0.log_prob(z0_v) - lp0_v.view(-1)
+                        loss_val = -logp_val.mean()
 
-        model_name = f"{odeint_option}_{itr}.pth"
-        torch.save({'func_state_dict': func.state_dict(), 'optimizer_state_dict': optimizer.state_dict(),}, os.path.join(results_dir_exp, model_name))
-        print(f"Saved final model to {model_name}")
+                        with autocast(device_type='cuda', dtype=args.precision):
+                            lpv1_mp = torch.zeros_like(lpv1)
+                            z_v_mp, lp_v_mp = odeint_fn(func, (x_val, lpv1_mp), ts_val,
+                                                        atol=1e-5, rtol=1e-5,
+                                                        method=args.method,
+                                                        **solver_kwargs)
+                            z0_mp, lp0_mp = z_v_mp[-1], lp_v_mp[-1]
+                            logp_val_mp = p_z0.log_prob(z0_mp) - lp0_mp.view(-1)
+                            loss_val_mp = -logp_val_mp.mean()
 
-        print('Training complete after {} iters for {}'.format(itr, odeint_option))
+                    print(
+                        f"Iter {itr:4d} | "
+                        f"Train loss: {loss_meter.avg:.4f} | "
+                        f"Val loss: {loss_val.item():.4f} | "
+                        f"Val loss (mp): {loss_val_mp.item():.4f} | "
+                        f"Time avg: {time_meter.avg:.4f}s | "
+                        f"Mem peak: {mem_meter.val:.2f}MB"
+                    )
+
+                    csv_writer.writerow([
+                        itr,
+                        optimizer.param_groups[0]['lr'],
+                        loss_meter.avg,
+                        loss_val.item(),
+                        loss_val_mp.item(),
+                        loss_meter.avg,                 # running_NLL
+                        (-logp_val.mean()).item(),      # val_NLL
+                        (-logp_val_mp.mean()).item(),   # val_NLL_mp
+                        time_meter.avg,
+                        mem_meter.val
+                    ])
+                    csv_file.flush()
+
+            try:
+                torch.save({
+                    'func_state_dict': func.state_dict(),
+                    'optimizer_state_dict': optimizer.state_dict()
+                }, os.path.join(train_dir_option, f"{odeint_option}_{args.niters}.pth"))
+
+
+            # csv_file.close()
 
     if args.viz:
         with torch.no_grad():
@@ -389,28 +447,78 @@ for odeint_option in ['torchdiffeq','torchmpnode']: #
                 img.save(fp=os.path.join(results_dir_exp, "cnf-viz.gif"), format='GIF', append_images=rest_imgs,
                          save_all=True, duration=250, loop=0)
             print('Saved visualizations for', odeint_option)
-    print('Experiment with {} completed.'.format(odeint_option))
 
-combined_dir = args.results_dir + '_combined'
-if not os.path.exists(combined_dir):
-    os.makedirs(combined_dir)
+    # ------------------------------
+    # Create optimization stats plots
+    # ------------------------------
+    with open(csv_path, "r") as f:
+        reader = csv.reader(f)
+        next(reader)
+        data = np.array(list(reader)).astype(np.float32)
 
-plt.figure(figsize=(6, 4))
+    iters       = data[:, 0]
+    lr_vals     = data[:, 1]
+    running_loss= data[:, 2]
+    val_loss    = data[:, 3]
+    val_loss_mp = data[:, 4]
+    running_NLL = data[:, 5]
+    val_NLL     = data[:, 6]
+    val_NLL_mp  = data[:, 7]
+    time_vals   = data[:, 8]
+    max_memory  = data[:, 9]
 
-plot_styles = {
-    'torchdiffeq':  {'color': 'blue', 'linestyle': '-', 'marker': 'o'},
-    'torchmpnode':  {'color': 'red',  'linestyle': '-', 'marker': 'o'},
-}
+    fig, axs = plt.subplots(2, 2, figsize=(12, 8))
 
+    # 1) Loss Function subplot
+    axs[0, 0].plot(iters, running_loss,    label="running loss")
+    axs[0, 0].plot(iters, val_loss,        label="val loss")
+    axs[0, 0].plot(iters, val_loss_mp, "--",label="val loss (mp)")
+    axs[0, 0].set_title("Loss Function")
+    axs[0, 0].set_xlabel("Iteration")
+    axs[0, 0].set_ylabel("Loss")
+    axs[0, 0].legend()
+
+    # 2) NLL subplot
+    axs[0, 1].plot(iters, running_NLL,    label="running NLL")
+    axs[0, 1].plot(iters, val_NLL,        label="val NLL")
+    axs[0, 1].plot(iters, val_NLL_mp, "--",label="val NLL (mp)")
+    axs[0, 1].set_title("Negative Log-Likelihood")
+    axs[0, 1].set_xlabel("Iteration")
+    axs[0, 1].set_ylabel("NLL")
+    axs[0, 1].legend()
+
+    # 3) Learning Rate subplot
+    axs[1, 0].semilogy(iters, lr_vals, label="learning rate")
+    axs[1, 0].set_title("Learning Rate")
+    axs[1, 0].set_xlabel("Iteration")
+    axs[1, 0].set_ylabel("LR")
+    axs[1, 0].legend()
+
+    # 4) Max Memory subplot
+    axs[1, 1].plot(iters, max_memory, label="max memory (MB)")
+    axs[1, 1].set_title("Max Memory")
+    axs[1, 1].set_xlabel("Iteration")
+    axs[1, 1].set_ylabel("Memory (MB)")
+    axs[1, 1].legend()
+
+    plt.tight_layout()
+    stats_fig_path = os.path.join(results_dir_exp, "optimization_stats.png")
+    plt.savefig(stats_fig_path, bbox_inches='tight')
+    plt.close()
+    print(f"Saved optimization stats plot at {stats_fig_path}")
+
+    csv_file.close()
+
+combined_dir = f"{args.results_dir}_combined"
+os.makedirs(combined_dir, exist_ok=True)
+plt.figure(figsize=(6,4))
+styles = {'torchdiffeq':{'linestyle':'-','marker':'o'},
+          'torchmpnode':{'linestyle':'-','marker':'o'}}
 for method, diffs in comparison_logp_diff.items():
-    style = plot_styles.get(method, {})
-    plt.plot(combined_t, diffs, label=method, markersize=2, **style)
-
+    plt.plot(combined_t, diffs, label=method, **styles.get(method, {}))
 plt.xlabel("Time t")
 plt.ylabel("Log density difference")
 plt.legend()
-combined_path = os.path.join(combined_dir, "logp_path_diff.png")
-plt.savefig(combined_path)
+plt.savefig(os.path.join(combined_dir, "logp_path_diff.png"), bbox_inches='tight')
 plt.close()
-print("Saved combined logp path difference plot at", combined_path)
-
+print(f"Saved combined log-pdf difference at {combined_dir}")
