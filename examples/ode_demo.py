@@ -18,7 +18,7 @@ from torchmpnode import odeint as odeint_mp
 from utils import RunningAverageMeter, RunningMaximumMeter
 
 parser = argparse.ArgumentParser('ODE demo')
-parser.add_argument('--data_size',     type=int, default=5000)
+parser.add_argument('--data_size',     type=int, default=30000)
 parser.add_argument('--batch_time',    type=int, default=100)
 parser.add_argument('--batch_size',    type=int, default=20)
 parser.add_argument('--niters',        type=int, default=1000)
@@ -27,7 +27,7 @@ parser.add_argument('--viz',           action='store_true', default=True)
 parser.add_argument('--gpu',           type=int, default=0)
 parser.add_argument('--adjoint',       action='store_true')
 parser.add_argument('--method',        type=str, choices=['rk4','dopri5','euler'], default='rk4')
-parser.add_argument('--precision',     type=str, choices=['float32','float16','bfloat16'], default='bfloat16')
+parser.add_argument('--precision',     type=str, choices=['float32','float16','bfloat16'], default='float16')
 parser.add_argument('--odeint',        type=str, choices=['torchdiffeq','torchmpnode'], default='torchmpnode')
 parser.add_argument('--results_dir',   type=str, default='png_rmsprop_b16')
 parser.add_argument('--hidden_dim',    type=int, default=128)
@@ -44,7 +44,7 @@ device = torch.device(f'cuda:{args.gpu}' if torch.cuda.is_available() else 'cpu'
 
 true_y0 = torch.tensor([[2., 0.]], device=device)
 t       = torch.linspace(0., 30., args.data_size, device=device)
-true_A  = torch.tensor([[-0.1, 2.0], [-2.0, -0.1]], device=device)
+true_A  = torch.tensor([[-0.1, 6.0], [-2.0, -0.1]], device=device)
 
 torch.manual_seed(0)
 np.random.seed(0)
@@ -85,9 +85,9 @@ def visualize_compare(true_y, func_d, func_m, odeint_option, itr):
 
         ax_traj2.cla()
         ax_traj2.set_title('y₂')
-        ax_traj2.plot(t.cpu(), true_y[:,0,1].cpu(), 'g-')
-        ax_traj2.plot(t.cpu(), pred_d[:,0,1].cpu(), 'b--')
-        ax_traj2.plot(t.cpu(), pred_m[:,0,1].cpu(), 'r--')
+        ax_traj2.plot(t.cpu(), true_y[:,0,1].cpu(), 'g-', label='True')
+        ax_traj2.plot(t.cpu(), pred_d[:,0,1].cpu(), 'b--', label='Torchdiffeq')
+        ax_traj2.plot(t.cpu(), pred_m[:,0,1].cpu(), 'r--', label='Torchmpode')
 
         ax_phase.cla()
         ax_phase.set_title('Phase')
@@ -155,8 +155,7 @@ if __name__ == '__main__':
             with autocast(device_type='cuda', dtype=args.precision):
                 pred = odeint_fn(func, y0, bt, method=args.method)
                 loss = torch.mean(torch.abs(pred - y))
-
-            loss.backward()
+                loss.backward()
             optimizer.step()
 
             now = time.time()
@@ -210,22 +209,22 @@ if __name__ == '__main__':
         time_vals  = data[:, 3]
         mem_vals   = data[:, 4]
 
-        fig, axs = plt.subplots(2, 2, figsize=(12, 8))
+        fig, axs = plt.subplots(1, 2, figsize=(6, 8))
 
         # 1) Loss subplot
-        axs[0, 0].plot(iters, train_loss, label="train loss")
-        axs[0, 0].plot(iters,   val_loss, label="val loss")
-        axs[0, 0].set_title("Loss")
-        axs[0, 0].set_xlabel("Iteration")
-        axs[0, 0].set_ylabel("Loss")
-        axs[0, 0].legend()
+        axs[0].plot(iters, train_loss, label="train loss")
+        axs[0].plot(iters,   val_loss, label="val loss")
+        axs[0].set_title("Loss")
+        axs[0].set_xlabel("Iteration")
+        axs[0].set_ylabel("Loss")
+        axs[0].legend()
 
         # 2) Memory subplot
-        axs[1, 0].plot(iters, mem_vals, label="peak mem (MB)")
-        axs[1, 0].set_title("Memory Usage")
-        axs[1, 0].set_xlabel("Iteration")
-        axs[1, 0].set_ylabel("Memory (MB)")
-        axs[1, 0].legend()
+        axs[1].plot(iters, mem_vals, label="peak mem (MB)")
+        axs[1].set_title("Memory Usage")
+        axs[1].set_xlabel("Iteration")
+        axs[1].set_ylabel("Memory (MB)")
+        axs[1].legend()
 
         plt.tight_layout()
         stats_fig = os.path.join(results_dir_exp, "optimization_stats.png")
