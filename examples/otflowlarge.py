@@ -16,7 +16,9 @@ from torch.amp import autocast
 import time
 import datetime
 
-from mmd import mmd
+import sys
+sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
+from src.mmd import mmd
 from torch.nn.functional import pad
 
 import datasets
