@@ -33,10 +33,11 @@ parser.add_argument('--batch_size', type=int, default=128)
 parser.add_argument('--test_batch_size', type=int, default=1000)
 # new arguments
 parser.add_argument('--method', type=str, choices=['rk4', 'dopri5'], default='rk4')
-parser.add_argument('--precision', type=str, choices=['float32', 'float16','bfloat16'], default='float32')
-parser.add_argument('--odeint', type=str, choices=['torchdiffeq', 'torchmpnode'], default='torchdiffeq')
+parser.add_argument('--precision', type=str, choices=['float32', 'float16','bfloat16'], default='float16')
+parser.add_argument('--odeint', type=str, choices=['torchdiffeq', 'torchmpnode'], default='torchmpnode')
 
-parser.add_argument('--save', type=str, default='./experiment1')
+parser.add_argument('--results_dir', type=str, default='./results')
+parser.add_argument('--seed', type=int, default=0)
 parser.add_argument('--debug', action='store_true')
 parser.add_argument('--gpu', type=int, default=0)
 args = parser.parse_args()
@@ -311,9 +312,9 @@ def get_logger(logpath, filepath, package_files=[], displaying=True, saving=True
 
 if __name__ == '__main__':
 
-    makedirs(args.save)
+    makedirs(args.results_dir)
     logger = get_logger(
-        logpath=os.path.join(args.save, 'logs'),
+        logpath=os.path.join(args.results_dir, 'logs'),
         filepath=os.path.abspath(__file__),
         debug=args.debug
     )
@@ -376,7 +377,7 @@ if __name__ == '__main__':
     end = time.time()
 
 
-    csv_path = os.path.join(args.save, 'metrics.csv')
+    csv_path = os.path.join(args.results_dir, 'metrics.csv')
     csv_file = open(csv_path, 'w', newline='')
     writer = csv.writer(csv_file)
     writer.writerow([
@@ -433,7 +434,7 @@ if __name__ == '__main__':
                 if val_acc > best_acc:
                     torch.save(
                         {'state_dict': model.state_dict(), 'args': args},
-                        os.path.join(args.save, 'model.pth')
+                        os.path.join(args.results_dir, 'model.pth')
                     )
                     best_acc = val_acc
 
@@ -473,7 +474,7 @@ if __name__ == '__main__':
     plt.ylabel('Accuracy')
     plt.legend()
     plt.tight_layout()
-    acc_plot = os.path.join(args.save, 'accuracy.png')
+    acc_plot = os.path.join(args.results_dir, 'accuracy.png')
     plt.savefig(acc_plot, bbox_inches='tight')
     plt.close()
     logger.info(f"Saved accuracy plot at {acc_plot}")
@@ -486,7 +487,7 @@ if __name__ == '__main__':
     # plt.ylabel('Number of Function Evaluations')
     # plt.legend()
     # plt.tight_layout()
-    # nfe_plot = os.path.join(args.save, 'nfe.png')
+    # nfe_plot = os.path.join(args.results_dir, 'nfe.png')
     # plt.savefig(nfe_plot, bbox_inches='tight')
     # plt.close()
     # logger.info(f"Saved NFE plot at {nfe_plot}")
