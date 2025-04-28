@@ -116,7 +116,7 @@ print("Model checkpoint path:", ckpt_path)
 csv_path = os.path.join(result_dir, folder_name + ".csv")
 csv_file = open(csv_path, "w", newline="", buffering=1)
 csv_writer = csv.writer(csv_file)
-csv_writer.writerow(["iteration", "learning rate","running loss","val loss", "val loss (mp)","running L", "val L", "val L(mp)", "running NLL", "val NLL", "val NLL (mp)", "running HJB", "val HJB", "val HJB (mp)",  "elapsed time (s)", "max memory (MB)"])
+csv_writer.writerow(["iteration", "learning rate","running loss","val loss", "val loss (mp)","running L", "val L", "val L(mp)", "running NLL", "val NLL", "val NLL (mp)", "running HJB", "val HJB", "val HJB (mp)",  "time fwd","time bwd", "max memory (MB)","nfe fwd", "nfe bwd"])
 
 # ------------------------------
 # Set device and seeds
@@ -150,8 +150,10 @@ class OTFlow(nn.Module):
         self.hidden_dim = hidden_dim
         self.alpha= alpha
         self.Phi = Phi(2, hidden_dim, in_out_dim, r=2, alph=alpha)
+        self.nfe = 0
 
     def forward(self, t, states):
+        self.nfe += 1
         x = states[0]
 
         z = pad(x, (0,1,0,0), value=t)
@@ -197,9 +199,11 @@ if __name__ == '__main__':
     NLL_meter = RunningAverageMeter()
     cost_L_meter = RunningAverageMeter()
     cost_HJB_meter = RunningAverageMeter()
-    time_meter = RunningAverageMeter()
+    time_fwd = RunningAverageMeter()
+    time_bwd = RunningAverageMeter()
     mem_meter = RunningMaximumMeter()
-
+    nfe_fwd = 0
+    nfe_bwd = 0
     z_val_t0, logp_diff_val_t0, cost_L_val_t0, cost_HJB_val_t0 = get_batch(args.num_samples_val)
                     
     ckpt_path = os.path.join(result_dir, 'ckpt.pth')
@@ -212,33 +216,38 @@ if __name__ == '__main__':
                 # get a batch of samples
                 z_t0, logp_diff_t0,cost_L_t0, cost_HJB_t0 = get_batch(args.num_samples)
             
-            start_time = time.perf_counter()
             torch.cuda.reset_peak_memory_stats(device)
 
             with autocast(device_type='cuda', dtype=args.precision):
+                start_time = time.perf_counter()
+                func.nfe = 0
                 z_t, logp_diff_t, cost_L_t, cost_HJB_t = odeint(
                     func,
                     (z_t0, logp_diff_t0, cost_L_t0, cost_HJB_t0),
                     torch.linspace(t0, t1, args.num_timesteps).to(device),
                     method=args.method
                 )
-
                 z_t1, logp_diff_t1, cost_L_t1, cost_HJB_t1 = z_t[-1], logp_diff_t[-1], cost_L_t[-1], cost_HJB_t[-1]
 
                 logp_x = p_z0.log_prob(z_t1).view(-1,1) + logp_diff_t1
                 loss =  alpha[0]* cost_L_t1.mean(0) - alpha[1]* logp_x.mean(0) + alpha[2] * cost_HJB_t1.mean(0)
+                time_fwd.update(time.perf_counter() - start_time)
+                nfe_fwd += func.nfe
+                func.nfe = 0
 
+                start_time = time.perf_counter()
                 loss.backward()
+                time_bwd.update(time.perf_counter() - start_time)
+                nfe_bwd += func.nfe
                 # print name and norm of every parameter 
                 # for name, param in func.named_parameters():
                     # print(name, param.grad.norm())
                 
             optimizer.step()
 
-            elapsed_time = time.perf_counter() - start_time
+            
             peak_memory = torch.cuda.max_memory_allocated(device) / (1024 * 1024)  # Convert to MB
 
-            time_meter.update(elapsed_time)
             mem_meter.update(peak_memory)
             loss_meter.update(loss.item())
             NLL_meter.update(-logp_x.mean(0).item())
@@ -277,10 +286,13 @@ if __name__ == '__main__':
                       'running L: {:.3e}, val L: {:.3e}, val L (mp): {:.3e}'.format(cost_L_meter.avg, cost_L_val_t1.mean(0).item(), cost_L_val_mp_t1.mean(0).item()), 
                       'running NLL: {:.3e}, val NLL: {:.3e}, val NLL (mp): {:.3e}'.format(NLL_meter.avg, -logp_x_val.mean(0).item(), -logp_x_val_mp.mean(0).item()), 
                       'running HJB: {:.3e}, val HJB: {:.3e}, val HJB (mp): {:.3e}'.format(cost_HJB_meter.avg, cost_HJB_val_t1.mean(0).item(), cost_HJB_val_mp_t1.mean(0).item()), 
-                      'time: {:.4f}s'.format(time_meter.avg), 'max memory: {:.0f}MB'.format(peak_memory))
+                      'time (fwd): {:.4f}s'.format(time_fwd.avg),'time (bwd): {:.4f}s'.format(time_bwd.avg), 'max memory: {:.0f}MB'.format(peak_memory),
+                      'nfe (fwd) : {}, nfe (bwd): {}'.format(nfe_fwd, nfe_bwd))
                 sys.stdout.flush()
-                csv_writer.writerow([itr, lr, loss_meter.avg, loss_val.item(), loss_val_mp.item(), cost_L_meter.avg, cost_L_val_t1.mean(0).item(), cost_L_val_mp_t1.mean(0).item(), NLL_meter.avg, -logp_x_val.mean(0).item(), -logp_x_val_mp.mean(0).item(), cost_HJB_meter.avg, cost_HJB_val_t1.mean(0).item(), cost_HJB_val_t1.mean(0).item(), time_meter.avg, peak_memory])
+                csv_writer.writerow([itr, lr, loss_meter.avg, loss_val.item(), loss_val_mp.item(), cost_L_meter.avg, cost_L_val_t1.mean(0).item(), cost_L_val_mp_t1.mean(0).item(), NLL_meter.avg, -logp_x_val.mean(0).item(), -logp_x_val_mp.mean(0).item(), cost_HJB_meter.avg, cost_HJB_val_t1.mean(0).item(), cost_HJB_val_t1.mean(0).item(), time_fwd.avg, time_bwd.avg, peak_memory,nfe_fwd,nfe_bwd])
                 csv_file.flush()
+                nfe_fwd = nfe_bwd = 0
+                
             
             if itr % args.lr_decay_steps == 0:
                 for param_group in optimizer.param_groups:
