@@ -10,6 +10,14 @@ import torchvision.datasets as datasets
 import torchvision.transforms as transforms
 from torch.amp import autocast
 import time
+import datetime
+
+import csv
+import shutil
+import sys
+
+import pandas as pd
+import matplotlib.pyplot as plt
 
 from utils import RunningAverageMeter, RunningMaximumMeter
 
@@ -38,7 +46,6 @@ if args.odeint == 'torchmpnode':
     print("Using torchmpnode")
     assert args.method == 'rk4' 
     import sys
-    import os
     sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
     from torchmpnode import odeint
 else:    
@@ -54,6 +61,26 @@ precision_map = {
     'bfloat16': torch.bfloat16
 }
 args.precision = precision_map[args.precision]
+
+
+os.makedirs(args.results_dir, exist_ok=True)
+seed_str = f"seed{args.seed}" if args.seed is not None else "noseed"
+timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
+folder_name = f"{args.precision}_{args.odeint}_{args.method}_{seed_str}_{timestamp}"
+# Save a copy of this script in the results directory.
+script_path = os.path.abspath(__file__)
+shutil.copy(script_path, os.path.join(args.results_dir, os.path.basename(script_path)))
+
+# Redirect stdout and stderr to a log file.
+log_path = os.path.join(args.results_dir, folder_name + ".txt")
+log_file = open(log_path, "w", buffering=1)
+sys.stdout = log_file
+sys.stderr = log_file
+
+print("Experiment started at", datetime.datetime.now())
+print("Arguments:", vars(args))
+print("Results will be saved in:", args.results_dir)
+
 
 def conv3x3(in_planes, out_planes, stride=1):
     """3x3 convolution with padding"""
@@ -142,7 +169,6 @@ class ODEBlock(nn.Module):
     def __init__(self, odefunc, method, tol, odeint):
         super(ODEBlock, self).__init__()
         self.odefunc = odefunc
-        # self.integration_time = torch.tensor([0, 1]).float()
         self.method = method
         self.tol = tol
         self.odeint = odeint
@@ -173,7 +199,6 @@ class Flatten(nn.Module):
 
 
 
-
 def get_mnist_loaders(data_aug=False, batch_size=128, test_batch_size=1000, perc=1.0):
     if data_aug:
         transform_train = transforms.Compose([
@@ -190,8 +215,8 @@ def get_mnist_loaders(data_aug=False, batch_size=128, test_batch_size=1000, perc
     ])
 
     train_loader = DataLoader(
-        datasets.MNIST(root='.data/mnist', train=True, download=True, transform=transform_train), batch_size=batch_size,
-        shuffle=True, num_workers=2, drop_last=True
+        datasets.MNIST(root='.data/mnist', train=True, download=True, transform=transform_train),
+        batch_size=batch_size, shuffle=True, num_workers=2, drop_last=True
     )
 
     train_eval_loader = DataLoader(
@@ -242,7 +267,6 @@ def accuracy(model, dataset_loader):
     for x, y in dataset_loader:
         x = x.to(device)
         y = one_hot(np.array(y.numpy()), 10)
-
         target_class = np.argmax(y, axis=1)
         predicted_class = np.argmax(model(x).cpu().detach().numpy(), axis=1)
         total_correct += np.sum(predicted_class == target_class)
@@ -288,7 +312,11 @@ def get_logger(logpath, filepath, package_files=[], displaying=True, saving=True
 if __name__ == '__main__':
 
     makedirs(args.save)
-    logger = get_logger(logpath=os.path.join(args.save, 'logs'), filepath=os.path.abspath(__file__))
+    logger = get_logger(
+        logpath=os.path.join(args.save, 'logs'),
+        filepath=os.path.abspath(__file__),
+        debug=args.debug
+    )
     logger.info(args)
 
     device = torch.device('cuda:' + str(args.gpu) if torch.cuda.is_available() else 'cpu')
@@ -305,14 +333,15 @@ if __name__ == '__main__':
             nn.ReLU(inplace=True),
             nn.Conv2d(64, 64, 4, 2, 1),
         ]
-    elif args.downsampling_method == 'res':
+    else:  # res
         downsampling_layers = [
             nn.Conv2d(1, 64, 3, 1),
             ResBlock(64, 64, stride=2, downsample=conv1x1(64, 64, 2)),
             ResBlock(64, 64, stride=2, downsample=conv1x1(64, 64, 2)),
         ]
 
-    feature_layers = [ODEBlock(ODEfunc(64), args.method,args.tol,odeint)] if is_odenet else [ResBlock(64, 64) for _ in range(6)]
+    feature_layers = [ODEBlock(ODEfunc(64), args.method, args.tol, odeint)] if is_odenet \
+                     else [ResBlock(64, 64) for _ in range(6)]
     fc_layers = [norm(64), nn.ReLU(inplace=True), nn.AdaptiveAvgPool2d((1, 1)), Flatten(), nn.Linear(64, 10)]
 
     model = nn.Sequential(*downsampling_layers, *feature_layers, *fc_layers).to(device)
@@ -330,7 +359,8 @@ if __name__ == '__main__':
     batches_per_epoch = len(train_loader)
 
     lr_fn = learning_rate_with_decay(
-        args.batch_size, batch_denom=128, batches_per_epoch=batches_per_epoch, boundary_epochs=[60, 100, 140],
+        args.batch_size, batch_denom=128, batches_per_epoch=batches_per_epoch,
+        boundary_epochs=[60, 100, 140],
         decay_rates=[1, 0.1, 0.01, 0.001]
     )
 
@@ -344,6 +374,16 @@ if __name__ == '__main__':
     mem_meter = RunningMaximumMeter()
 
     end = time.time()
+
+
+    csv_path = os.path.join(args.save, 'metrics.csv')
+    csv_file = open(csv_path, 'w', newline='')
+    writer = csv.writer(csv_file)
+    writer.writerow([
+        'epoch', 'train_acc', 'test_acc',
+        'f_nfe', 'b_nfe',
+        'batch_time', 'step_time', 'max_memory'
+    ])
 
     for itr in range(args.nepochs * batches_per_epoch):
 
@@ -379,22 +419,74 @@ if __name__ == '__main__':
         end = time.time()
 
         elapsed_time = time.perf_counter() - start_time
-        peak_memory = torch.cuda.max_memory_allocated(device) / (1024 * 1024)  # Convert to MB
+        peak_memory = torch.cuda.max_memory_allocated(device) / (1024 * 1024)
 
         time_meter.update(elapsed_time)
         mem_meter.update(peak_memory)
 
+        # at the end of each epoch, compute and log
         if itr % batches_per_epoch == 0:
+            epoch = itr // batches_per_epoch
             with torch.no_grad():
                 train_acc = accuracy(model, train_eval_loader)
                 val_acc = accuracy(model, test_loader)
                 if val_acc > best_acc:
-                    torch.save({'state_dict': model.state_dict(), 'args': args}, os.path.join(args.save, 'model.pth'))
+                    torch.save(
+                        {'state_dict': model.state_dict(), 'args': args},
+                        os.path.join(args.save, 'model.pth')
+                    )
                     best_acc = val_acc
+
                 logger.info(
                     "Epoch {:04d} | Time {:.3f} ({:.3f}) | NFE-F {:.1f} | NFE-B {:.1f} | "
                     "Train Acc {:.4f} | Test Acc {:.4f} | Max Mem {:.1f}MB".format(
-                        itr // batches_per_epoch, batch_time_meter.val, batch_time_meter.avg, f_nfe_meter.avg,
-                        b_nfe_meter.avg, train_acc, val_acc, mem_meter.max
+                        epoch, batch_time_meter.val, batch_time_meter.avg,
+                        f_nfe_meter.avg, b_nfe_meter.avg,
+                        train_acc, val_acc, mem_meter.max
                     )
                 )
+
+            # write metrics row
+            writer.writerow([
+                epoch,
+                train_acc,
+                val_acc,
+                f_nfe_meter.avg,
+                b_nfe_meter.avg,
+                batch_time_meter.avg,
+                time_meter.avg,
+                mem_meter.max
+            ])
+            csv_file.flush()
+
+
+    csv_file.close()
+
+
+    df = pd.read_csv(csv_path)
+
+    # 1) accuracy plot
+    plt.figure(figsize=(6, 4))
+    plt.plot(df['epoch'], df['train_acc'], label='Train Acc')
+    plt.plot(df['epoch'], df['test_acc'], label='Test Acc')
+    plt.xlabel('Epoch')
+    plt.ylabel('Accuracy')
+    plt.legend()
+    plt.tight_layout()
+    acc_plot = os.path.join(args.save, 'accuracy.png')
+    plt.savefig(acc_plot, bbox_inches='tight')
+    plt.close()
+    logger.info(f"Saved accuracy plot at {acc_plot}")
+
+    # # 2) NFE plot
+    # plt.figure(figsize=(6, 4))
+    # plt.plot(df['epoch'], df['f_nfe'], label='Forward NFE')
+    # plt.plot(df['epoch'], df['b_nfe'], label='Backward NFE')
+    # plt.xlabel('Epoch')
+    # plt.ylabel('Number of Function Evaluations')
+    # plt.legend()
+    # plt.tight_layout()
+    # nfe_plot = os.path.join(args.save, 'nfe.png')
+    # plt.savefig(nfe_plot, bbox_inches='tight')
+    # plt.close()
+    # logger.info(f"Saved NFE plot at {nfe_plot}")
