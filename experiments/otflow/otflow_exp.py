@@ -18,12 +18,17 @@ import torch.nn as nn
 import torch.optim as optim
 from torch.amp import autocast
 from torch.nn.functional import pad
+import toy_data
 
 # Compute project root directory (two levels up)
 base_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), '../..'))
 
 
 parser = argparse.ArgumentParser()
+parser.add_argument(
+    '--data', choices=['swissroll', '8gaussians', 'pinwheel', 'circles', 'moons', '2spirals', 'checkerboard', 'rings'],
+    type=str, default='8gaussians')
+
 parser.add_argument('--adjoint', action='store_true')
 parser.add_argument('--viz', action='store_true')
 parser.add_argument('--niters', type=int, default=5000)
@@ -63,7 +68,7 @@ args.precision = precision_map[precision_str]
 # Use provided seed in folder name; otherwise, use 'noseed'
 seed_str = f"seed{args.seed}" if args.seed is not None else "noseed"
 timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
-folder_name = f"{precision_str}_{args.odeint}_{args.method}_{seed_str}_{timestamp}"
+folder_name = f"{args.data}_{precision_str}_{args.odeint}_{args.method}_{seed_str}_{timestamp}"
 result_dir = os.path.join(base_dir, "results", "otflow", folder_name)
 os.makedirs(result_dir, exist_ok=True)
 # Write result directory to a Slurm-job-specific file
@@ -85,11 +90,27 @@ log_path = os.path.join(result_dir, folder_name + ".txt")
 log_file = open(log_path, "w", buffering=1)
 sys.stdout = log_file
 sys.stderr = log_file
+ckpt_path = os.path.join(result_dir, 'ckpt.pth')
+
+device = torch.device('cuda:' + str(args.gpu) if torch.cuda.is_available() else 'cpu')
+print("Running on device:", device)
+
+
+# Print environment and hardware info for reproducibility and debugging
+print("Environment Info:")
+print(f"  Python version: {sys.version}")
+print(f"  PyTorch version: {torch.__version__}")
+print(f"  CUDA available: {torch.cuda.is_available()}")
+print(f"  CUDA version: {torch.version.cuda}")
+print(f"  cuDNN version: {torch.backends.cudnn.version()}")
+print(f"  GPU Device Name: {torch.cuda.get_device_name(device) if torch.cuda.is_available() else 'N/A'}")
+print(f"  Current Device: {torch.cuda.current_device() if torch.cuda.is_available() else 'N/A'}")
 
 print("Experiment started at", datetime.datetime.now())
 print("Arguments:", vars(args))
 print("Results will be saved in:", result_dir)
 print("SLURM job id",job_id )
+print("Model checkpoint path:", ckpt_path)
 
 # Set up CSV file to log numerical data.
 csv_path = os.path.join(result_dir, folder_name + ".csv")
@@ -106,8 +127,6 @@ if args.seed is not None:
 else:
     print("No seed provided; using random initialization.")
 
-device = torch.device('cuda:' + str(args.gpu) if torch.cuda.is_available() else 'cpu')
-print("Running on device:", device)
 
 sys.path.insert(0, base_dir)
 sys.path.insert(0, os.path.join(base_dir, "examples"))
@@ -149,7 +168,8 @@ class OTFlow(nn.Module):
 
 
 def get_batch(num_samples):
-    points, _ = make_circles(n_samples=num_samples, noise=0.06, factor=0.5)
+    # points, _ = make_circles(n_samples=num_samples, noise=0.06, factor=0.5)
+    points = toy_data.inf_train_gen(args.data, batch_size=num_samples)
     x = torch.tensor(points).type(torch.float32).to(device)
     logp_diff_t1 = torch.zeros(num_samples, 1).type(torch.float32).to(device)
     cost_L = torch.zeros_like(logp_diff_t1)
@@ -180,6 +200,8 @@ if __name__ == '__main__':
     time_meter = RunningAverageMeter()
     mem_meter = RunningMaximumMeter()
 
+    z_val_t0, logp_diff_val_t0, cost_L_val_t0, cost_HJB_val_t0 = get_batch(args.num_samples_val)
+                    
     ckpt_path = os.path.join(result_dir, 'ckpt.pth')
     try:
         training_start = time.perf_counter()
@@ -225,8 +247,6 @@ if __name__ == '__main__':
 
             if itr % args.test_freq == 0:
                 with torch.no_grad():
-
-                    z_val_t0, logp_diff_val_t0, cost_L_val_t0, cost_HJB_val_t0 = get_batch(args.num_samples_val)
                     z_val_t, logp_diff_val_t, cost_L_val_t, cost_HJB_val_t = odeint(
                         func,
                         (z_val_t0, logp_diff_val_t0, cost_L_val_t0, cost_HJB_val_t0),
@@ -268,17 +288,23 @@ if __name__ == '__main__':
                     lr = param_group['lr']
                     print("new learning rate: {}".format(lr))
                     sys.stdout.flush()
+        # save the final model
+        if args.train_dir is not None:
+            torch.save({
+                'theta': func.state_dict(),
+                'args': args                
+            }, ckpt_path)
+            print('Stored final model at {}'.format(ckpt_path))
 
         total_training_time = time.perf_counter() - training_start
         print('Training complete after {} iters and {:.2f} seconds.'.format(itr, total_training_time))
     except KeyboardInterrupt:
         if args.train_dir is not None:
-            ckpt_path = os.path.join(args.train_dir, 'ckpt.pth')
             torch.save({
-                'func_state_dict': func.state_dict(),
-                'optimizer_state_dict': optimizer.state_dict(),
+                'theta': func.state_dict(),
+                'args': args                
             }, ckpt_path)
-            print('Stored ckpt at {}'.format(ckpt_path))
+            print('Stored final model at {}'.format(ckpt_path))
     
     if args.viz:
         viz_samples = 30000
