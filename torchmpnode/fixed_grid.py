@@ -92,9 +92,10 @@ class FixedGridODESolver(torch.autograd.Function):
 
                 # Attempt gradient computation until all values are finite
                 while attempts < scaler.max_attempts:
-                    ti = t[i].clone().detach()
-                    dti_local = dti.clone().detach()
                     if t.requires_grad:
+                        ti = t[i].clone().detach()
+                        dti_local = dti.clone().detach()
+                    
                         ti.requires_grad_(True)
                         dti_local.requires_grad_(True)
                         with torch.enable_grad():
@@ -108,7 +109,7 @@ class FixedGridODESolver(torch.autograd.Function):
                             gdti2 = torch.sum(a * dy, dim=-1)
                     else: 
                         with torch.enable_grad():
-                            dy = step(func, y, ti, dti_local)
+                            dy = step(func, y, t[i], dti)
                             grads = torch.autograd.grad(
                                 dy, (y, *params), a,
                                 create_graph=True, allow_unused=True
@@ -131,8 +132,8 @@ class FixedGridODESolver(torch.autograd.Function):
 
                 update_attempts = 0
                 while update_attempts < scaler.max_attempts:
-                    a_new = a + dti * da.to(dtype_hi) + at[i].to(dtype_hi)
-                    grad_theta_new = [g + dti * d.to(g.dtype) for g, d in zip(grad_theta, dparams)]
+                    a_new = a + dti * da + at[i]
+                    grad_theta_new = [g + dti * d for g, d in zip(grad_theta, dparams)]
 
                     if grad_t is not None:
                         grad_t_new = grad_t.clone()
