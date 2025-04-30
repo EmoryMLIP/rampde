@@ -193,7 +193,6 @@ def get_batch(num_samples):
 
     return(x, logp_diff_t1)
 
-comparison_logp_diff = {}
 viz_samples = 30000
 viz_timesteps = 41
 t0, t1 = 0.0, 1.0
@@ -440,19 +439,6 @@ for odeint_option in ['torchmpnode','torchdiffeq']: #
             )
 
 
-            logp_differences = []
-            for i, tval in enumerate(ts_samples):
-                learned_logp = p_z0.log_prob(z_t_samples[i]) - logp_diff_samples[i].view(-1)
-                analytical_logp = mixture_logpdf(z_t_samples[i])
-                diff = analytical_logp - learned_logp
-                mad = diff.abs().mean().item()
-                logp_differences.append(mad)
-                print(f"t={tval:.2f}, logp_diff={mad:.4f}")
-
-
-            key = f"{args.precision}_{odeint_option}"
-            comparison_logp_diff[key] = logp_differences
-
 
             x_lin = np.linspace(-4, 4, 100)
             y_lin = np.linspace(-4, 4, 100)
@@ -473,20 +459,7 @@ for odeint_option in ['torchmpnode','torchdiffeq']: #
             )
             z_final = z_t_density[-1]
             logp_final = logp_diff_density[-1]
-            learned_logp_grid = torch.exp(p_z0.log_prob(z_final) - logp_final.view(-1))
-            analytical_logp_grid = torch.exp(mixture_logpdf(grid_tensor)) 
 
-            fig, axs = plt.subplots(1, 2, figsize=(12, 5))
-            cs1 = axs[0].tricontourf(grid_points[:, 0], grid_points[:, 1],
-                                    learned_logp_grid.detach().cpu().numpy(), levels=50)
-            axs[0].set_title("Learned log density")
-            fig.colorbar(cs1, ax=axs[0])
-            cs2 = axs[1].tricontourf(grid_points[:, 0], grid_points[:, 1],
-                                    analytical_logp_grid.detach().cpu().numpy(), levels=50)
-            axs[1].set_title("Target log density")
-            fig.colorbar(cs2, ax=axs[1])
-            plt.savefig(os.path.join(results_dir_exp, "density_comparison.png"))
-            plt.close()
 
             for (t, z_sample, z_density, logp_diff) in zip(
                     np.linspace(t0, t1, viz_timesteps),
@@ -529,30 +502,4 @@ for odeint_option in ['torchmpnode','torchdiffeq']: #
                         save_all=True, duration=250, loop=0)
             print('Saved visualizations for', odeint_option)
 
-combined_dir = f"{args.results_dir}_combined"
-os.makedirs(combined_dir, exist_ok=True)
-
-plt.figure(figsize=(6,4))
-styles = {
-    'torchdiffeq':  {'linestyle':'-','marker':'o', 'markersize': 4},
-    'torchmpnode':  {'linestyle':'--','marker':'s', 'markersize': 4},
-}
-
-
-for key, diffs in comparison_logp_diff.items():
-    # drop the precision prefix, only care about odeint
-    _, method = key.split('_', 1)
-    style = styles.get(method, {})
-    label = method
-    plt.plot(combined_t, diffs, label=label, **style)
-
-plt.xlabel("Time t")
-plt.ylabel("Mean absolute log-pdf difference")
-plt.legend()
-plt.tight_layout()
-
-out_path = os.path.join(combined_dir, "logp_path_diff.png")
-plt.savefig(out_path, bbox_inches='tight')
-plt.close()
-print(f"Saved combined log-pdf difference at {out_path}")
 
