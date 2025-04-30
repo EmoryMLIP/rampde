@@ -10,10 +10,8 @@ datasets=(checkerboard 2spirals pinwheel circles moons rings swissroll 8gaussian
 
 # Default args (everything except --data)
 default_args="\
-  --adjoint \
-  --viz \
-  --niters 2000 \
-  --lr 1e-2 \
+  --niters 2000\
+  --test_freq 20 \
   --num_samples 1024 \
   --num_samples_val 1024 \
   --num_timesteps 128 \
@@ -26,7 +24,6 @@ default_args="\
   --odeint torchmpnode \
   --results_dir ./results/cnf \
   --scaler dynamicscaler \
-  --test_freq 20 \
   --seed 0 \
 "
 
@@ -40,11 +37,11 @@ conda activate torch27
 # ========== LOOP OVER DATASETS & RUN ==========
 for data in "${datasets[@]}"; do
 
-  logf="logs/cnf8g_data_${data}.log"
+  logf="logs/cnf_data_${data}.log"
   echo "↪ Running: --data=$data"
   echo "  → logging to $logf"
 
-  python cnf8g.py \
+  python cnf.py \
     --data "$data" \
     $default_args \
     &> "$logf"
