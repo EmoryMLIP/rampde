@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 import os
+job_id = os.environ.get("SLURM_JOB_ID", "")
 import argparse
 import glob
 import csv
@@ -37,6 +38,7 @@ parser.add_argument(
 parser.add_argument('--adjoint', action='store_true')
 parser.add_argument('--viz', default=True, action='store_true')
 parser.add_argument('--niters', type=int, default=2000)
+parser.add_argument('--test_freq', type=int, default=20)
 parser.add_argument('--lr', type=float, default=1e-2)
 parser.add_argument('--num_samples', type=int, default=1024)
 parser.add_argument('--num_samples_val', type=int, default=1024)
@@ -50,7 +52,6 @@ parser.add_argument('--precision', type=str, choices=['float32', 'float16', 'bfl
 parser.add_argument('--odeint', type=str, choices=['torchdiffeq', 'torchmpnode'], default='torchmpnode')
 parser.add_argument('--results_dir', type=str, default="./results/cnf")
 parser.add_argument('--scaler', type=str, choices=['noscaler', 'dynamicscaler'], default='dynamicscaler')
-parser.add_argument('--test_freq', type=int, default=20)
 parser.add_argument('--seed', type=int, default=0)
 
 args = parser.parse_args()
@@ -65,23 +66,6 @@ args.precision = precision_map[args.precision]
 device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 
 
-os.makedirs(args.results_dir, exist_ok=True)
-seed_str = f"seed{args.seed}" if args.seed is not None else "noseed"
-timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
-folder_name = f"{args.data}_{args.precision}_{args.odeint}_{args.method}_{seed_str}_{timestamp}"
-# Save a copy of this script in the results directory.
-script_path = os.path.abspath(__file__)
-shutil.copy(script_path, os.path.join(args.results_dir, os.path.basename(script_path)))
-
-# Redirect stdout and stderr to a log file.
-log_path = os.path.join(args.results_dir, folder_name + ".txt")
-log_file = open(log_path, "w", buffering=1)
-sys.stdout = log_file
-sys.stderr = log_file
-
-print("Experiment started at", datetime.datetime.now())
-print("Arguments:", vars(args))
-print("Results will be saved in:", args.results_dir)
 
 
 def hyper_trace(W, B, U, x, target_dtype):
@@ -198,23 +182,54 @@ viz_timesteps = 41
 t0, t1 = 0.0, 1.0
 combined_t = np.linspace(t0, t1, viz_timesteps)
 
-combined_dir = f"{args.results_dir}_combined"
-os.makedirs(combined_dir, exist_ok=True)
-combined_csv = os.path.join(combined_dir, "combined_logp_diff.csv")
-with open(combined_csv, "w", newline="") as cf:
-    writer = csv.writer(cf)
-    header = ["time"] + [f"{args.precision}_{m}" for m in ['torchmpnode','torchdiffeq']]
-    writer.writerow(header)
 
 
 for odeint_option in ['torchmpnode','torchdiffeq']: #
-    results_dir_exp = f"{args.results_dir}_{odeint_option}_{args.precision}"
-    os.makedirs(results_dir_exp, exist_ok=True)
-    train_dir_option = f"{args.train_dir}_{odeint_option}_{args.precision}" if args.train_dir else None
-    if train_dir_option:
-        os.makedirs(train_dir_option, exist_ok=True)
 
-    csv_path = os.path.join(train_dir_option, "metrics.csv")
+    seed_str = f"seed{args.seed}" if args.seed is not None else "noseed"
+    timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
+    folder_name = f"{args.data}_{args.precision}_{odeint_option}_{args.method}_{seed_str}_{timestamp}"
+    result_dir = os.path.join(args.results_dir, folder_name)
+    os.makedirs(result_dir, exist_ok=True)
+    # Write result directory to a Slurm-job-specific file
+    result_file = f"result_dir_{job_id}.txt" if job_id else "result_dir.txt"
+    with open(result_file, "w") as f:
+        f.write(result_dir)
+    if args.viz:
+        png_dir = os.path.join(result_dir, "png")
+        os.makedirs(png_dir, exist_ok=True)
+    else:
+        png_dir = None
+
+    # Redirect stdout and stderr to a log file.
+    log_path = os.path.join(result_dir, "log.txt")
+    log_file = open(log_path, "w", buffering=1)
+    sys.stdout = log_file
+    sys.stderr = log_file
+
+
+    device = torch.device('cuda:' + str(args.gpu) if torch.cuda.is_available() else 'cpu')
+    print("Running on device:", device)
+
+
+    # Print environment and hardware info for reproducibility and debugging
+    print("Environment Info:")
+    print(f"  Python version: {sys.version}")
+    print(f"  PyTorch version: {torch.__version__}")
+    print(f"  CUDA available: {torch.cuda.is_available()}")
+    print(f"  CUDA version: {torch.version.cuda}")
+    print(f"  cuDNN version: {torch.backends.cudnn.version()}")
+    print(f"  GPU Device Name: {torch.cuda.get_device_name(device) if torch.cuda.is_available() else 'N/A'}")
+    print(f"  Current Device: {torch.cuda.current_device() if torch.cuda.is_available() else 'N/A'}")
+
+    print("Experiment started at", datetime.datetime.now())
+    print("Arguments:", vars(args))
+    print("Results will be saved in:", result_dir)
+    # print("SLURM job id",job_id )
+    # print("Model checkpoint path:", ckpt_path)
+
+
+    csv_path = os.path.join(result_dir, "metrics.csv")
 
 
     if odeint_option == 'torchmpnode':
@@ -252,7 +267,7 @@ for odeint_option in ['torchmpnode','torchdiffeq']: #
     time_meter = RunningAverageMeter()
     mem_meter = RunningMaximumMeter()
 
-    checkpoint_files = glob.glob(os.path.join(train_dir_option, f'{odeint_option}_*.pth'))
+    checkpoint_files = glob.glob(os.path.join(result_dir, f'{odeint_option}_*.pth'))
     if checkpoint_files:
         latest_checkpoint = max(checkpoint_files, key=os.path.getctime)
         cp = torch.load(latest_checkpoint, map_location=device)
@@ -350,7 +365,7 @@ for odeint_option in ['torchmpnode','torchdiffeq']: #
             torch.save({
                 'func_state_dict': func.state_dict(),
                 'optimizer_state_dict': optimizer.state_dict()
-            }, os.path.join(train_dir_option, f"{odeint_option}_{args.niters}.pth"))
+            }, os.path.join(result_dir, f"{odeint_option}_{args.niters}.pth"))
             
             # csv_file.close()
 
@@ -358,13 +373,13 @@ for odeint_option in ['torchmpnode','torchdiffeq']: #
         # Create optimization stats plots
         # ------------------------------
         # for odeint_option in ['torchmpnode','torchdiffeq']:
-        # results_dir_exp = f"{args.results_dir}_{odeint_option}_{precision_str}"
-        # os.makedirs(results_dir_exp, exist_ok=True)
-        # train_dir_option = f"{args.train_dir}_{odeint_option}_{precision_str}" if args.train_dir else None
-        # if train_dir_option:
-        #     os.makedirs(train_dir_option, exist_ok=True)
+        # result_dir = f"{args.results_dir}_{odeint_option}_{precision_str}"
+        # os.makedirs(result_dir, exist_ok=True)
+        # result_dir = f"{args.train_dir}_{odeint_option}_{precision_str}" if args.train_dir else None
+        # if result_dir:
+        #     os.makedirs(result_dir, exist_ok=True)
 
-        # csv_path = os.path.join(train_dir_option, "metrics.csv")
+        # csv_path = os.path.join(result_dir, "metrics.csv")
         with open(csv_path, "r") as f:
             reader = csv.reader(f)
             next(reader)
@@ -416,7 +431,7 @@ for odeint_option in ['torchmpnode','torchdiffeq']: #
         axs[1, 1].legend()
 
         plt.tight_layout()
-        stats_fig_path = os.path.join(results_dir_exp, "optimization_stats.png")
+        stats_fig_path = os.path.join(result_dir, "optimization_stats.png")
         plt.savefig(stats_fig_path, bbox_inches='tight')
         plt.close()
         print(f"Saved optimization stats plot at {stats_fig_path}")
@@ -491,14 +506,14 @@ for odeint_option in ['torchmpnode','torchdiffeq']: #
                 logp_model = p_z0.log_prob(z_density) - logp_diff.view(-1)
                 ax3.tricontourf(*grid_points.T,
                                 np.exp(logp_model.detach().cpu().numpy()), 200)
-                plt.savefig(os.path.join(results_dir_exp, f"cnf-viz-{int(t*1000):05d}.jpg"),
+                plt.savefig(os.path.join(result_dir, f"cnf-viz-{int(t*1000):05d}.jpg"),
                         pad_inches=0.2, bbox_inches='tight')
                 plt.close()
 
-            imgs = sorted(glob.glob(os.path.join(results_dir_exp, f"cnf-viz-*.jpg")))
+            imgs = sorted(glob.glob(os.path.join(result_dir, f"cnf-viz-*.jpg")))
             if len(imgs) > 0:
                 img, *rest_imgs = [Image.open(f) for f in imgs]
-                img.save(fp=os.path.join(results_dir_exp, "cnf-viz.gif"), format='GIF', append_images=rest_imgs,
+                img.save(fp=os.path.join(result_dir, "cnf-viz.gif"), format='GIF', append_images=rest_imgs,
                         save_all=True, duration=250, loop=0)
             print('Saved visualizations for', odeint_option)
 
