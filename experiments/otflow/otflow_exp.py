@@ -337,8 +337,11 @@ if __name__ == '__main__':
             )
 
             # Generate evolution of density
-            x = np.linspace(z_t0[:,0].min(), z_t0[:,0].max(), 100)
-            y = np.linspace(z_t0[:,1].min(), z_t0[:,1].max(), 100)
+            x_min, x_max = z_t0[:,0].min().item(), z_t0[:,0].max().item()
+            y_min, y_max = z_t0[:,1].min().item(), z_t0[:,1].max().item()
+
+            x = np.linspace(x_min, x_max, 100)
+            y = np.linspace(x_min, x_max, 100)
             points = np.vstack(np.meshgrid(x, y)).reshape([2, -1]).T
 
             z_t1 = torch.tensor(points).type(torch.float32).to(device)
@@ -377,10 +380,10 @@ if __name__ == '__main__':
                 # ax3.get_yaxis().set_ticks([])
 
                 ax1.hist2d(*target_sample.detach().cpu().numpy().T, bins=300, density=True,
-                           range=[[z_t0[:,0].min(),z_t0[:,0].max()], [z_t0[:,1].min(), z_t0[:,1].max()]])
+                           range=[[x_min,x_max], [y_min, y_max]])
 
                 ax2.hist2d(*z_sample.detach().cpu().numpy().T, bins=300, density=True,
-                           range=[[z_t0[:,0].min(), z_t0[:,0].max()], [z_t0[:,1].min(), z_t0[:,1].max()]])
+                           range=[[x_min, x_max], [y_min, y_max]])
 
                 logp = p_z0.log_prob(z_density) + logp_diff.view(-1)
                 ax3.tricontourf(*z_t1.detach().cpu().numpy().T,
