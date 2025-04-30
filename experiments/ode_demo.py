@@ -1,5 +1,4 @@
 import os
-os.environ["CUDA_VISIBLE_DEVICES"] = "5"
 job_id = os.environ.get("SLURM_JOB_ID", "")
 import sys
 import glob
@@ -27,7 +26,7 @@ parser = argparse.ArgumentParser('ODE demo')
 parser.add_argument('--data_size',     type=int, default=30000)
 parser.add_argument('--batch_time',    type=int, default=100)
 parser.add_argument('--batch_size',    type=int, default=20)
-parser.add_argument('--niters',        type=int, default=1000)
+parser.add_argument('--niters',        type=int, default=2000)
 parser.add_argument('--test_freq',     type=int, default=10)
 parser.add_argument('--viz',           action='store_true', default=True)
 parser.add_argument('--gpu',           type=int, default=0)
@@ -35,7 +34,7 @@ parser.add_argument('--adjoint',       action='store_true')
 parser.add_argument('--method',        type=str, choices=['rk4','dopri5','euler'], default='rk4')
 parser.add_argument('--precision',     type=str, choices=['float32','float16','bfloat16'], default='float16')
 parser.add_argument('--odeint',        type=str, choices=['torchdiffeq','torchmpnode'], default='torchmpnode')
-parser.add_argument('--results_dir',   type=str, default='./results/png_rmsprop')
+parser.add_argument('--results_dir',   type=str, default='./results/png_rmsproptest')
 parser.add_argument('--hidden_dim',    type=int, default=128)
 parser.add_argument('--lr',            type=float, default=1e-4)
 parser.add_argument('--seed',         type=int, default=0)
@@ -194,8 +193,7 @@ if __name__ == '__main__':
         csv_file = open(csv_path, 'w', newline='')
         csv_writer = csv.writer(csv_file)
         csv_writer.writerow([
-            'iter',
-            'train_loss','val_loss','time_avg_s','mem_peak_MB'
+            'iter','train_loss','val_loss','time_avg_s','mem_peak_MB'
         ])
         time_meter = RunningAverageMeter(0.97)
         mem_meter  = RunningMaximumMeter()
@@ -253,8 +251,9 @@ if __name__ == '__main__':
 
         with open(csv_path, "r") as f:
             reader = csv.reader(f)
-            next(reader)                      # skip header
-            rows = [row[1:] for row in reader]  # drop the odeint_option string column
+            header = next(reader)                       # skip header
+            rows = list(reader) 
+
         data = np.array(rows, dtype=np.float32)
 
         iters      = data[:, 0]
@@ -263,7 +262,7 @@ if __name__ == '__main__':
         time_vals  = data[:, 3]
         mem_vals   = data[:, 4]
 
-        fig, axs = plt.subplots(1, 2, figsize=(6, 8))
+        fig, axs = plt.subplots(1, 2, figsize=(12, 8))
 
         # 1) Loss subplot
         axs[0].plot(iters, train_loss, label="train loss")
@@ -288,6 +287,6 @@ if __name__ == '__main__':
 
 
     if args.viz:
-        visualize_compare(true_y, func, itr)
+        visualize_compare(true_y, func, itr, result_dir)
 
 
