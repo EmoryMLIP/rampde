@@ -60,7 +60,7 @@ parser.add_argument('--weight_decay', type=float, default=0.0)
 parser.add_argument('--data', type=str, default='miniboone',
                     choices=['miniboone', 'bsds300', 'power', 'gas', 'hepmass'],
                     help="Dataset to use")
-parser.add_argument('--results_dir', type=str, default="./results/otflowlarge")
+parser.add_argument('--results_dir', type=str, default="./results/otflowlarge") #results/test
 parser.add_argument('--early_stopping', type=int, default=20,
                     help="# of val checks w/o improvement before dropping LR")
 parser.add_argument('--lr_drop', type=float, default=10.0,
@@ -136,6 +136,8 @@ else:
 
 # Redirect stdout and stderr to a log file.
 log_path = os.path.join(result_dir, "log.txt")
+if os.path.exists(log_path):
+    log_path = os.path.join(result_dir, "newlog.txt")
 log_file = open(log_path, "w", buffering=1)
 sys.stdout = log_file
 sys.stderr = log_file
@@ -160,7 +162,6 @@ print("Arguments:", vars(args))
 print("Results will be saved in:", result_dir)
 # print("SLURM job id",job_id )
 # print("Model checkpoint path:", ckpt_path)
-
 
 
 
@@ -439,13 +440,22 @@ if __name__ == '__main__':
     lr_vals     = data[:, 1]
     run_loss    = data[:, 2]
     val_loss    = data[:, 3]
-    run_L       = data[:, 4]
-    val_L       = data[:, 5]
-    run_NLL     = data[:, 6]
-    val_NLL     = data[:, 7]
-    run_HJB     = data[:, 8]
-    val_HJB     = data[:, 9]
-    max_mem     = data[:, 11]
+    val_loss_mp = data[:, 4]
+    run_L       = data[:, 5]
+    val_L       = data[:, 6]
+    val_L_mp    = data[:, 7]
+    run_NLL     = data[:, 8]
+    val_NLL     = data[:, 9]
+    val_NLL_mp  = data[:, 10]
+    run_HJB     = data[:, 11]
+    val_HJB     = data[:, 12]
+    val_HJB_mp  = data[:, 13]
+    time_fwd    = data[:, 14]
+    time_bwd    = data[:, 15]
+    max_mem     = data[:, 16]
+    nfe_fwd     = data[:, 17]
+    nfe_bwd     = data[:, 18]
+
 
     fig, axs = plt.subplots(2, 3, figsize=(15, 8))
 
@@ -531,8 +541,9 @@ if __name__ == '__main__':
         z_fwd = z_t[-1]
         modelFx = z_fwd[:, :d].cpu().numpy()
 
-
+        #Gaussian samples & inverse map
         y = p_z0.sample([N]).to(device)
+
         logp0 = torch.zeros(N, 1, device=device)
         cL0   = torch.zeros_like(logp0)
         cH0   = torch.zeros_like(logp0)
