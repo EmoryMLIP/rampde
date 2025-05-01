@@ -180,7 +180,7 @@ if __name__ == '__main__':
     optimizer  = optim.RMSprop(func.parameters(), lr=args.lr)
 
 
-    ckpts = glob.glob(os.path.join(result_dir, "model_iter_*.pt"))
+    ckpts = glob.glob(os.path.join(result_dir, "final.pt"))
     if ckpts:
         latest_ckpt = max(ckpts, key=os.path.getctime)
         cp = torch.load(latest_ckpt, map_location=device)
