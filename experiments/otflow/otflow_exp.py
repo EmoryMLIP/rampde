@@ -289,7 +289,7 @@ if __name__ == '__main__':
                       'time (fwd): {:.4f}s'.format(time_fwd.avg),'time (bwd): {:.4f}s'.format(time_bwd.avg), 'max memory: {:.0f}MB'.format(peak_memory),
                       'nfe (fwd) : {}, nfe (bwd): {}'.format(nfe_fwd, nfe_bwd))
                 sys.stdout.flush()
-                csv_writer.writerow([itr, lr, loss_meter.avg, loss_val.item(), loss_val_mp.item(), cost_L_meter.avg, cost_L_val_t1.mean(0).item(), cost_L_val_mp_t1.mean(0).item(), NLL_meter.avg, -logp_x_val.mean(0).item(), -logp_x_val_mp.mean(0).item(), cost_HJB_meter.avg, cost_HJB_val_t1.mean(0).item(), cost_HJB_val_t1.mean(0).item(), time_fwd.avg, time_bwd.avg, peak_memory,nfe_fwd,nfe_bwd])
+                csv_writer.writerow([itr, lr, loss_meter.avg, loss_val.item(), loss_val_mp.item(), cost_L_meter.avg, cost_L_val_t1.mean(0).item(), cost_L_val_mp_t1.mean(0).item(), NLL_meter.avg, -logp_x_val.mean(0).item(), -logp_x_val_mp.mean(0).item(), cost_HJB_meter.avg, cost_HJB_val_t1.mean(0).item(), cost_HJB_val_mp_t1.mean(0).item(), time_fwd.avg, time_bwd.avg, peak_memory,nfe_fwd,nfe_bwd])
                 csv_file.flush()
                 nfe_fwd = nfe_bwd = 0
                 

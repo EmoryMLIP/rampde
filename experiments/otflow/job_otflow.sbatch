@@ -2,7 +2,7 @@
 #SBATCH --job-name=otflow
 #SBATCH --output=slurm_logs/otflow_%j.out
 #SBATCH --error=slurm_logs/otflow_%j.err
-#SBATCH --time=01:00:00
+#SBATCH --time=02:00:00
 #SBATCH --gres=gpu:1
 #SBATCH --mem=4G
 

@@ -5,9 +5,9 @@
 # Define the parameters.
 precisions=( "float32" "float16"  )
 methods=("rk4")
-odeints=("torchdiffeq" "torchmpnode")
+odeints=( "torchmpnode" "torchdiffeq" )
 # List of datasets
-datasets=("swissroll" )
+datasets=("8gaussians" "checkerboard"  "moons" "pinwheel")
 # datasets=("swissroll" "8gaussians" "pinwheel" "circles" "moons" "2spirals" "checkerboard" "rings")
 
 
@@ -29,8 +29,8 @@ dataset_args=(
   [swissroll]="--num_timesteps 8 --num_timesteps_val 16 --num_samples 4096 --alpha 1.0,30.0,15.0 --niters 5000 --lr 5e-2 --test_freq 50 --lr_decay_steps 1000 --sample_freq 25"
   [circles]="--num_timesteps 8 --num_timesteps_val 12 --num_samples 4096 --alpha 1.0,8.0,1.0 --niters 5000 --lr 5e-2 --test_freq 50 --lr_decay_steps 1000 --sample_freq 25"
   [moons]="--num_timesteps 8 --num_timesteps_val 12 --num_samples 4096 --alpha 1.0,8.0,1.0 --niters 5000 --lr 5e-2 --test_freq 50 --lr_decay_steps 1000 --sample_freq 25"
-  [pinwheel]="--num_timesteps 8 --num_timesteps_val 12 --num_samples 4096 --alpha 1.0,30.0,15.0--niters 5000 --lr 5e-2 --test_freq 50 --lr_decay_steps 1000 --sample_freq 25"
-  [2spirals]="--num_timesteps 8 --num_timesteps_val 12 --num_samples 4096 --alpha 1.0,10.0,1.0--niters 5000 --lr 5e-2 --test_freq 50 --lr_decay_steps 1000 --sample_freq 25"
+  [pinwheel]="--num_timesteps 8 --num_timesteps_val 12 --num_samples 4096 --alpha 1.0,30.0,15.0 --niters 5000 --lr 5e-2 --test_freq 50 --lr_decay_steps 1000 --sample_freq 25"
+  [2spirals]="--num_timesteps 8 --num_timesteps_val 12 --num_samples 4096 --alpha 1.0,10.0,1.0 --niters 5000 --lr 5e-2 --test_freq 50 --lr_decay_steps 1000 --sample_freq 25"
   # Add entries for other datasets as needed
 )
 # precisions=("float16" "bfloat16" "float32")
