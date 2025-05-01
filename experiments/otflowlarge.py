@@ -1,7 +1,6 @@
 #adapted from https://github.com/EmoryMLIP/OT-Flow/blob/master/trainLargeOTflow.py
 import os
 job_id = os.environ.get("SLURM_JOB_ID", "")
-os.environ["CUDA_VISIBLE_DEVICES"] = "3"
 import argparse
 import glob
 import csv
@@ -46,11 +45,9 @@ parser.add_argument('--niters', type=int, default=8000)
 parser.add_argument('--num_timesteps', type=int, default=6)
 parser.add_argument('--num_timesteps_val', type=int, default=10)
 parser.add_argument('--val_freq', type=int, default=100)
-parser.add_argument('--lr', type=float, default=2e-2)
-parser.add_argument('--lr_decay', type=float, default=.5)
-parser.add_argument('--lr_decay_steps', type=int, default=20)
-parser.add_argument('--num_samples', type=int, default=1024)
-parser.add_argument('--num_samples_val', type=int, default=4096)
+parser.add_argument('--lr', type=float, default=5e-3)
+parser.add_argument('--num_samples', type=int, default=2000)
+parser.add_argument('--num_samples_val', type=int, default=5000)
 parser.add_argument('--hidden_dim', type=int, default=256)
 parser.add_argument('--gpu', type=int, default=0)
 parser.add_argument('--seed', type=int, default=None)
@@ -58,12 +55,12 @@ parser.add_argument('--method', type=str, choices=['rk4', 'euler'], default='rk4
 parser.add_argument('--precision', type=str,
                     choices=['float32', 'float16','bfloat16'], default='float16')
 parser.add_argument('--odeint', type=str,
-                    choices=['torchdiffeq', 'torchmpnode'], default='torchmpnode')
+                    choices=['torchdiffeq', 'torchmpnode'], default='torchdiffeq')
 parser.add_argument('--weight_decay', type=float, default=0.0)
 parser.add_argument('--data', type=str, default='miniboone',
                     choices=['miniboone', 'bsds300', 'power', 'gas', 'hepmass'],
                     help="Dataset to use")
-parser.add_argument('--results_dir', type=str, default="./results/otflowlarge") #results/test
+parser.add_argument('--results_dir', type=str, default="./results/otflowlarge")
 parser.add_argument('--early_stopping', type=int, default=20,
                     help="# of val checks w/o improvement before dropping LR")
 parser.add_argument('--lr_drop', type=float, default=10.0,
@@ -127,7 +124,7 @@ timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
 folder_name = f"{args.data}_{args.precision}_{args.odeint}_{args.method}_{seed_str}_{timestamp}"
 result_dir = os.path.join(args.results_dir, folder_name)
 os.makedirs(result_dir, exist_ok=True)
-# Write result directory to a Slurm-job-specific file
+
 result_file = f"result_dir_{job_id}.txt" if job_id else "result_dir.txt"
 with open(result_file, "w") as f:
     f.write(result_dir)
@@ -195,6 +192,14 @@ def get_minibatch(X, num_samples):
     B = x.size(0)
     z = torch.zeros(B, 1, dtype=torch.float32, device=X.device)
     return x, z.clone(), z.clone(), z.clone()
+
+def batch_iter(X, batch_size, shuffle=True):
+    if shuffle:
+        idxs = torch.randperm(X.shape[0], device=X.device)
+    else:
+        idxs = torch.arange(X.shape[0], device=X.device)
+    for batch_idxs in idxs.split(batch_size):
+        yield X[batch_idxs]
 
 class OTFlow(nn.Module):
     def __init__(self, in_out_dim, hidden_dim, alpha=[1.0]*2):
@@ -284,41 +289,49 @@ if __name__ == '__main__':
             optimizer.load_state_dict(cp['optimizer_state_dict'])
             print(f"Loaded checkpoint {latest_ckpt}")
         else:
+            itr = 1
             clampMax, clampMin = 1.5, -1.5
-            for itr in range(1, args.niters+1):
-                optimizer.zero_grad()
-                z0, logp0, cL0, cH0 = get_minibatch(train_x, args.num_samples)
-                torch.cuda.reset_peak_memory_stats(device)
-                start = time.perf_counter()
+            while itr <= args.niters:
+                for x_batch in batch_iter(train_x, args.num_samples, shuffle=True):
+                    optimizer.zero_grad()
+                    z0 = x_batch
+                    B = z0.size(0)
+                    logp0 = torch.zeros(B, 1, dtype=torch.float32, device=device)
+                    cL0 = logp0.clone()
+                    cH0 = logp0.clone()
 
-                for p in func.parameters():
-                    p.data = torch.clamp(p.data, clampMin, clampMax)
+                    torch.cuda.reset_peak_memory_stats(device)
+                    start = time.perf_counter()
 
-                with autocast(device_type='cuda', dtype=func_dtype):
-                    start_time = time.perf_counter()
-                    func.nfe = 0
-                    ts = torch.linspace(t0, t1, args.num_timesteps, device=device)
-                    z_t, logp_t, cL_t, cH_t = odeint(
-                        func,
-                        (z0, logp0, cL0, cH0),
-                        ts,
-                        method=args.method
-                    )
-                    z1, logp1, cL1, cH1 = z_t[-1], logp_t[-1], cL_t[-1], cH_t[-1]
-                    logp_x = p_z0.log_prob(z1).view(-1,1) + logp1
-                    loss   = (-alpha[2]*logp_x.mean()
-                              + alpha[0]*cL1.mean()
-                              + alpha[1]*cH1.mean())
-                    time_fwd.update(time.perf_counter() - start_time)
-                    nfe_fwd += func.nfe
-                    func.nfe = 0
+                    for p in func.parameters():
+                        p.data = torch.clamp(p.data, clampMin, clampMax)
 
-                    start_time = time.perf_counter()
-                    loss.backward()
-                    time_bwd.update(time.perf_counter() - start_time)
-                    nfe_bwd += func.nfe
+                    with autocast(device_type='cuda', dtype=func_dtype):
+                        start_time = time.perf_counter()
+                        func.nfe = 0
+                        ts = torch.linspace(t0, t1, args.num_timesteps, device=device)
+                        z_t, logp_t, cL_t, cH_t = odeint(
+                            func,
+                            (z0, logp0, cL0, cH0),
+                            ts,
+                            method=args.method
+                        )
+                        z1, logp1, cL1, cH1 = z_t[-1], logp_t[-1], cL_t[-1], cH_t[-1]
+                        logp_x = p_z0.log_prob(z1).view(-1,1) + logp1
+                        loss   = (-alpha[1]*logp_x.mean()
+                                + alpha[0]*cL1.mean()
+                                + alpha[2]*cH1.mean())
+                        time_fwd.update(time.perf_counter() - start_time)
+                        nfe_fwd += func.nfe
+                        func.nfe = 0
 
-                optimizer.step()
+                        start_time = time.perf_counter()
+                        loss.backward()
+                        time_bwd.update(time.perf_counter() - start_time)
+                        nfe_bwd += func.nfe
+
+                    optimizer.step()
+
                 # elapsed = time.perf_counter() - start
                 peak_m  = torch.cuda.max_memory_allocated(device) / (1024**2)
 
@@ -333,7 +346,11 @@ if __name__ == '__main__':
                 # validation & CSV logging
                 if itr % args.val_freq == 0:
                     with torch.no_grad():
-                        vz0, vpl0, vL0, vH0 = get_minibatch(val_x, args.num_samples_val)
+                        vz0 = next(batch_iter(val_x, args.num_samples, shuffle=False))
+                        B = vz0.size(0)
+                        vpl0 = torch.zeros(B, 1, dtype=torch.float32, device=device)
+                        vL0 = vpl0.clone()
+                        vH0 = vpl0.clone()
                         vz_t, vpl_t, vL_t, vH_t = odeint(
                             func,
                             (vz0, vpl0, vL0, vH0),
@@ -342,9 +359,9 @@ if __name__ == '__main__':
                         )
                         vz1, vpl1, vL1, vH1 = vz_t[-1], vpl_t[-1], vL_t[-1], vH_t[-1]
                         logp_val = p_z0.log_prob(vz1).view(-1,1) + vpl1
-                        loss_val = (-alpha[2]*logp_val.mean()
+                        loss_val = (-alpha[1]*logp_val.mean()
                                     + alpha[0]*vL1.mean()
-                                    + alpha[1]*vH1.mean())
+                                    + alpha[2]*vH1.mean())
                         with autocast(device_type='cuda', dtype=func_dtype):
                             logp_diff_val_mp_t0 = torch.zeros_like(vpl0)
                             cost_L_val_mp_t0 = torch.zeros_like(vL0)
@@ -373,30 +390,38 @@ if __name__ == '__main__':
                     csv_file.flush()
                     nfe_fwd = nfe_bwd = 0
 
-                    # save checkpoint
-                    ckpt_path = os.path.join(result_dir, f"model_iter_{itr}.pt")
-                    torch.save({
-                        'iteration': itr,
-                        'model_state_dict': func.state_dict(),
-                        'optimizer_state_dict': optimizer.state_dict(),
-                        'loss': loss_meter.avg,
-                    }, ckpt_path)
-                    print(f"Model checkpoint saved at {ckpt_path}")
+                    if loss_val.item() < best_val_loss:
+                        best_val_loss = loss_val.item()
+                        n_vals_wo_improve = 0
+                        ckpt_path = os.path.join(result_dir, f"model_best.pt")
+                        torch.save({
+                            'iteration': itr,
+                            'model_state_dict': func.state_dict(),
+                            'optimizer_state_dict': optimizer.state_dict(),
+                            'loss': loss_meter.avg,
+                        }, ckpt_path)
+                        print(f"Model checkpoint saved at {ckpt_path}")
+                    else:
+                        n_vals_wo_improve += 1
 
-                if args.drop_freq == 0: 
+                if args.drop_freq == 0:
                     if n_vals_wo_improve > args.early_stopping:
-                        if ndecs>2:
+                        if ndecs > 2:
                             print("early stopping engaged")
-                            exit(0)
+                            break
                         else:
-                            update_lr(optim, n_vals_wo_improve)
+                            update_lr(optimizer, n_vals_wo_improve)
                             n_vals_wo_improve = 0
                 else:
-                    if itr == args.lr_decay_steps:
-                        for g in optimizer.param_groups:
-                            g['lr'] *= args.lr_decay
+                    if itr % args.drop_freq == 0:
+                        for pg in optimizer.param_groups:
+                            pg['lr'] /= args.lr_drop
                         print(f"Decayed LR to {optimizer.param_groups[0]['lr']}")
 
+                itr += 1
+
+                if itr > args.niters:
+                    break
     except KeyboardInterrupt:
         print("Interrupted. Exiting training loop.")
 
@@ -477,11 +502,25 @@ if __name__ == '__main__':
         val_np = val_x.cpu().numpy()
         N      = min(val_np.shape[0], args.num_samples_val)
         testData = val_np[:N]
+        # Load the best model checkpoint
+        best_ckpt_path = os.path.join(result_dir, "model_best.pt")
+        if os.path.exists(best_ckpt_path):
+            print(f"Loading best model checkpoint from {best_ckpt_path}")
+            cp = torch.load(best_ckpt_path, map_location=device)
+            func.load_state_dict(cp['model_state_dict'])
+        else:
+            print(f"Best model checkpoint not found at {best_ckpt_path}. Using current model.")
 
         #forward map f(x)
         with torch.no_grad():
             # x_batch = torch.from_numpy(testData).to(device)
-            vz0, vpl0, vL0, vH0 = get_minibatch(val_x, args.num_samples_val)
+            # vz0, vpl0, vL0, vH0 = get_minibatch(val_x, args.num_samples_val)
+            vz0 = next(batch_iter(val_x, args.num_samples_val, shuffle=False))
+            B = vz0.size(0)
+            vpl0 = torch.zeros(B, 1, dtype=torch.float32, device=device)
+            vL0 = vpl0.clone()
+            vH0 = vpl0.clone()
+      
             t_grid = torch.linspace(t0, t1, args.num_timesteps_val, device=device)
             z_t, logp_t, cL_t, cH_t   = odeint(
                 func,
@@ -492,9 +531,8 @@ if __name__ == '__main__':
         z_fwd = z_t[-1]
         modelFx = z_fwd[:, :d].cpu().numpy()
 
-        #Gaussian samples & inverse map f⁻¹(y)
-        y = p_z0.sample([N]).to(device)
 
+        y = p_z0.sample([N]).to(device)
         logp0 = torch.zeros(N, 1, device=device)
         cL0   = torch.zeros_like(logp0)
         cH0   = torch.zeros_like(logp0)
@@ -527,7 +565,6 @@ if __name__ == '__main__':
         modelFinvfx   = np.zeros(testData.shape)
 
         idx = 0
-        # use same batch size as your num_samples_val (or pick another)
         batch_size = args.num_samples_val
         for start in range(0, nData, batch_size):
             end = min(start + batch_size, nData)
