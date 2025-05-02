@@ -1,6 +1,6 @@
-
-
-# ========== USER CONFIG ==========
+#!/bin/bash
+# submit_large_experiments_local.sh
+# Usage: chmod +x submit_large_experiments_local.sh ; ./submit_large_experiments_local.sh
 
 # Per-dataset arguments
 default_args=(

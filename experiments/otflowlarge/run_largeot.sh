@@ -1,4 +1,4 @@
-# #!/bin/bash
+#!/bin/bash
 # submit_large_experiments_local.sh
 # Usage: chmod +x submit_large_experiments_local.sh ; ./submit_large_experiments_local.sh
 
