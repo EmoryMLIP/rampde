@@ -17,7 +17,7 @@ from torch.amp import autocast
 
 base_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), '../..'))
 sys.path.insert(0, os.path.join(base_dir, "examples"))
-from torchdiffeq import odeint as odeint_diffeq
+
 from utils import RunningAverageMeter, RunningMaximumMeter
 
 
@@ -49,6 +49,7 @@ precision_map = {
 args.precision = precision_map[args.precision]
 device = torch.device(f'cuda:{args.gpu}' if torch.cuda.is_available() else 'cpu')
 
+from torchdiffeq import odeint as odeint_diffeq
 true_y0 = torch.tensor([[2., 0.]], device=device)
 t       = torch.linspace(0., 30., args.data_size, device=device)
 true_A  = torch.tensor([[-0.1, 6.0], [-2.0, -0.1]], device=device)
@@ -69,10 +70,11 @@ def get_batch():
 def makedirs(d):
     os.makedirs(d, exist_ok=True)
 
+
 if args.odeint == 'torchmpnode':
     print("Using torchmpnode")
     import sys
-    sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
+    sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '../..')))
     from torchmpnode import odeint
 else:
     print("Using torchdiffeq")

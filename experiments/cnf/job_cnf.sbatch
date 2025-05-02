@@ -1,7 +1,7 @@
 #!/bin/bash
-#SBATCH --job-name=ode_mnist
-#SBATCH --output=slurm_logs/ode_mnist_%j.out
-#SBATCH --error=slurm_logs/ode_mnist_%j.err
+#SBATCH --job-name=cnf
+#SBATCH --output=slurm_logs/cnf_%j.out
+#SBATCH --error=slurm_logs/cnf_%j.err
 #SBATCH --time=03:00:00
 #SBATCH --gres=gpu:1
 #SBATCH --mem=4G

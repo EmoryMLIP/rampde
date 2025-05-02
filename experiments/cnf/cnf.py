@@ -183,76 +183,82 @@ combined_t = np.linspace(t0, t1, viz_timesteps)
 
 
 
-for odeint_option in ['torchmpnode','torchdiffeq']: #
 
-    seed_str = f"seed{args.seed}" if args.seed is not None else "noseed"
-    timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
-    folder_name = f"{args.data}_{args.precision}_{odeint_option}_{args.method}_{seed_str}_{timestamp}"
-    result_dir = os.path.join(args.results_dir, folder_name)
-    os.makedirs(result_dir, exist_ok=True)
-    # Write result directory to a Slurm-job-specific file
-    result_file = f"result_dir_{job_id}.txt" if job_id else "result_dir.txt"
-    with open(result_file, "w") as f:
-        f.write(result_dir)
-    if args.viz:
-        png_dir = os.path.join(result_dir, "png")
-        os.makedirs(png_dir, exist_ok=True)
+
+seed_str = f"seed{args.seed}" if args.seed is not None else "noseed"
+timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
+folder_name = f"{args.data}_{args.precision}_{args.odeint}_{args.method}_{seed_str}_{timestamp}"
+result_dir = os.path.join(base_dir, "results", "cnf", folder_name)
+os.makedirs(result_dir, exist_ok=True)
+# Write result directory to a Slurm-job-specific file
+result_file = f"result_dir_{job_id}.txt" if job_id else "result_dir.txt"
+with open(result_file, "w") as f:
+    f.write(result_dir)
+if args.viz:
+    png_dir = os.path.join(result_dir, "png")
+    os.makedirs(png_dir, exist_ok=True)
+else:
+    png_dir = None
+
+script_path = os.path.abspath(__file__)
+shutil.copy(script_path, os.path.join(result_dir, os.path.basename(script_path)))
+
+
+# Redirect stdout and stderr to a log file.
+log_path = os.path.join(result_dir, folder_name + ".txt")
+log_file = open(log_path, "w", buffering=1)
+sys.stdout = log_file
+sys.stderr = log_file
+
+
+device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+print("Running on device:", device)
+
+
+# Print environment and hardware info for reproducibility and debugging
+print("Environment Info:")
+print(f"  Python version: {sys.version}")
+print(f"  PyTorch version: {torch.__version__}")
+print(f"  CUDA available: {torch.cuda.is_available()}")
+print(f"  CUDA version: {torch.version.cuda}")
+print(f"  cuDNN version: {torch.backends.cudnn.version()}")
+print(f"  GPU Device Name: {torch.cuda.get_device_name(device) if torch.cuda.is_available() else 'N/A'}")
+print(f"  Current Device: {torch.cuda.current_device() if torch.cuda.is_available() else 'N/A'}")
+
+print("Experiment started at", datetime.datetime.now())
+print("Arguments:", vars(args))
+print("Results will be saved in:", result_dir)
+# print("SLURM job id",job_id )
+# print("Model checkpoint path:", ckpt_path)
+
+
+csv_path = os.path.join(result_dir, folder_name + ".csv")
+
+
+if args.odeint == 'torchmpnode':
+    print("Using torchmpnode")
+    # For torchmpnode, method must be 'rk4'
+    assert args.method == 'rk4'
+    import sys
+    sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '../..')))
+    from torchmpnode import odeint as odeint_fn
+    from torchmpnode import NoScaler, DynamicScaler
+    scaler_map = {
+        'noscaler': NoScaler(dtype_low=args.precision),
+        'dynamicscaler': DynamicScaler(dtype_low=args.precision)
+    }
+    scaler = scaler_map[args.scaler]
+    solver_kwargs = {'loss_scaler': scaler}
+else:
+    print("Using torchdiffeq")
+    if args.adjoint:
+        from torchdiffeq import odeint_adjoint as odeint_fn
     else:
-        png_dir = None
-
-    # Redirect stdout and stderr to a log file.
-    log_path = os.path.join(result_dir, "log.txt")
-    log_file = open(log_path, "w", buffering=1)
-    sys.stdout = log_file
-    sys.stderr = log_file
+        from torchdiffeq import odeint as odeint_fn
+    solver_kwargs = {}
 
 
-    device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
-    print("Running on device:", device)
-
-
-    # Print environment and hardware info for reproducibility and debugging
-    print("Environment Info:")
-    print(f"  Python version: {sys.version}")
-    print(f"  PyTorch version: {torch.__version__}")
-    print(f"  CUDA available: {torch.cuda.is_available()}")
-    print(f"  CUDA version: {torch.version.cuda}")
-    print(f"  cuDNN version: {torch.backends.cudnn.version()}")
-    print(f"  GPU Device Name: {torch.cuda.get_device_name(device) if torch.cuda.is_available() else 'N/A'}")
-    print(f"  Current Device: {torch.cuda.current_device() if torch.cuda.is_available() else 'N/A'}")
-
-    print("Experiment started at", datetime.datetime.now())
-    print("Arguments:", vars(args))
-    print("Results will be saved in:", result_dir)
-    # print("SLURM job id",job_id )
-    # print("Model checkpoint path:", ckpt_path)
-
-
-    csv_path = os.path.join(result_dir, "metrics.csv")
-
-
-    if odeint_option == 'torchmpnode':
-        print("Using torchmpnode")
-        # For torchmpnode, method must be 'rk4'
-        assert args.method == 'rk4'
-        import sys
-        sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '../..')))
-        from torchmpnode import odeint as odeint_fn
-        from torchmpnode import NoScaler, DynamicScaler
-        scaler_map = {
-            'noscaler': NoScaler(dtype_low=args.precision),
-            'dynamicscaler': DynamicScaler(dtype_low=args.precision)
-        }
-        scaler = scaler_map[args.scaler]
-        solver_kwargs = {'loss_scaler': scaler}
-    else:
-        print("Using torchdiffeq")
-        if args.adjoint:
-            from torchdiffeq import odeint_adjoint as odeint_fn
-        else:
-            from torchdiffeq import odeint as odeint_fn
-        solver_kwargs = {}
-
+if __name__ == '__main__':
     func = CNF(in_out_dim=2, hidden_dim=args.hidden_dim, width=args.width).to(device)
     optimizer = optim.Adam(func.parameters(), lr=args.lr)
     scheduler = optim.lr_scheduler.StepLR(optimizer, step_size=1000, gamma=0.1)
@@ -266,7 +272,7 @@ for odeint_option in ['torchmpnode','torchdiffeq']: #
     time_meter = RunningAverageMeter()
     mem_meter = RunningMaximumMeter()
 
-    checkpoint_files = glob.glob(os.path.join(result_dir, f'{odeint_option}_*.pth'))
+    checkpoint_files = glob.glob(os.path.join(result_dir, f'{args.odeint}_*.pth'))
     if checkpoint_files:
         latest_checkpoint = max(checkpoint_files, key=os.path.getctime)
         cp = torch.load(latest_checkpoint, map_location=device)
@@ -364,17 +370,17 @@ for odeint_option in ['torchmpnode','torchdiffeq']: #
             torch.save({
                 'func_state_dict': func.state_dict(),
                 'optimizer_state_dict': optimizer.state_dict()
-            }, os.path.join(result_dir, f"{odeint_option}_{args.niters}.pth"))
+            }, os.path.join(result_dir, f"{args.odeint}_{args.niters}.pth"))
             
             # csv_file.close()
 
         # ------------------------------
         # Create optimization stats plots
         # ------------------------------
-        # for odeint_option in ['torchmpnode','torchdiffeq']:
-        # result_dir = f"{args.results_dir}_{odeint_option}_{precision_str}"
+        # for args.odeint in ['torchmpnode','torchdiffeq']:
+        # result_dir = f"{args.results_dir}_{args.odeint}_{precision_str}"
         # os.makedirs(result_dir, exist_ok=True)
-        # result_dir = f"{args.train_dir}_{odeint_option}_{precision_str}" if args.train_dir else None
+        # result_dir = f"{args.train_dir}_{args.odeint}_{precision_str}" if args.train_dir else None
         # if result_dir:
         #     os.makedirs(result_dir, exist_ok=True)
 
@@ -450,6 +456,7 @@ for odeint_option in ['torchmpnode','torchdiffeq']: #
                 atol=1e-5,
                 rtol=1e-5,
                 method=args.method,
+                **solver_kwargs
             )
 
 
@@ -514,6 +521,6 @@ for odeint_option in ['torchmpnode','torchdiffeq']: #
                 img, *rest_imgs = [Image.open(f) for f in imgs]
                 img.save(fp=os.path.join(result_dir, "cnf-viz.gif"), format='GIF', append_images=rest_imgs,
                         save_all=True, duration=250, loop=0)
-            print('Saved visualizations for', odeint_option)
+            print('Saved visualizations for', args.odeint)
 
 

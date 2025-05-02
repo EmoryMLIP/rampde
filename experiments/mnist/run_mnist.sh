@@ -31,16 +31,8 @@ for precision in "${precisions[@]}"; do
 
       logf="logs/ode_mnist_${precision}_${method}_${odeint}.log"
       echo "↪ Running: precision=$precision method=$method odeint=$odeint"
-      echo "  → logging to $logf"
 
-      sbatch job_ode_mnist.sbatch "${fixed_args[@]}" "${default_args[@]}" &> "$logf"
-
-      if [ $? -ne 0 ]; then
-        echo "FAILED (see $logf)"
-      else
-        echo "Success."
-      fi
-      echo "--------------------------------------------------"
+      sbatch job_ode_mnist.sbatch "${fixed_args[@]}" "${default_args[@]}"
 
     done
   done

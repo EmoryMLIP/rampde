@@ -19,7 +19,7 @@ import sys
 import pandas as pd
 import matplotlib.pyplot as plt
 
-base_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), '..'))
+base_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), '../..'))
 sys.path.insert(0, os.path.join(base_dir, "examples"))
 from utils import RunningAverageMeter, RunningMaximumMeter
 
@@ -49,7 +49,7 @@ if args.odeint == 'torchmpnode':
     print("Using torchmpnode")
     assert args.method == 'rk4' 
     import sys
-    sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
+    sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '../..')))
     from torchmpnode import odeint
 else:    
     print("using torchdiffeq")
