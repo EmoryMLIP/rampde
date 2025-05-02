@@ -30,12 +30,8 @@ sys.path.insert(0, base_dir)
 
 from src.mmd import mmd
 sys.path.insert(0, base_dir)
-import datasets
+from datasets import miniboone
 
-sys.path.insert(0, os.path.join(base_dir, "examples"))
-from Phi import Phi
-
-from utils import RunningAverageMeter, RunningMaximumMeter
 
 parser = argparse.ArgumentParser()
 parser.add_argument('--adjoint', action='store_true')
@@ -97,18 +93,6 @@ def update_lr(optimizer, n_vals_without_improvement):
         for param_group in optimizer.param_groups:
             param_group["lr"] = args.lr / (args.lr_drop ** ndecs)
 
-# choose ODE solver
-if args.odeint == 'torchmpnode':
-    print("Using torchmpnode")
-    import sys
-    sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
-    from torchmpnode import odeint
-else:
-    print("Using torchdiffeq")
-    if args.adjoint:
-        from torchdiffeq import odeint_adjoint as odeint
-    else:
-        from torchdiffeq import odeint
 
 # os.makedirs(args.results_dir, exist_ok=True)
 # seed_str = f"seed{args.seed}" if args.seed is not None else "noseed"
@@ -122,7 +106,7 @@ else:
 seed_str = f"seed{args.seed}" if args.seed is not None else "noseed"
 timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
 folder_name = f"{args.data}_{args.precision}_{args.odeint}_{args.method}_{seed_str}_{timestamp}"
-result_dir = os.path.join(args.results_dir, folder_name)
+result_dir = os.path.join(base_dir, "results", "otflowlarge", folder_name)
 os.makedirs(result_dir, exist_ok=True)
 
 result_file = f"result_dir_{job_id}.txt" if job_id else "result_dir.txt"
@@ -133,6 +117,9 @@ if args.viz:
     os.makedirs(png_dir, exist_ok=True)
 else:
     png_dir = None
+
+script_path = os.path.abspath(__file__)
+shutil.copy(script_path, os.path.join(result_dir, os.path.basename(script_path)))
 
 # Redirect stdout and stderr to a log file.
 log_path = os.path.join(result_dir, "log.txt")
@@ -160,13 +147,13 @@ print(f"  Current Device: {torch.cuda.current_device() if torch.cuda.is_availabl
 print("Experiment started at", datetime.datetime.now())
 print("Arguments:", vars(args))
 print("Results will be saved in:", result_dir)
-# print("SLURM job id",job_id )
+print("SLURM job id",job_id )
 # print("Model checkpoint path:", ckpt_path)
 
 
 
 #check if CSV exists
-csv_path = os.path.join(result_dir, "metrics.csv")
+csv_path = os.path.join(result_dir, folder_name + ".csv")
 if not os.path.exists(csv_path):
     print(f"Writing metrics to {csv_path}")
     csv_file = open(csv_path, "w", newline='')
@@ -202,6 +189,21 @@ def batch_iter(X, batch_size, shuffle=True):
     for batch_idxs in idxs.split(batch_size):
         yield X[batch_idxs]
 
+
+sys.path.insert(0, os.path.join(base_dir, "examples"))
+from utils import RunningAverageMeter, RunningMaximumMeter
+
+# choose ODE solver
+if args.odeint == 'torchmpnode':
+    print("Using torchmpnode")
+    from torchmpnode import odeint
+else:
+    print("Using torchdiffeq")
+    if args.adjoint:
+        from torchdiffeq import odeint_adjoint as odeint
+    else:
+        from torchdiffeq import odeint
+from Phi import Phi
 class OTFlow(nn.Module):
     def __init__(self, in_out_dim, hidden_dim, alpha=[1.0]*2):
         super().__init__()

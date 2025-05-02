@@ -2,7 +2,7 @@
 # submit_large_experiments_local.sh
 # Usage: chmod +x submit_large_experiments_local.sh ; ./submit_large_experiments_local.sh
 
-datasets=("power" "gas" "hepmass" "miniboone" "bsds300")
+datasets=("miniboone") #"power" "gas" "hepmass" "bsds300"
 
 # Per-dataset arguments
 declare -A dataset_args
@@ -46,7 +46,3 @@ for dataset in "${datasets[@]}"; do
     done
   done
 done
-
-# Done
-conda deactivate
-echo "All local experiments finished. Logs are in ./logs/" 

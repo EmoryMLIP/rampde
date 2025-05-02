@@ -70,7 +70,7 @@ os.makedirs(args.results_dir, exist_ok=True)
 seed_str = f"seed{args.seed}" if args.seed is not None else "noseed"
 timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
 folder_name = f"{args.precision}_{args.odeint}_{args.method}_{seed_str}_{timestamp}"
-result_dir = os.path.join("results", "ode_mnist", folder_name)
+result_dir = os.path.join(base_dir, "results", "ode_mnist", folder_name)
 os.makedirs(result_dir, exist_ok=True)
 with open("result_dir.txt", "w") as f:
     f.write(result_dir)

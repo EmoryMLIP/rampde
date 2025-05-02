@@ -14,13 +14,14 @@ import torch.nn as nn
 import torch.optim as optim
 from torch.amp import autocast
 
-from torchdiffeq import odeint as odeint_diffeq
-sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
-from torchmpnode import odeint as odeint_mp
 
-base_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), '..'))
+base_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), '../..'))
 sys.path.insert(0, os.path.join(base_dir, "examples"))
+from torchdiffeq import odeint as odeint_diffeq
 from utils import RunningAverageMeter, RunningMaximumMeter
+
+
+
 
 parser = argparse.ArgumentParser('ODE demo')
 parser.add_argument('--data_size',     type=int, default=30000)
@@ -83,7 +84,7 @@ else:
 seed_str = f"seed{args.seed}" if args.seed is not None else "noseed"
 timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
 folder_name = f"{args.precision}_{args.odeint}_{args.method}_{seed_str}_{timestamp}"
-result_dir = os.path.join(args.results_dir, folder_name)
+result_dir = os.path.join(base_dir, "results", "ode", folder_name)
 os.makedirs(result_dir, exist_ok=True)
 # Write result directory to a Slurm-job-specific file
 result_file = f"result_dir_{job_id}.txt" if job_id else "result_dir.txt"
@@ -96,7 +97,7 @@ else:
     png_dir = None
 
 # Redirect stdout and stderr to a log file.
-log_path = os.path.join(result_dir, "log.txt")
+log_path = os.path.join(result_dir, folder_name + ".txt")
 log_file = open(log_path, "w", buffering=1)
 sys.stdout = log_file
 sys.stderr = log_file
@@ -119,7 +120,7 @@ print(f"  Current Device: {torch.cuda.current_device() if torch.cuda.is_availabl
 print("Experiment started at", datetime.datetime.now())
 print("Arguments:", vars(args))
 print("Results will be saved in:", result_dir)
-# print("SLURM job id",job_id )
+print("SLURM job id",job_id )
 # print("Model checkpoint path:", ckpt_path)
 
 if args.viz:

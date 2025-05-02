@@ -1,4 +1,4 @@
-#!/usr/bin/env bash
+#!/bin/bash
 # submit_ode_demo.sh
 # Usage:
 #   chmod +x submit_ode_demo.sh
@@ -21,7 +21,7 @@ default_args="\
 # Grid search choices
 precisions=("float32" "float16" "bfloat16")
 methods=("rk4" "euler")
-odeints=("torchdiffeq" "torchmpnode")
+odeints=("torchmpnode") #"torchdiffeq" 
 
 mkdir -p slurm_logs
 
@@ -37,17 +37,9 @@ for precision in "${precisions[@]}"; do
       )
       extra_args="$default_args"
 
-      logf="logs/ode_demo_${precision}_${method}_${odeint}.log"
       echo "↪ Running: precision=$precision method=$method odeint=$odeint"
-      echo "  → logging to $logf"
 
-      sbatch job_ode_demo.sbatch "${fixed_args[@]}" $extra_args &> "$logf"
-      if [ $? -ne 0 ]; then
-        echo "FAILED (see $logf)"
-      else
-        echo "Success."
-      fi
-      echo "--------------------------------------------------"
+      sbatch job_ode_demo.sbatch "${fixed_args[@]}" $extra_args
 
     done
   done
