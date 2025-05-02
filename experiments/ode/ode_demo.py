@@ -135,7 +135,7 @@ if args.viz:
 
 def visualize_compare(true_y, func_d, itr, result_dir):
     with torch.no_grad():
-        pred_d = odeint_diffeq(func_d, true_y0, t, method=args.method)
+        pred_d = odeint(func_d, true_y0, t, method=args.method)
 
         ax_traj1.cla()
         ax_traj1.set_title('y₁')
