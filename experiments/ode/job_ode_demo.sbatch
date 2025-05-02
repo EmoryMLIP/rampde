@@ -8,7 +8,9 @@
 
 # Load your conda environment
 source /local/scratch/lruthot/miniconda3/etc/profile.d/conda.sh
-conda activate torch26
+conda activate torch27
+pip install torchdiffeq
+
 # Determine which conda environment to use based on the --odeint flag
 # ODEINT=""
 # prev=""
