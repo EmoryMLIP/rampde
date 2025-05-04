@@ -158,7 +158,7 @@ if not os.path.exists(csv_path):
     print(f"Writing metrics to {csv_path}")
     csv_file = open(csv_path, "w", newline='')
     csv_writer = csv.writer(csv_file)
-    csv_writer.writerow(["iteration", "learning rate","running loss","val loss", "val loss (mp)","running L", "val L", "val L(mp)", "running NLL", "val NLL", "val NLL (mp)", "running HJB", "val HJB", "val HJB (mp)",  "time fwd","time bwd", "max memory (MB)","nfe fwd", "nfe bwd"])
+    csv_writer.writerow(["iteration", "learning rate","running loss","val loss", "val loss (mp)","running L", "val L", "val L(mp)", "running NLL", "val NLL", "val NLL (mp)", "running HJB", "val HJB", "val HJB (mp)",  "time fwd","time bwd", "max memory (MB)","nfe fwd", "nfe bwd", "mmd"])
 
     csv_file.flush()
 else:
@@ -379,6 +379,23 @@ if __name__ == '__main__':
                             z_val_mp_t1, logp_diff_val_mp_t1, cost_L_val_mp_t1, cost_HJB_val_mp_t1 = z_val_mp_t[-1], logp_diff_val_mp_t[-1], cost_L_val_mp_t[-1], cost_HJB_val_mp_t[-1]
                             logp_x_val_mp = p_z0.log_prob(z_val_mp_t1).to(device) + logp_diff_val_mp_t1.view(-1)
                             loss_val_mp = alpha[0]* cost_L_val_mp_t1.mean(0) - alpha[1]*logp_x_val_mp.mean(0) +  alpha[2] * cost_HJB_val_mp_t1.mean(0)
+                        B=10000  
+                        y = p_z0.sample([B]).to(device)
+                        logp0 = torch.zeros(B, 1, dtype=torch.float32, device=device)
+                        cL0   = logp0.clone()
+                        cH0   = logp0.clone()
+                        t_grid_inv = torch.linspace(t1, t0, args.num_timesteps_val, device=device)
+                        z_inv_t, _, _, _ = odeint(
+                            func,
+                            (y, logp0, cL0, cH0),
+                            t_grid_inv,
+                            method=args.method
+                        )
+                        z_inv1    = z_inv_t[-1]
+                        modelGen  = z_inv1[:, :d].cpu().numpy()
+                        val_batch = vz0.cpu().numpy()
+                        # compute MMD between generated samples and val batch
+                        mmd_val = mmd(modelGen, val_batch)
 
 
                     print('Iter: {}, lr {:.3e} running loss: {:.3e}, val loss {:.3e}, val loss (mp) {:.3e}'.format(itr, optimizer.param_groups[0]['lr'], loss_meter.avg, loss_val.item(), loss_val_mp.item()),
@@ -386,9 +403,9 @@ if __name__ == '__main__':
                         'running NLL: {:.3e}, val NLL: {:.3e}, val NLL (mp): {:.3e}'.format(NLL_meter.avg,(-logp_val.mean()).item(), -logp_x_val_mp.mean(0).item()), 
                         'running HJB: {:.3e}, val HJB: {:.3e}, val HJB (mp): {:.3e}'.format(cost_HJB_meter.avg, vH1.mean().item(), cost_HJB_val_mp_t1.mean(0).item()), 
                         'time (fwd): {:.4f}s'.format(time_fwd.avg),'time (bwd): {:.4f}s'.format(time_bwd.avg), 'max memory: {:.0f}MB'.format(peak_m),
-                        'nfe (fwd) : {}, nfe (bwd): {}'.format(nfe_fwd, nfe_bwd))
+                        'nfe (fwd) : {}, nfe (bwd): {}'.format(nfe_fwd, nfe_bwd), 'mmd: {:.5e}'.format(mmd_val))
 
-                    csv_writer.writerow([itr, optimizer.param_groups[0]['lr'], loss_meter.avg, loss_val.item(), loss_val_mp.item(), cost_L_meter.avg, vL1.mean().item(), cost_L_val_mp_t1.mean(0).item(), NLL_meter.avg, (-logp_val.mean()).item(), -logp_x_val_mp.mean(0).item(), cost_HJB_meter.avg, vH1.mean().item(), cost_HJB_val_mp_t1.mean(0).item(), time_fwd.avg, time_bwd.avg, peak_m,nfe_fwd,nfe_bwd])
+                    csv_writer.writerow([itr, optimizer.param_groups[0]['lr'], loss_meter.avg, loss_val.item(), loss_val_mp.item(), cost_L_meter.avg, vL1.mean().item(), cost_L_val_mp_t1.mean(0).item(), NLL_meter.avg, (-logp_val.mean()).item(), -logp_x_val_mp.mean(0).item(), cost_HJB_meter.avg, vH1.mean().item(), cost_HJB_val_mp_t1.mean(0).item(), time_fwd.avg, time_bwd.avg, peak_m,nfe_fwd,nfe_bwd, mmd_val])
 
                     csv_file.flush()
                     nfe_fwd = nfe_bwd = 0
@@ -457,6 +474,8 @@ if __name__ == '__main__':
     max_mem     = data[:, 16]
     nfe_fwd     = data[:, 17]
     nfe_bwd     = data[:, 18]
+    mmd_vals   = data[:, 19]
+
 
 
     fig, axs = plt.subplots(2, 3, figsize=(15, 8))
@@ -489,17 +508,19 @@ if __name__ == '__main__':
     axs[1, 0].set_xlabel("Iteration")
     axs[1, 0].legend()
 
-    # 5) Learning Rate
-    axs[1, 1].semilogy(iters, lr_vals, label="learning rate")
-    axs[1, 1].set_title("Learning Rate")
+    # 5) NFE
+    axs[1, 1].plot(iters, nfe_fwd, label="forward")
+    axs[1, 1].plot(iters, nfe_bwd, label="backward")
+    axs[1, 1].set_title("NFE")
     axs[1, 1].set_xlabel("Iteration")
     axs[1, 1].legend()
 
-    # 6) Max memory
-    axs[1, 2].plot(iters, max_mem, label="max memory (MB)")
-    axs[1, 2].set_title("Max Memory")
+    # 6) MMD
+    axs[1, 2].plot(iters, mmd_vals, label="MMD")
+    axs[1, 2].set_title("MMD")
     axs[1, 2].set_xlabel("Iteration")
     axs[1, 2].legend()
+
 
     plt.tight_layout()
     stats_fig = os.path.join(result_dir, "optimization_stats.png")
