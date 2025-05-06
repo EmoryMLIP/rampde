@@ -39,6 +39,7 @@ parser.add_argument('--method',        type=str, choices=['rk4','dopri5','euler'
 parser.add_argument('--precision',     type=str, choices=['float32','float16','bfloat16'], default='float16')
 parser.add_argument('--odeint',        type=str, choices=['torchdiffeq','torchmpnode'], default='torchmpnode')
 parser.add_argument('--results_dir',   type=str, default='./results/png_rmsproptest')
+parser.add_argument('--scaler',        type=str, choices=['noscaler','dynamicscaler'], default='noscaler')
 parser.add_argument('--hidden_dim',    type=int, default=128)
 parser.add_argument('--lr',            type=float, default=1e-4)
 parser.add_argument('--seed',         type=int, default=0)
@@ -151,7 +152,14 @@ def visualize_compare(true_y, func_d, itr, result_dir, odeintfn):
 
     with torch.no_grad():
         if odeintfn == 'torchmpnode':
-            pred_d = torchmpnode.odeint(func_d, true_y0, t, method=args.method)
+            from torchmpnode import NoScaler, DynamicScaler
+            scaler_map = {
+                'noscaler': NoScaler(dtype_low=args.precision),
+                'dynamicscaler': DynamicScaler(dtype_low=args.precision)
+            }
+            scaler = scaler_map[args.scaler]
+            solver_kwargs = {'loss_scaler': scaler}
+            pred_d = torchmpnode.odeint(func_d, true_y0, t, method=args.method, **solver_kwargs)
         else:
             pred_d = torchdiffeq.odeint(func_d, true_y0, t, method=args.method)
 
@@ -248,7 +256,15 @@ else:
 
         with autocast(device_type='cuda', dtype=args.precision):
             if args.odeint == 'torchmpnode':
-                pred = torchmpnode.odeint(func, y0, bt, method=args.method)
+                from torchmpnode import NoScaler, DynamicScaler
+                scaler_map = {
+                    'noscaler': NoScaler(dtype_low=args.precision),
+                    'dynamicscaler': DynamicScaler(dtype_low=args.precision)
+                }
+                scaler = scaler_map[args.scaler]
+                solver_kwargs = {'loss_scaler': scaler}
+                pred = torchmpnode.odeint(func, y0, bt, method=args.method, **solver_kwargs)
+                
             else:
                 pred = torchdiffeq.odeint(func, y0, bt, method=args.method)
             loss = torch.mean(torch.abs(pred - y))
@@ -266,7 +282,7 @@ else:
             with torch.no_grad(), autocast(device_type='cuda', dtype=args.precision):
                 
                 if args.odeint == 'torchmpnode':
-                    pred_val = torchmpnode.odeint(func, true_y0, t, method=args.method)
+                    pred_val = torchmpnode.odeint(func, true_y0, t, method=args.method, **solver_kwargs)
                 else:
                     pred_val = torchdiffeq.odeint(func, true_y0, t, method=args.method)
 
