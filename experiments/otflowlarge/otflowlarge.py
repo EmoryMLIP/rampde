@@ -30,7 +30,7 @@ sys.path.insert(0, base_dir)
 
 from src.mmd import mmd
 sys.path.insert(0, base_dir)
-from datasets import miniboone
+import datasets
 
 
 parser = argparse.ArgumentParser()
