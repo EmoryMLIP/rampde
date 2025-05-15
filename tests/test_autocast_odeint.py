@@ -1,3 +1,31 @@
+"""
+This script benchmarks gradient fidelity in low‑precision time‑integration.
+We integrate the linear ODE ẏ = Ay with A = 0.5 I₂ and compare three
+implementations:
+
+1. **torchdiffeq** (`odeint`) executed inside a CUDA autocast region
+   (`float16`, `bfloat16`, or `float32`).
+2. **torchmpnode** (`mpodeint`) which performs the same Runge–Kutta steps
+   but keeps internal high‑precision accumulators.
+3. A hand‑rolled “pseudo‑autocast” Euler solver that mimics mixed precision
+   by down‑casting every stage matrix–vector product.
+
+For each integrator we measure the relative error of
+(a) the final state  y(T),
+(b) ∇_{z₀} ℒ,  and
+(c) ∇_{θ} ℒ,
+where the loss ℒ = ½‖y(T) − 2‖² admits a closed‑form gradient.  The exact
+solution computed with a matrix exponential serves as reference.
+
+We sweep over a logarithmic grid of step counts (32 – 8192) and two explicit
+methods (forward Euler, RK4).  All results are written to
+`relative_errors.csv`; three log–log PNGs visualise the error curves.
+
+Run on GPU with:
+    python test_autocast_odeint.py
+"""
+
+# std / third‑party imports
 import torch
 import torch.nn as nn
 from torch.amp import autocast
@@ -13,6 +41,7 @@ import matplotlib.pyplot as plt
 
 prec = torch.bfloat16
 
+# ODE function representing a linear system with parameter matrix theta
 class ODEFunc(nn.Module):
     def __init__(self, dim):
         super().__init__()
@@ -24,9 +53,12 @@ class ODEFunc(nn.Module):
         self.theta = nn.Parameter(A)
     
     def forward(self, t, z):
+        """Compute the time derivative dz/dt = theta * z."""
         return torch.matmul(self.theta, z)
 
+# ----- helper: naive FP16 Euler integrator mimicking autocast ----------
 def euler_forward_manual_fp16(z0, func, t0, t1, N):
+    """Forward Euler integrator with manual FP16 precision."""
     h = (t1 - t0) / (N - 1)
     z_list = []
     current_z = z0.clone()
@@ -39,7 +71,9 @@ def euler_forward_manual_fp16(z0, func, t0, t1, N):
         t += h
     return z_list
 
+# ----- helper: manual Euler integrator mimicking pseudo-autocast ----------
 def euler_forward_manual_pseudoac(z0, func, t0, t1, N):
+    """Forward Euler integrator with manual pseudo-autocast precision."""
     h = (t1 - t0) / (N - 1)
     z_list = []
     current_z = z0.clone() 
@@ -56,7 +90,9 @@ def euler_forward_manual_pseudoac(z0, func, t0, t1, N):
         t += h
     return z_list
 
+# ----- helper: manual backward pass for pseudo-autocast integrator ----------
 def manual_pseudoac(z_list, func, t0, t1):
+    """Compute gradients for the manual pseudo-autocast Euler integrator."""
     N = len(z_list) - 1
     h = (t1 - t0) / N
     h = torch.tensor(h, dtype=torch.float32, device=z_list[0].device)
@@ -79,6 +115,7 @@ def manual_pseudoac(z_list, func, t0, t1):
 
 # Full precision under torchdiffeq
 def run_baseline(method, N, device, t0, t1, dim):
+    """Run baseline full-precision integration and compute gradients."""
     t_span = torch.linspace(t0, t1, N, device=device)
     func = ODEFunc(dim).to(device)
 
@@ -94,6 +131,7 @@ def run_baseline(method, N, device, t0, t1, dim):
 
 # Run torchdiffe under autocast
 def run_autocast_odeint(method, N, device, t0, t1, dim, prec):
+    """Run torchdiffeq odeint inside autocast region and compute gradients."""
     t_span = torch.linspace(t0, t1, N, device=device)
     func = ODEFunc(dim).to(device)
     z0 = torch.ones((dim, 1), dtype=torch.float32, device=device, requires_grad=True)
@@ -106,6 +144,7 @@ def run_autocast_odeint(method, N, device, t0, t1, dim, prec):
 
 # Run torchmpnode under autocast
 def run_autocast_mpodeint(method, N, device, t0, t1, dim, prec):
+    """Run torchmpnode odeint inside autocast region and compute gradients."""
     t_span = torch.linspace(t0, t1, N, device=device)
     func = ODEFunc(dim).to(device)
     z0 = torch.ones((dim, 1), dtype=torch.float32, device=device, requires_grad=True)
@@ -117,6 +156,7 @@ def run_autocast_mpodeint(method, N, device, t0, t1, dim, prec):
     return sol[-1].detach().clone(), z0.grad.detach().clone(), func.theta.grad.detach().clone()
 
 def pseudo_autocast(N, device, t0, t1, dim):
+    """Run manual pseudo-autocast Euler integrator and compute gradients."""
     z0_manual_noac = torch.ones((dim, 1), dtype=torch.float32, device=device)
     func_manual_noac = ODEFunc(dim).to(device)
     z_list_manual_noac = euler_forward_manual_pseudoac(z0_manual_noac, func_manual_noac, t0, t1, N)
@@ -141,15 +181,18 @@ for meth in method_list:
         'mpodeint': {'sol': [], 'grad_z0': [], 'grad_theta': []}
     }
 
+# sweep over RK methods and step counts
 for meth in method_list:
     print("Processing method:", meth)
     for N in steps_list:
 
+        # reference solution and gradients (FP32)
         baseline_sol, baseline_grad_z0, baseline_grad_theta = run_baseline(meth, N, device, t0, t1, dim)
         ac_sol, ac_grad_z0, ac_grad_theta = run_autocast_odeint(meth, N, device, t0, t1, dim, prec)
         acmp_sol, acmp_grad_z0, acmp_grad_theta = run_autocast_mpodeint(meth, N, device, t0, t1, dim, prec)
         manual_sol, manual_grad_z0, manual_grad_theta = pseudo_autocast(N, device, t0, t1, dim)
 
+        # compute relative errors
         rel_err_sol_odeint = torch.norm(ac_sol - baseline_sol) / torch.norm(baseline_sol)
         rel_err_grad_z0_odeint = torch.norm(ac_grad_z0 - baseline_grad_z0) / torch.norm(baseline_grad_z0)
         rel_err_grad_theta_odeint = torch.norm(ac_grad_theta - baseline_grad_theta) / torch.norm(baseline_grad_theta)
@@ -164,6 +207,7 @@ for meth in method_list:
         rel_err_grad_z0_manual = torch.norm(manual_grad_z0 - baseline_grad_z0) / torch.norm(baseline_grad_z0)
         rel_err_grad_theta_manual = torch.norm(manual_grad_theta - baseline_grad_theta) / torch.norm(baseline_grad_theta)
 
+        # store for CSV and plots
         results.append([
             meth, N,
             rel_err_sol_odeint.item(), rel_err_grad_z0_odeint.item(), rel_err_grad_theta_odeint.item(),
@@ -196,6 +240,7 @@ with open(csv_filename, mode='w', newline='') as csv_file:
     writer.writerows(results)
 print("CSV file saved as", csv_filename)
 
+# --- visualisation ---
 for meth in method_list:
     steps = error_data[meth]['steps']
     # Plot relative error for final solution (z_T)
@@ -236,4 +281,3 @@ for meth in method_list:
     plt.legend()
     plt.grid(True)
     plt.savefig(f'relative_error_grad_theta_{meth}.png')
-
