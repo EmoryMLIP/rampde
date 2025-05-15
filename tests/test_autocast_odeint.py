@@ -25,55 +25,37 @@ Run on GPU with:
     python test_autocast_odeint.py
 """
 
-# std / third‑party imports
 import torch
 import torch.nn as nn
 from torch.amp import autocast
 from torchdiffeq import odeint
 import sys
 import os
-# os.environ["CUDA_VISIBLE_DEVICES"]="2"
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
 from torchmpnode import odeint as mpodeint
 import csv
 import matplotlib.pyplot as plt
 
+prec = torch.float16
+num_iters = 1    # global number of “training” iterations
+lr = 1e-3         # learning rate for updating θ
 
-prec = torch.bfloat16
-
-# ODE function representing a linear system with parameter matrix theta
 class ODEFunc(nn.Module):
     def __init__(self, dim):
         super().__init__()
         A = torch.tensor([[0.5, 0.0],
-                                     [0.0, 0.5]], dtype=torch.float32)
-        # stiff_matrix = torch.tensor([[-30, 0.0, 0.0],
-        #                              [0.0, -10, 0.0],
-        #                              [0.0, 0.0, -0.1]], dtype=torch.float32)
+                          [0.0, 0.5]], dtype=torch.float32)
         self.theta = nn.Parameter(A)
     
     def forward(self, t, z):
         """Compute the time derivative dz/dt = theta * z."""
-        return torch.matmul(self.theta, z)
 
-# ----- helper: naive FP16 Euler integrator mimicking autocast ----------
-def euler_forward_manual_fp16(z0, func, t0, t1, N):
-    """Forward Euler integrator with manual FP16 precision."""
-    h = (t1 - t0) / (N - 1)
-    z_list = []
-    current_z = z0.clone()
-    t = t0
-    z_list.append(current_z)
-    for _ in range(N - 1):
-        f_val = func.forward(t, current_z)
-        current_z = current_z + h * f_val
-        z_list.append(current_z)
-        t += h
-    return z_list
+        with autocast(device_type='cuda', dtype=prec):
+            return torch.matmul(self.theta, z)
 
-# ----- helper: manual Euler integrator mimicking pseudo-autocast ----------
+
+
 def euler_forward_manual_pseudoac(z0, func, t0, t1, N):
-    """Forward Euler integrator with manual pseudo-autocast precision."""
     h = (t1 - t0) / (N - 1)
     z_list = []
     current_z = z0.clone() 
@@ -90,15 +72,12 @@ def euler_forward_manual_pseudoac(z0, func, t0, t1, N):
         t += h
     return z_list
 
-# ----- helper: manual backward pass for pseudo-autocast integrator ----------
 def manual_pseudoac(z_list, func, t0, t1):
-    """Compute gradients for the manual pseudo-autocast Euler integrator."""
     N = len(z_list) - 1
     h = (t1 - t0) / N
     h = torch.tensor(h, dtype=torch.float32, device=z_list[0].device)
     dim = func.theta.shape[0]
     target = torch.full((dim, 1), 2.0, dtype=torch.float32, device=z_list[0].device)
-    I = torch.eye(dim, dtype=torch.float32, device=z_list[0].device)
     
     dL_dz_half = [None]*(N+1)
     dL_dz_half[N] = z_list[-1] - target
@@ -113,125 +92,124 @@ def manual_pseudoac(z_list, func, t0, t1):
         dL_dtheta_half = dL_dtheta_half.float()
     return dL_dz_half[0], dL_dtheta_half
 
-# Full precision under torchdiffeq
+# Full precision analytical solution
 def run_baseline(method, N, device, t0, t1, dim):
     """Run baseline full-precision integration and compute gradients."""
     t_span = torch.linspace(t0, t1, N, device=device)
-    func = ODEFunc(dim).to(device)
-
-    z0 = torch.ones((dim, 1), dtype=torch.float32, device=device, requires_grad=True)
+    func   = ODEFunc(dim).to(device)
+    z0     = torch.ones((dim, 1), dtype=torch.float32, device=device, requires_grad=True)
     target = torch.full((dim, 1), 2.0, dtype=torch.float32, device=device)
-    # sol = odeint(func, z0, t_span, method=method)[-1]
-    # Analytical solution for the ODE: z(t) = exp(theta * t) * z0
-    sol = torch.matmul(torch.matrix_exp(func.theta * t_span[-1]), z0)
-    loss = 0.5 * ((sol - target)**2).sum()
-    loss.backward()
-    # Return the final solution and the gradients.
+
+    optim = torch.optim.SGD(func.parameters(), lr=lr)
+    for _ in range(num_iters):
+        optim.zero_grad()
+        if z0.grad is not None:
+            z0.grad.zero_()
+        sol  = torch.matmul(torch.matrix_exp(func.theta * t_span[-1]), z0)
+        loss = 0.5 * ((sol - target)**2).sum()
+        loss.backward()
+        optim.step()
+
     return sol.detach().clone(), z0.grad.detach().clone(), func.theta.grad.detach().clone()
 
-# Run torchdiffe under autocast
+# Run torchdiffeq under autocast
 def run_autocast_odeint(method, N, device, t0, t1, dim, prec):
     """Run torchdiffeq odeint inside autocast region and compute gradients."""
     t_span = torch.linspace(t0, t1, N, device=device)
-    func = ODEFunc(dim).to(device)
-    z0 = torch.ones((dim, 1), dtype=torch.float32, device=device, requires_grad=True)
+    func   = ODEFunc(dim).to(device)
+    z0     = torch.ones((dim, 1), dtype=torch.float32, device=device, requires_grad=True)
     target = torch.full((dim, 1), 2.0, dtype=torch.float32, device=device)
-    with autocast(device_type='cuda', dtype=prec):
-        sol = odeint(func, z0, t_span, method=method)
-        loss = 0.5 * ((sol[-1] - target)**2).sum()
+
+    optim = torch.optim.SGD(func.parameters(), lr=lr)
+    for _ in range(num_iters):
+        optim.zero_grad()
+        if z0.grad is not None:
+            z0.grad.zero_()
+        with autocast(device_type='cuda', dtype=prec):
+            sol  = odeint(func, z0, t_span, method=method)
+            loss = 0.5 * ((sol[-1] - target)**2).sum()
         loss.backward()
+        optim.step()
+
     return sol[-1].detach().clone(), z0.grad.detach().clone(), func.theta.grad.detach().clone()
 
 # Run torchmpnode under autocast
 def run_autocast_mpodeint(method, N, device, t0, t1, dim, prec):
     """Run torchmpnode odeint inside autocast region and compute gradients."""
+
     t_span = torch.linspace(t0, t1, N, device=device)
-    func = ODEFunc(dim).to(device)
-    z0 = torch.ones((dim, 1), dtype=torch.float32, device=device, requires_grad=True)
+    func   = ODEFunc(dim).to(device)
+    z0     = torch.ones((dim, 1), dtype=torch.float32, device=device, requires_grad=True)
     target = torch.full((dim, 1), 2.0, dtype=torch.float32, device=device)
-    with autocast(device_type='cuda', dtype=prec):
-        sol = mpodeint(func, z0, t_span, method=method)
-        loss = 0.5 * ((sol[-1] - target)**2).sum()
+
+    optim = torch.optim.SGD(func.parameters(), lr=lr)
+    for _ in range(num_iters):
+        optim.zero_grad()
+        if z0.grad is not None:
+            z0.grad.zero_()
+        with autocast(device_type='cuda', dtype=prec):
+            sol  = mpodeint(func, z0, t_span, method=method)
+            loss = 0.5 * ((sol[-1] - target)**2).sum()
         loss.backward()
+        optim.step()
+
     return sol[-1].detach().clone(), z0.grad.detach().clone(), func.theta.grad.detach().clone()
 
-def pseudo_autocast(N, device, t0, t1, dim):
-    """Run manual pseudo-autocast Euler integrator and compute gradients."""
-    z0_manual_noac = torch.ones((dim, 1), dtype=torch.float32, device=device)
-    func_manual_noac = ODEFunc(dim).to(device)
-    z_list_manual_noac = euler_forward_manual_pseudoac(z0_manual_noac, func_manual_noac, t0, t1, N)
-    dL_dz0_manual_noac, dL_dtheta_manual_noac = manual_pseudoac(z_list_manual_noac, func_manual_noac, t0, t1)
-    
-    return z_list_manual_noac[-1].detach().clone(), dL_dz0_manual_noac, dL_dtheta_manual_noac
 
+device       = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+t0, t1       = 0.0, 2.0
+dim          = 2
+steps_list   = [32, 64, 128, 256, 512, 1024, 2048, 4096, 8192]
+method_list  = ['rk4']  # 'euler', etc.
 
+results    = []
+error_data = {meth: {'steps': [],
+                     'odeint': {'sol': [], 'grad_z0': [], 'grad_theta': []},
+                     'mpodeint': {'sol': [], 'grad_z0': [], 'grad_theta': []}}
+              for meth in method_list}
 
-device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-t0, t1 = 0.0, 2.0
-dim = 2
-steps_list = [32, 64, 128, 256, 512, 1024, 2048, 4096, 8192]
-method_list = ['euler', 'rk4']
-
-results = []  
-error_data = {}
-for meth in method_list:
-    error_data[meth] = {
-        'steps': [],
-        'odeint': {'sol': [], 'grad_z0': [], 'grad_theta': []},
-        'mpodeint': {'sol': [], 'grad_z0': [], 'grad_theta': []}
-    }
-
-# sweep over RK methods and step counts
 for meth in method_list:
     print("Processing method:", meth)
     for N in steps_list:
-
-        # reference solution and gradients (FP32)
         baseline_sol, baseline_grad_z0, baseline_grad_theta = run_baseline(meth, N, device, t0, t1, dim)
-        ac_sol, ac_grad_z0, ac_grad_theta = run_autocast_odeint(meth, N, device, t0, t1, dim, prec)
-        acmp_sol, acmp_grad_z0, acmp_grad_theta = run_autocast_mpodeint(meth, N, device, t0, t1, dim, prec)
-        manual_sol, manual_grad_z0, manual_grad_theta = pseudo_autocast(N, device, t0, t1, dim)
+        ac_sol, ac_grad_z0, ac_grad_theta             = run_autocast_odeint(meth, N, device, t0, t1, dim, prec)
+        acmp_sol, acmp_grad_z0, acmp_grad_theta       = run_autocast_mpodeint(meth, N, device, t0, t1, dim, prec)
 
-        # compute relative errors
-        rel_err_sol_odeint = torch.norm(ac_sol - baseline_sol) / torch.norm(baseline_sol)
-        rel_err_grad_z0_odeint = torch.norm(ac_grad_z0 - baseline_grad_z0) / torch.norm(baseline_grad_z0)
+        rel_err_sol_odeint        = torch.norm(ac_sol - baseline_sol)        / torch.norm(baseline_sol)
+        rel_err_grad_z0_odeint    = torch.norm(ac_grad_z0 - baseline_grad_z0)    / torch.norm(baseline_grad_z0)
         rel_err_grad_theta_odeint = torch.norm(ac_grad_theta - baseline_grad_theta) / torch.norm(baseline_grad_theta)
-        
-        
-        rel_err_sol_mpodeint = torch.norm(acmp_sol - baseline_sol) / torch.norm(baseline_sol)
-        rel_err_grad_z0_mpodeint = torch.norm(acmp_grad_z0 - baseline_grad_z0) / torch.norm(baseline_grad_z0)
+
+        rel_err_sol_mpodeint        = torch.norm(acmp_sol - baseline_sol)        / torch.norm(baseline_sol)
+        rel_err_grad_z0_mpodeint    = torch.norm(acmp_grad_z0 - baseline_grad_z0)    / torch.norm(baseline_grad_z0)
         rel_err_grad_theta_mpodeint = torch.norm(acmp_grad_theta - baseline_grad_theta) / torch.norm(baseline_grad_theta)
 
-
-        rel_err_sol_manual = torch.norm(manual_sol - baseline_sol) / torch.norm(baseline_sol)
-        rel_err_grad_z0_manual = torch.norm(manual_grad_z0 - baseline_grad_z0) / torch.norm(baseline_grad_z0)
-        rel_err_grad_theta_manual = torch.norm(manual_grad_theta - baseline_grad_theta) / torch.norm(baseline_grad_theta)
-
-        # store for CSV and plots
         results.append([
             meth, N,
-            rel_err_sol_odeint.item(), rel_err_grad_z0_odeint.item(), rel_err_grad_theta_odeint.item(),
-            rel_err_sol_mpodeint.item(), rel_err_grad_z0_mpodeint.item(), rel_err_grad_theta_mpodeint.item()
+            rel_err_sol_odeint.item(),        rel_err_grad_z0_odeint.item(),        rel_err_grad_theta_odeint.item(),
+            rel_err_sol_mpodeint.item(),      rel_err_grad_z0_mpodeint.item(),      rel_err_grad_theta_mpodeint.item()
         ])
 
         error_data[meth]['steps'].append(N)
         error_data[meth]['odeint']['sol'].append(rel_err_sol_odeint.item())
         error_data[meth]['odeint']['grad_z0'].append(rel_err_grad_z0_odeint.item())
         error_data[meth]['odeint']['grad_theta'].append(rel_err_grad_theta_odeint.item())
-        
         error_data[meth]['mpodeint']['sol'].append(rel_err_sol_mpodeint.item())
         error_data[meth]['mpodeint']['grad_z0'].append(rel_err_grad_z0_mpodeint.item())
         error_data[meth]['mpodeint']['grad_theta'].append(rel_err_grad_theta_mpodeint.item())
-        
-        print(f"Method: {meth}, Steps: {N}\n"
-              f"  torchdiffeq: sol error = {rel_err_sol_odeint.item():.2e}, dL/dz0 error = {rel_err_grad_z0_odeint.item():.2e}, "
-              f"dL/dtheta error = {rel_err_grad_theta_odeint.item():.2e}\n"
-              f"  torchmpnode: sol error = {rel_err_sol_mpodeint.item():.2e}, dL/dz0 error = {rel_err_grad_z0_mpodeint.item():.2e}, "
-              f"dL/dtheta error = {rel_err_grad_theta_mpodeint.item():.2e}"
-              f"\n  Manual pseudo-autocast: sol error = {rel_err_sol_manual:.2e}, dL/dz0 error = {rel_err_grad_z0_manual:.2e}, "
-              f"dL/dtheta error = {rel_err_grad_theta_manual:.2e}\n")
 
-csv_filename = "relative_errors.csv"
+        print(
+            f"Method: {meth}, Steps: {N}\n"
+            f"  torchdiffeq: sol error = {rel_err_sol_odeint:.2e}, dL/dz0 error = {rel_err_grad_z0_odeint:.2e}, dL/dtheta error = {rel_err_grad_theta_odeint:.2e}\n"
+            f"  torchmpnode: sol error = {rel_err_sol_mpodeint:.2e}, dL/dz0 error = {rel_err_grad_z0_mpodeint:.2e}, dL/dtheta error = {rel_err_grad_theta_mpodeint:.2e}\n"
+        )
+
+
+result_dir = os.path.join(os.path.dirname(__file__), 'results_multistep')
+if not os.path.exists(result_dir):
+    os.makedirs(result_dir)
+
+
+csv_filename = os.path.join(result_dir, "relative_errors.csv")
 with open(csv_filename, mode='w', newline='') as csv_file:
     writer = csv.writer(csv_file)
     writer.writerow(["method", "n_steps", 
@@ -240,7 +218,6 @@ with open(csv_filename, mode='w', newline='') as csv_file:
     writer.writerows(results)
 print("CSV file saved as", csv_filename)
 
-# --- visualisation ---
 for meth in method_list:
     steps = error_data[meth]['steps']
     # Plot relative error for final solution (z_T)
@@ -253,8 +230,8 @@ for meth in method_list:
     # plt.ylabel('Relative Error (Final Solution)')
     # plt.title(f"Relative Error in Final Solution - Method: {meth}")
     plt.legend()
-    plt.grid(True)
-    plt.savefig(f'relative_error_solution_{meth}.png')
+    plt.grid(True, which='both', linestyle='--', linewidth=0.5)
+    plt.savefig(os.path.join(result_dir, f'relative_error_solutionf_{meth}.png'))
 
     # Plot relative error for gradient wrt initial condition (dL/dz0)
     plt.figure()
@@ -266,8 +243,8 @@ for meth in method_list:
     # plt.ylabel('Relative Error (dL/dz0)')
     # plt.title(f"Relative Error in dL/dz0 - Method: {meth}")
     plt.legend()
-    plt.grid(True)
-    plt.savefig(f'relative_error_grad_z0_{meth}.png')
+    plt.grid(True, which='both', linestyle='--', linewidth=0.5)
+    plt.savefig(os.path.join(result_dir, f'relative_error_grad_z0f_{meth}.png'))
 
     # Plot relative error for gradient wrt theta (dL/dtheta)
     plt.figure()
@@ -275,9 +252,10 @@ for meth in method_list:
     plt.plot(steps, error_data[meth]['mpodeint']['grad_theta'], marker='s', label='torchmpnode (autocast)', color='red')
     plt.xscale('log')
     plt.yscale('log')
+    plt.grid(True, which='both', linestyle='--', linewidth=0.5)
     # plt.xlabel('Number of Steps')
     # plt.ylabel('Relative Error (dL/dtheta)')
     # plt.title(f"Relative Error in dL/dtheta - Method: {meth}")
     plt.legend()
-    plt.grid(True)
-    plt.savefig(f'relative_error_grad_theta_{meth}.png')
+    plt.savefig(os.path.join(result_dir, f'relative_error_grad_thetaf_{meth}.png'))
+
