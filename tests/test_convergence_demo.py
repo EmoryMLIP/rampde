@@ -7,8 +7,6 @@ implementations:
    (`float16`, `bfloat16`, or `float32`).
 2. **torchmpnode** (`mpodeint`) which performs the same Runge–Kutta steps
    but keeps internal high‑precision accumulators.
-3. A hand‑rolled “pseudo‑autocast” Euler solver that mimics mixed precision
-   by down‑casting every stage matrix–vector product.
 
 For each integrator we measure the relative error of
 (a) the final state  y(T),
@@ -37,7 +35,7 @@ import csv
 import matplotlib.pyplot as plt
 
 prec = torch.float16
-num_iters = 1    # global number of “training” iterations
+num_iters = 1    # take 10 to replicate the third column of Figure 5 in paper
 lr = 1e-3         # learning rate for updating θ
 
 class ODEFunc(nn.Module):
@@ -52,45 +50,6 @@ class ODEFunc(nn.Module):
 
         with autocast(device_type='cuda', dtype=prec):
             return torch.matmul(self.theta, z)
-
-
-
-def euler_forward_manual_pseudoac(z0, func, t0, t1, N):
-    h = (t1 - t0) / (N - 1)
-    z_list = []
-    current_z = z0.clone() 
-    t = t0
-    z_list.append(current_z)
-    for _ in range(N - 1):
-        z_half = current_z
-        f_val_half = torch.matmul(func.theta.to(prec), z_half.to(prec))
-        h_half = torch.tensor(h, dtype=prec, device=current_z.device)
-        z_next_half = z_half + (h_half * f_val_half).float()
-        z_next = z_next_half
-        z_list.append(z_next)
-        current_z = z_next
-        t += h
-    return z_list
-
-def manual_pseudoac(z_list, func, t0, t1):
-    N = len(z_list) - 1
-    h = (t1 - t0) / N
-    h = torch.tensor(h, dtype=torch.float32, device=z_list[0].device)
-    dim = func.theta.shape[0]
-    target = torch.full((dim, 1), 2.0, dtype=torch.float32, device=z_list[0].device)
-    
-    dL_dz_half = [None]*(N+1)
-    dL_dz_half[N] = z_list[-1] - target
-    dL_dtheta_half = torch.zeros_like(func.theta)
-    
-    for k in reversed(range(N)):
-        factor_half = ((h * func.theta).transpose(0,1)).to(prec)
-        dL_dz_half[k] = dL_dz_half[k+1].float() + torch.matmul(factor_half, dL_dz_half[k+1].to(prec))
-        dL_dtheta_half = (dL_dtheta_half.to(prec) 
-                          + (h * torch.matmul(dL_dz_half[k+1].float(),
-                                              z_list[k].float().transpose(0,1))).to(prec))
-        dL_dtheta_half = dL_dtheta_half.float()
-    return dL_dz_half[0], dL_dtheta_half
 
 # Full precision analytical solution
 def run_baseline(method, N, device, t0, t1, dim):
@@ -160,7 +119,7 @@ device       = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 t0, t1       = 0.0, 2.0
 dim          = 2
 steps_list   = [32, 64, 128, 256, 512, 1024, 2048, 4096, 8192]
-method_list  = ['rk4']  # 'euler', etc.
+method_list  = ['euler','rk4']  #  etc.
 
 results    = []
 error_data = {meth: {'steps': [],
