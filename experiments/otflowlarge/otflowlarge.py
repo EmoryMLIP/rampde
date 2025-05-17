@@ -18,9 +18,6 @@ import time
 import datetime
 
 import sys
-# 
-
-
 
 from torch.nn.functional import pad
 # sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
@@ -106,7 +103,7 @@ def update_lr(optimizer, n_vals_without_improvement):
 seed_str = f"seed{args.seed}" if args.seed is not None else "noseed"
 timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
 folder_name = f"{args.data}_{args.precision}_{args.odeint}_{args.method}_{seed_str}_{timestamp}"
-result_dir = os.path.join(base_dir, "results", "otflowlarge", folder_name)
+result_dir = os.path.join(base_dir, "results", "otflowlarge", folder_name) 
 os.makedirs(result_dir, exist_ok=True)
 
 result_file = f"result_dir_{job_id}.txt" if job_id else "result_dir.txt"
@@ -204,6 +201,7 @@ else:
     else:
         from torchdiffeq import odeint
 from Phi import Phi
+
 class OTFlow(nn.Module):
     def __init__(self, in_out_dim, hidden_dim, alpha=[1.0]*2):
         super().__init__()
@@ -223,9 +221,10 @@ class OTFlow(nn.Module):
 
         dz_dt       = -(1.0/self.alpha[0]) * dPhi_dx
         dlogp_dt    = -(1.0/self.alpha[0]) * trH.view(-1,1)
-        cost_L_dt   = 0.5 * torch.norm(dPhi_dx, dim=1, keepdim=True)**2
+        cost_L_dt   = 0.5 * torch.sum(torch.pow(dz_dt, 2) , 1 ,keepdims=True) #0.5 * torch.norm(dPhi_dx, dim=1, keepdim=True)**2
         cost_HJB_dt = torch.abs(-dPhi_dt + self.alpha[0]*cost_L_dt)
         return dz_dt, dlogp_dt, cost_L_dt, cost_HJB_dt
+
 
 def load_data(name):
 
@@ -255,9 +254,10 @@ if __name__ == '__main__':
     # data    = datasets.MINIBOONE()
     data = load_data(args.data)
     train_x = torch.from_numpy(data.trn.x).float().to(device)
+
     val_x   = torch.from_numpy(data.val.x).float().to(device)
     d       = train_x.size(1)
-    print(f"Loaded Miniboone: train={train_x.shape}, val={val_x.shape}")
+    print(f"Loaded Data: train={train_x.shape}, val={val_x.shape}")
 
     # setup model, optimizer, meters
     t0, t1 = 0.0, 1.0
@@ -312,7 +312,7 @@ if __name__ == '__main__':
                     with autocast(device_type='cuda', dtype=func_dtype):
                         start_time = time.perf_counter()
                         func.nfe = 0
-                        ts = torch.linspace(t0, t1, args.num_timesteps, device=device)
+                        ts = torch.linspace(t0, t1, args.num_timesteps+1, device=device) 
                         z_t, logp_t, cL_t, cH_t = odeint(
                             func,
                             (z0, logp0, cL0, cH0),
@@ -335,113 +335,114 @@ if __name__ == '__main__':
 
                     optimizer.step()
 
-                # elapsed = time.perf_counter() - start
-                peak_m  = torch.cuda.max_memory_allocated(device) / (1024**2)
+                    # elapsed = time.perf_counter() - start
+                    peak_m  = torch.cuda.max_memory_allocated(device) / (1024**2)
 
-                # update meters
-                # time_meter.update(elapsed)
-                mem_meter.update(peak_m)
-                loss_meter.update(loss.item())
-                NLL_meter.update((-logp_x.mean()).item())
-                cost_L_meter.update(cL1.mean().item())
-                cost_HJB_meter.update(cH1.mean().item())
+                    # update meters
+                    # time_meter.update(elapsed)
+                    mem_meter.update(peak_m)
+                    loss_meter.update(loss.item())
+                    NLL_meter.update((-logp_x.mean()).item())
+                    cost_L_meter.update(cL1.mean().item())
+                    cost_HJB_meter.update(cH1.mean().item())
 
-                # validation & CSV logging
-                if itr % args.val_freq == 0:
-                    with torch.no_grad():
-                        vz0 = next(batch_iter(val_x, args.num_samples, shuffle=False))
-                        B = vz0.size(0)
-                        vpl0 = torch.zeros(B, 1, dtype=torch.float32, device=device)
-                        vL0 = vpl0.clone()
-                        vH0 = vpl0.clone()
-                        vz_t, vpl_t, vL_t, vH_t = odeint(
-                            func,
-                            (vz0, vpl0, vL0, vH0),
-                            torch.linspace(t0, t1, args.num_timesteps_val, device=device),
-                            method=args.method
-                        )
-                        vz1, vpl1, vL1, vH1 = vz_t[-1], vpl_t[-1], vL_t[-1], vH_t[-1]
-                        logp_val = p_z0.log_prob(vz1).view(-1,1) + vpl1
-                        loss_val = (-alpha[1]*logp_val.mean()
-                                    + alpha[0]*vL1.mean()
-                                    + alpha[2]*vH1.mean())
-                        with autocast(device_type='cuda', dtype=func_dtype):
-                            logp_diff_val_mp_t0 = torch.zeros_like(vpl0)
-                            cost_L_val_mp_t0 = torch.zeros_like(vL0)
-                            cost_HJB_val_mp_t0 = torch.zeros_like(vH0)
-                            
-                            z_val_mp_t, logp_diff_val_mp_t, cost_L_val_mp_t, cost_HJB_val_mp_t = odeint(
+                    # validation & CSV logging
+                    if itr % args.val_freq == 0:
+                        with torch.no_grad():
+                            vz0 = next(batch_iter(val_x, args.num_samples, shuffle=False))
+                            B = vz0.size(0)
+                            vpl0 = torch.zeros(B, 1, dtype=torch.float32, device=device)
+                            vL0 = vpl0.clone()
+                            vH0 = vpl0.clone()
+                            vz_t, vpl_t, vL_t, vH_t = odeint(
                                 func,
-                                (vz0, logp_diff_val_mp_t0, cost_L_val_mp_t0, cost_HJB_val_mp_t0),
-                                torch.linspace(t0, t1, args.num_timesteps_val).to(device),
+                                (vz0, vpl0, vL0, vH0),
+                                torch.linspace(t0, t1, args.num_timesteps_val+1, device=device),
                                 method=args.method
                             )
-                            z_val_mp_t1, logp_diff_val_mp_t1, cost_L_val_mp_t1, cost_HJB_val_mp_t1 = z_val_mp_t[-1], logp_diff_val_mp_t[-1], cost_L_val_mp_t[-1], cost_HJB_val_mp_t[-1]
-                            logp_x_val_mp = p_z0.log_prob(z_val_mp_t1).to(device) + logp_diff_val_mp_t1.view(-1)
-                            loss_val_mp = alpha[0]* cost_L_val_mp_t1.mean(0) - alpha[1]*logp_x_val_mp.mean(0) +  alpha[2] * cost_HJB_val_mp_t1.mean(0)
-                        B=10000  
-                        y = p_z0.sample([B]).to(device)
-                        logp0 = torch.zeros(B, 1, dtype=torch.float32, device=device)
-                        cL0   = logp0.clone()
-                        cH0   = logp0.clone()
-                        t_grid_inv = torch.linspace(t1, t0, args.num_timesteps_val, device=device)
-                        z_inv_t, _, _, _ = odeint(
-                            func,
-                            (y, logp0, cL0, cH0),
-                            t_grid_inv,
-                            method=args.method
-                        )
-                        z_inv1    = z_inv_t[-1]
-                        modelGen  = z_inv1[:, :d].cpu().numpy()
-                        val_batch = vz0.cpu().numpy()
-                        # compute MMD between generated samples and val batch
-                        mmd_val = mmd(modelGen, val_batch)
+                            vz1, vpl1, vL1, vH1 = vz_t[-1], vpl_t[-1], vL_t[-1], vH_t[-1]
+                            logp_val = p_z0.log_prob(vz1).view(-1,1) + vpl1
+                            loss_val = (-alpha[1]*logp_val.mean()
+                                        + alpha[0]*vL1.mean()
+                                        + alpha[2]*vH1.mean())
+                            
+                            with autocast(device_type='cuda', dtype=func_dtype):
+                                logp_diff_val_mp_t0 = torch.zeros_like(vpl0)
+                                cost_L_val_mp_t0 = torch.zeros_like(vL0)
+                                cost_HJB_val_mp_t0 = torch.zeros_like(vH0)
+                                
+                                z_val_mp_t, logp_diff_val_mp_t, cost_L_val_mp_t, cost_HJB_val_mp_t = odeint(
+                                    func,
+                                    (vz0, logp_diff_val_mp_t0, cost_L_val_mp_t0, cost_HJB_val_mp_t0),
+                                    torch.linspace(t0, t1, args.num_timesteps_val+1).to(device),
+                                    method=args.method
+                                )
+                                z_val_mp_t1, logp_diff_val_mp_t1, cost_L_val_mp_t1, cost_HJB_val_mp_t1 = z_val_mp_t[-1], logp_diff_val_mp_t[-1], cost_L_val_mp_t[-1], cost_HJB_val_mp_t[-1]
+                                logp_x_val_mp = p_z0.log_prob(z_val_mp_t1).to(device) + logp_diff_val_mp_t1.view(-1)
+                                loss_val_mp = alpha[0]* cost_L_val_mp_t1.mean(0) - alpha[1]*logp_x_val_mp.mean(0) +  alpha[2] * cost_HJB_val_mp_t1.mean(0)
+                            B=10000  
+                            y = p_z0.sample([B]).to(device)
+                            logp0 = torch.zeros(B, 1, dtype=torch.float32, device=device)
+                            cL0   = logp0.clone()
+                            cH0   = logp0.clone()
+                            t_grid_inv = torch.linspace(t1, t0, args.num_timesteps_val+1, device=device)
+                            z_inv_t, _, _, _ = odeint(
+                                func,
+                                (y, logp0, cL0, cH0),
+                                t_grid_inv,
+                                method=args.method
+                            )
+                            z_inv1    = z_inv_t[-1]
+                            modelGen  = z_inv1[:, :d].cpu().numpy()
+                            val_batch = vz0.cpu().numpy()
+                            # compute MMD between generated samples and val batch
+                            mmd_val = mmd(modelGen, val_batch)
 
 
-                    print('Iter: {}, lr {:.3e} running loss: {:.3e}, val loss {:.3e}, val loss (mp) {:.3e}'.format(itr, optimizer.param_groups[0]['lr'], loss_meter.avg, loss_val.item(), loss_val_mp.item()),
-                        'running L: {:.3e}, val L: {:.3e}, val L (mp): {:.3e}'.format(cost_L_meter.avg, vL1.mean().item(), cost_L_val_mp_t1.mean(0).item()), 
-                        'running NLL: {:.3e}, val NLL: {:.3e}, val NLL (mp): {:.3e}'.format(NLL_meter.avg,(-logp_val.mean()).item(), -logp_x_val_mp.mean(0).item()), 
-                        'running HJB: {:.3e}, val HJB: {:.3e}, val HJB (mp): {:.3e}'.format(cost_HJB_meter.avg, vH1.mean().item(), cost_HJB_val_mp_t1.mean(0).item()), 
-                        'time (fwd): {:.4f}s'.format(time_fwd.avg),'time (bwd): {:.4f}s'.format(time_bwd.avg), 'max memory: {:.0f}MB'.format(peak_m),
-                        'nfe (fwd) : {}, nfe (bwd): {}'.format(nfe_fwd, nfe_bwd), 'mmd: {:.5e}'.format(mmd_val))
+                        print('Iter: {}, lr {:.3e} running loss: {:.3e}, val loss {:.3e}, val loss (mp) {:.3e}'.format(itr, optimizer.param_groups[0]['lr'], loss_meter.avg, loss_val.item(), loss_val_mp.item()),
+                            'running L: {:.3e}, val L: {:.3e}, val L (mp): {:.3e}'.format(cost_L_meter.avg, vL1.mean().item(), cost_L_val_mp_t1.mean(0).item()), 
+                            'running NLL: {:.3e}, val NLL: {:.3e}, val NLL (mp): {:.3e}'.format(NLL_meter.avg,(-logp_val.mean()).item(), -logp_x_val_mp.mean(0).item()), 
+                            'running HJB: {:.3e}, val HJB: {:.3e}, val HJB (mp): {:.3e}'.format(cost_HJB_meter.avg, vH1.mean().item(), cost_HJB_val_mp_t1.mean(0).item()), 
+                            'time (fwd): {:.4f}s'.format(time_fwd.avg),'time (bwd): {:.4f}s'.format(time_bwd.avg), 'max memory: {:.0f}MB'.format(peak_m),
+                            'nfe (fwd) : {}, nfe (bwd): {}'.format(nfe_fwd, nfe_bwd), 'mmd: {:.5e}'.format(mmd_val))
 
-                    csv_writer.writerow([itr, optimizer.param_groups[0]['lr'], loss_meter.avg, loss_val.item(), loss_val_mp.item(), cost_L_meter.avg, vL1.mean().item(), cost_L_val_mp_t1.mean(0).item(), NLL_meter.avg, (-logp_val.mean()).item(), -logp_x_val_mp.mean(0).item(), cost_HJB_meter.avg, vH1.mean().item(), cost_HJB_val_mp_t1.mean(0).item(), time_fwd.avg, time_bwd.avg, peak_m,nfe_fwd,nfe_bwd, mmd_val])
+                        csv_writer.writerow([itr, optimizer.param_groups[0]['lr'], loss_meter.avg, loss_val.item(), loss_val_mp.item(), cost_L_meter.avg, vL1.mean().item(), cost_L_val_mp_t1.mean(0).item(), NLL_meter.avg, (-logp_val.mean()).item(), -logp_x_val_mp.mean(0).item(), cost_HJB_meter.avg, vH1.mean().item(), cost_HJB_val_mp_t1.mean(0).item(), time_fwd.avg, time_bwd.avg, peak_m,nfe_fwd,nfe_bwd, mmd_val])
 
-                    csv_file.flush()
-                    nfe_fwd = nfe_bwd = 0
+                        csv_file.flush()
+                        nfe_fwd = nfe_bwd = 0
 
-                    if loss_val.item() < best_val_loss:
-                        best_val_loss = loss_val.item()
-                        n_vals_wo_improve = 0
-                        ckpt_path = os.path.join(result_dir, f"model_best.pt")
-                        torch.save({
-                            'iteration': itr,
-                            'model_state_dict': func.state_dict(),
-                            'optimizer_state_dict': optimizer.state_dict(),
-                            'loss': loss_meter.avg,
-                        }, ckpt_path)
-                        print(f"Model checkpoint saved at {ckpt_path}")
-                    else:
-                        n_vals_wo_improve += 1
-
-                if args.drop_freq == 0:
-                    if n_vals_wo_improve > args.early_stopping:
-                        if ndecs > 2:
-                            print("early stopping engaged")
-                            break
-                        else:
-                            update_lr(optimizer, n_vals_wo_improve)
+                        if loss_val.item() < best_val_loss:
+                            best_val_loss = loss_val.item()
                             n_vals_wo_improve = 0
-                else:
-                    if itr % args.drop_freq == 0:
-                        for pg in optimizer.param_groups:
-                            pg['lr'] /= args.lr_drop
-                        print(f"Decayed LR to {optimizer.param_groups[0]['lr']}")
+                            ckpt_path = os.path.join(result_dir, f"model_best.pt")
+                            torch.save({
+                                'iteration': itr,
+                                'model_state_dict': func.state_dict(),
+                                'optimizer_state_dict': optimizer.state_dict(),
+                                'loss': loss_meter.avg,
+                            }, ckpt_path)
+                            print(f"Model checkpoint saved at {ckpt_path}")
+                        else:
+                            n_vals_wo_improve += 1
 
-                itr += 1
+                    if args.drop_freq == 0:
+                        if n_vals_wo_improve > args.early_stopping:
+                            if ndecs > 2:
+                                print("early stopping engaged")
+                                break
+                            else:
+                                update_lr(optimizer, n_vals_wo_improve)
+                                n_vals_wo_improve = 0
+                    else:
+                        if itr % args.drop_freq == 0:
+                            for pg in optimizer.param_groups:
+                                pg['lr'] /= args.lr_drop
+                            print(f"Decayed LR to {optimizer.param_groups[0]['lr']}")
 
-                if itr > args.niters:
-                    break
+                    itr += 1
+
+                # if itr > args.niters:
+                #     break
     except KeyboardInterrupt:
         print("Interrupted. Exiting training loop.")
 
@@ -554,7 +555,7 @@ if __name__ == '__main__':
             vL0 = vpl0.clone()
             vH0 = vpl0.clone()
       
-            t_grid = torch.linspace(t0, t1, args.num_timesteps_val, device=device)
+            t_grid = torch.linspace(t0, t1, args.num_timesteps_val+1, device=device)
             z_t, logp_t, cL_t, cH_t   = odeint(
                 func,
                 (vz0, vpl0, vL0, vH0),
@@ -571,7 +572,7 @@ if __name__ == '__main__':
         cL0   = torch.zeros_like(logp0)
         cH0   = torch.zeros_like(logp0)
         # for backward, reverse the time grid
-        t_grid_inv = torch.linspace(t1, t0, args.num_timesteps_val, device=device)
+        t_grid_inv = torch.linspace(t1, t0, args.num_timesteps_val+1, device=device)
         with torch.no_grad():
             z_inv_t, _, _, _ = odeint(
                 func,
@@ -611,7 +612,7 @@ if __name__ == '__main__':
                 logp0 = torch.zeros(x0.size(0), 1, device=device)
                 cL0   = torch.zeros_like(logp0)
                 cH0   = torch.zeros_like(logp0)
-                ts    = torch.linspace(t0, t1, args.num_timesteps_val, device=device)
+                ts    = torch.linspace(t0, t1, args.num_timesteps_val+1, device=device)
                 z_t, _, _, _  = odeint(func,
                                        (x0, logp0, cL0, cH0),
                                        ts,
@@ -619,7 +620,7 @@ if __name__ == '__main__':
                 fx     = z_t[-1][:, :d]
 
                 # inverse map 
-                ts_inv   = torch.linspace(t1, t0, args.num_timesteps_val, device=device)
+                ts_inv   = torch.linspace(t1, t0, args.num_timesteps_val+1, device=device)
                 z_inv_t, _, _, _ = odeint(func,
                                           (fx, logp0, cL0, cH0),
                                           ts_inv,
@@ -681,4 +682,3 @@ if __name__ == '__main__':
         print(f"Saved visualizations in {result_dir}")
     else:
         print("Visualization skipped (use --viz).")
-
