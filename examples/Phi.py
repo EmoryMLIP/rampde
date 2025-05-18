@@ -24,19 +24,30 @@ from torch.amp import custom_fwd
 #     return act
 
 def antiderivTanh(x, cast=True):
-    x32 = x.float()
-    a32 = torch.abs(x32) + torch.log1p(torch.exp(-2.0 * torch.abs(x32)))
-    return a32.to(x.dtype)
-
-def derivTanh(x, cast=True):
+    """
+    int tanh dx = |x| + log(1+exp(-2|x|))
+    use log1p for numerical stability, see tests/test_act.py
+    If cast=True, keep the computation in f32, only cast to low precision in the output
+    """
     if cast:
         dtype = x.dtype
-        x = x.to(torch.float16)
-    act =  1 - torch.tanh(x).pow(2)
-    if cast:
-        act = act.to(dtype)
-    return act
+        x = x.to(torch.float32)
+    
+    act = torch.abs(x) + torch.log1p(torch.exp(-2.0 * torch.abs(x)))
+    out = act.to(x.dtype) if cast else act
+    return out
 
+def derivTanh(x, cast=False):
+    """
+    d/dx tanh = 1 - tanh(x)^2
+    If cast=True, keep the computation in f32, only cast to low precision in the output
+    """
+    if cast:
+        dtype = x.dtype
+        x = x.to(torch.float32)
+    act = 1.0 - torch.tanh(x).pow(2)
+    return act.to(dtype) if cast else act
+    
 class ResNN(nn.Module):
     def __init__(self, d, m, nTh=2):
         """
