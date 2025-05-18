@@ -19,6 +19,7 @@ import datetime
 
 import sys
 
+
 from torch.nn.functional import pad
 # sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
 base_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), '../..'))
@@ -284,7 +285,7 @@ if __name__ == '__main__':
 
     try:
         # Check if a saved model exists and load it
-        ckpts = glob.glob(os.path.join(result_dir, "model_iter_*.pt"))
+        ckpts = glob.glob(os.path.join(result_dir, "model_best.pt"))
         if ckpts:
             latest_ckpt = max(ckpts, key=os.path.getctime)
             cp = torch.load(latest_ckpt, map_location=device)
@@ -294,6 +295,7 @@ if __name__ == '__main__':
         else:
             itr = 1
             clampMax, clampMin = 1.5, -1.5
+            stop_training = True
             while itr <= args.niters:
                 for x_batch in batch_iter(train_x, args.num_samples, shuffle=True):
                     optimizer.zero_grad()
@@ -310,6 +312,7 @@ if __name__ == '__main__':
                         p.data = torch.clamp(p.data, clampMin, clampMax)
 
                     with autocast(device_type='cuda', dtype=func_dtype):
+                        # print('==============================training==============================')
                         start_time = time.perf_counter()
                         func.nfe = 0
                         ts = torch.linspace(t0, t1, args.num_timesteps+1, device=device) 
@@ -347,26 +350,50 @@ if __name__ == '__main__':
                     cost_HJB_meter.update(cH1.mean().item())
 
                     # validation & CSV logging
-                    if itr % args.val_freq == 0:
+                    if itr % args.val_freq == 0 or itr == args.niters:
                         with torch.no_grad():
-                            vz0 = next(batch_iter(val_x, args.num_samples, shuffle=False))
-                            B = vz0.size(0)
-                            vpl0 = torch.zeros(B, 1, dtype=torch.float32, device=device)
-                            vL0 = vpl0.clone()
-                            vH0 = vpl0.clone()
-                            vz_t, vpl_t, vL_t, vH_t = odeint(
-                                func,
-                                (vz0, vpl0, vL0, vH0),
-                                torch.linspace(t0, t1, args.num_timesteps_val+1, device=device),
-                                method=args.method
-                            )
-                            vz1, vpl1, vL1, vH1 = vz_t[-1], vpl_t[-1], vL_t[-1], vH_t[-1]
-                            logp_val = p_z0.log_prob(vz1).view(-1,1) + vpl1
-                            loss_val = (-alpha[1]*logp_val.mean()
-                                        + alpha[0]*vL1.mean()
-                                        + alpha[2]*vH1.mean())
+                            total_loss = 0.0
+                            total_samples = 0
+                            # print('==============================validation==32============================')
+                            for vz0 in batch_iter(val_x, args.num_samples_val, shuffle=False):
                             
+                                B = vz0.size(0)
+                                vpl0 = torch.zeros(B, 1, dtype=torch.float32, device=device)
+                                vL0 = vpl0.clone()
+                                vH0 = vpl0.clone()
+                                vz_t, vpl_t, vL_t, vH_t = odeint(
+                                    func,
+                                    (vz0, vpl0, vL0, vH0),
+                                    torch.linspace(t0, t1, args.num_timesteps_val+1, device=device),
+                                    method=args.method
+                                )
+                                vz1, vpl1, vL1, vH1 = vz_t[-1], vpl_t[-1], vL_t[-1], vH_t[-1]
+                                logp_val = p_z0.log_prob(vz1).view(-1,1) + vpl1
+                                loss_valb = (-alpha[1]*logp_val.mean()
+                                            + alpha[0]*vL1.mean()
+                                            + alpha[2]*vH1.mean())
+                                
+                                total_loss    += loss_valb.item() * B
+                                total_samples += B
+
+                            loss_val = total_loss / total_samples
+                            
+
+                            # print(
+                            #     f"iter {itr:4d}  "
+                            #     f"lr {optimizer.param_groups[0]['lr']:.1e}  "
+                            #     f"loss {loss_meter.avg:.6f}  "
+                            #     f"L {cost_L_meter.avg:.6f}  "
+                            #     f"C {NLL_meter.avg:.6f}  "
+                            #     f"R {cost_HJB_meter.avg:.6f}   "
+                            #     f"valLoss {loss_val.item():.6f}  "
+                            #     f"valL {vL1.mean().item():.6f}  "
+                            #     f"valC {(-logp_val.mean()).item():.6f}  "
+                            #     f"valR {vH1.mean().item():.6f}",
+                            #     # file=term
+                            # )
                             with autocast(device_type='cuda', dtype=func_dtype):
+                                # print('==============================validation mp==============================')
                                 logp_diff_val_mp_t0 = torch.zeros_like(vpl0)
                                 cost_L_val_mp_t0 = torch.zeros_like(vL0)
                                 cost_HJB_val_mp_t0 = torch.zeros_like(vH0)
@@ -399,20 +426,20 @@ if __name__ == '__main__':
                             mmd_val = mmd(modelGen, val_batch)
 
 
-                        print('Iter: {}, lr {:.3e} running loss: {:.3e}, val loss {:.3e}, val loss (mp) {:.3e}'.format(itr, optimizer.param_groups[0]['lr'], loss_meter.avg, loss_val.item(), loss_val_mp.item()),
+                        print('Iter: {}, lr {:.3e} running loss: {:.3e}, val loss {:.3e}, val loss (mp) {:.3e}'.format(itr, optimizer.param_groups[0]['lr'], loss_meter.avg, loss_val, loss_val_mp.item()),
                             'running L: {:.3e}, val L: {:.3e}, val L (mp): {:.3e}'.format(cost_L_meter.avg, vL1.mean().item(), cost_L_val_mp_t1.mean(0).item()), 
                             'running NLL: {:.3e}, val NLL: {:.3e}, val NLL (mp): {:.3e}'.format(NLL_meter.avg,(-logp_val.mean()).item(), -logp_x_val_mp.mean(0).item()), 
                             'running HJB: {:.3e}, val HJB: {:.3e}, val HJB (mp): {:.3e}'.format(cost_HJB_meter.avg, vH1.mean().item(), cost_HJB_val_mp_t1.mean(0).item()), 
                             'time (fwd): {:.4f}s'.format(time_fwd.avg),'time (bwd): {:.4f}s'.format(time_bwd.avg), 'max memory: {:.0f}MB'.format(peak_m),
                             'nfe (fwd) : {}, nfe (bwd): {}'.format(nfe_fwd, nfe_bwd), 'mmd: {:.5e}'.format(mmd_val))
 
-                        csv_writer.writerow([itr, optimizer.param_groups[0]['lr'], loss_meter.avg, loss_val.item(), loss_val_mp.item(), cost_L_meter.avg, vL1.mean().item(), cost_L_val_mp_t1.mean(0).item(), NLL_meter.avg, (-logp_val.mean()).item(), -logp_x_val_mp.mean(0).item(), cost_HJB_meter.avg, vH1.mean().item(), cost_HJB_val_mp_t1.mean(0).item(), time_fwd.avg, time_bwd.avg, peak_m,nfe_fwd,nfe_bwd, mmd_val])
+                        csv_writer.writerow([itr, optimizer.param_groups[0]['lr'], loss_meter.avg, loss_val, loss_val_mp.item(), cost_L_meter.avg, vL1.mean().item(), cost_L_val_mp_t1.mean(0).item(), NLL_meter.avg, (-logp_val.mean()).item(), -logp_x_val_mp.mean(0).item(), cost_HJB_meter.avg, vH1.mean().item(), cost_HJB_val_mp_t1.mean(0).item(), time_fwd.avg, time_bwd.avg, peak_m,nfe_fwd,nfe_bwd, mmd_val])
 
                         csv_file.flush()
                         nfe_fwd = nfe_bwd = 0
 
-                        if loss_val.item() < best_val_loss:
-                            best_val_loss = loss_val.item()
+                        if loss_val < best_val_loss:
+                            best_val_loss = loss_val
                             n_vals_wo_improve = 0
                             ckpt_path = os.path.join(result_dir, f"model_best.pt")
                             torch.save({
@@ -429,6 +456,15 @@ if __name__ == '__main__':
                         if n_vals_wo_improve > args.early_stopping:
                             if ndecs > 2:
                                 print("early stopping engaged")
+                                ckpt_path = os.path.join(result_dir, f"model_final.pt")
+                                torch.save({
+                                    'iteration': itr,
+                                    'model_state_dict': func.state_dict(),
+                                    'optimizer_state_dict': optimizer.state_dict(),
+                                    'loss': loss_meter.avg,
+                                }, ckpt_path)
+                                print(f"Model checkpoint saved at {ckpt_path}")
+                                stop_training = True
                                 break
                             else:
                                 update_lr(optimizer, n_vals_wo_improve)
@@ -443,6 +479,8 @@ if __name__ == '__main__':
 
                 # if itr > args.niters:
                 #     break
+                if stop_training:
+                    break
     except KeyboardInterrupt:
         print("Interrupted. Exiting training loop.")
 
@@ -584,7 +622,7 @@ if __name__ == '__main__':
         modelGen    = z_inv[:, :d].cpu().numpy()
         normSamples = y.cpu().numpy()
 
-        nSamples = min(testData.shape[0], modelGen.shape[0])
+        nSamples = min(testData.shape[0], modelGen.shape[0], 3000)
         testSamps  = testData[:nSamples, :]
         modelSamps = modelGen[:nSamples, :]
 
