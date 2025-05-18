@@ -12,14 +12,21 @@ from torch.amp import custom_fwd
 
 # def derivTanh(x): # act'' aka the second derivative of the activation function antiderivTanh
 #     return 1 - torch.pow( torch.tanh(x) , 2 )
+
+
+# def antiderivTanh(x, cast=True):
+#     if cast:
+#         dtype = x.dtype
+#         x = x.to(torch.float16)
+#     act =  torch.abs(x) + torch.log(1 + torch.exp(-2.0 * torch.abs(x)))
+#     if cast:
+#         act = act.to(dtype)
+#     return act
+
 def antiderivTanh(x, cast=True):
-    if cast:
-        dtype = x.dtype
-        x = x.to(torch.float16)
-    act =  torch.abs(x) + torch.log(1 + torch.exp(-2.0 * torch.abs(x)))
-    if cast:
-        act = act.to(dtype)
-    return act
+    x32 = x.float()
+    a32 = torch.abs(x32) + torch.log1p(torch.exp(-2.0 * torch.abs(x32)))
+    return a32.to(x.dtype)
 
 def derivTanh(x, cast=True):
     if cast:
