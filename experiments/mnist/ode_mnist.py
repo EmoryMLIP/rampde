@@ -1,4 +1,5 @@
-import os
+import os, sys
+job_id = os.environ.get("SLURM_JOB_ID", "")
 import argparse
 import logging
 import time
@@ -35,7 +36,7 @@ parser.add_argument('--batch_size', type=int, default=128)
 parser.add_argument('--test_batch_size', type=int, default=1000)
 # new arguments
 parser.add_argument('--method', type=str, choices=['rk4', 'dopri5'], default='rk4')
-parser.add_argument('--precision', type=str, choices=['float32', 'float16','bfloat16'], default='float16')
+parser.add_argument('--precision', type=str, choices=['tfloat32', 'float32', 'float16','bfloat16'], default='float16')
 parser.add_argument('--odeint', type=str, choices=['torchdiffeq', 'torchmpnode'], default='torchmpnode')
 
 parser.add_argument('--results_dir', type=str, default='./results')
@@ -57,9 +58,10 @@ else:
         from torchdiffeq import odeint_adjoint as odeint
     else:
         from torchdiffeq import odeint
-
+precision_str = args.precision
 precision_map = {
     'float32': torch.float32,
+    'tfloat32': torch.float32,
     'float16': torch.float16,
     'bfloat16': torch.bfloat16
 }
@@ -69,8 +71,9 @@ args.precision = precision_map[args.precision]
 os.makedirs(args.results_dir, exist_ok=True)
 seed_str = f"seed{args.seed}" if args.seed is not None else "noseed"
 timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
-folder_name = f"{args.precision}_{args.odeint}_{args.method}_{seed_str}_{timestamp}"
+folder_name = f"{precision_str}_{args.odeint}_{args.method}_{seed_str}_{timestamp}"
 result_dir = os.path.join(base_dir, "results", "ode_mnist", folder_name)
+ckpt_path = os.path.join(result_dir, 'ckpt.pth')
 os.makedirs(result_dir, exist_ok=True)
 with open("result_dir.txt", "w") as f:
     f.write(result_dir)
@@ -78,14 +81,40 @@ script_path = os.path.abspath(__file__)
 shutil.copy(script_path, os.path.join(result_dir, os.path.basename(script_path)))
 
 # Redirect stdout and stderr to a log file.
-log_path = os.path.join(result_dir, "log.txt")
+log_path = os.path.join(result_dir, folder_name + ".txt")
 log_file = open(log_path, "w", buffering=1)
 sys.stdout = log_file
 sys.stderr = log_file
 
+device = torch.device('cuda:' + str(args.gpu) if torch.cuda.is_available() else 'cpu')
+
+
+if precision_str == 'float32':
+    torch.backends.cuda.matmul.allow_tf32 = False
+    torch.backends.cudnn.allow_tf32 = False
+    print("Using strict float32 precision")
+elif precision_str == 'tfloat32':
+    torch.backends.cuda.matmul.allow_tf32 = True
+    torch.backends.cudnn.allow_tf32 = True
+    print("Using TF32 precision")
+
+
+# Print environment and hardware info for reproducibility and debugging
+print("Environment Info:")
+print(f"  Python version: {sys.version}")
+print(f"  PyTorch version: {torch.__version__}")
+print(f"  CUDA available: {torch.cuda.is_available()}")
+print(f"  CUDA version: {torch.version.cuda}")
+print(f"  cuDNN version: {torch.backends.cudnn.version()}")
+print(f"  GPU Device Name: {torch.cuda.get_device_name(device) if torch.cuda.is_available() else 'N/A'}")
+print(f"  Current Device: {torch.cuda.current_device() if torch.cuda.is_available() else 'N/A'}")
+
 print("Experiment started at", datetime.datetime.now())
 print("Arguments:", vars(args))
 print("Results will be saved in:", result_dir)
+print("SLURM job id",job_id )
+print("Model checkpoint path:", ckpt_path)
+
 
 
 def conv3x3(in_planes, out_planes, stride=1):
@@ -136,14 +165,14 @@ class ConcatConv2d(nn.Module):
         super(ConcatConv2d, self).__init__()
         module = nn.ConvTranspose2d if transpose else nn.Conv2d
         self._layer = module(
-            dim_in + 1, dim_out, kernel_size=ksize, stride=stride, padding=padding, dilation=dilation, groups=groups,
+            dim_in , dim_out, kernel_size=ksize, stride=stride, padding=padding, dilation=dilation, groups=groups,
             bias=bias
         )
 
     def forward(self, t, x):
-        tt = torch.ones_like(x[:, :1, :, :]) * t
-        ttx = torch.cat([tt, x], 1)
-        return self._layer(ttx)
+        # tt = torch.ones_like(x[:, :1, :, :]) * t
+        # ttx = torch.cat([tt, x], 1)
+        return self._layer(x)
 
 
 class ODEfunc(nn.Module):
@@ -318,8 +347,7 @@ def makedirs(dirname):
 if __name__ == '__main__':
 
 
-    device = torch.device('cuda:' + str(args.gpu) if torch.cuda.is_available() else 'cpu')
-
+    
     is_odenet = args.network == 'odenet'
 
     if args.downsampling_method == 'conv':
@@ -375,7 +403,7 @@ if __name__ == '__main__':
     end = time.time()
 
 
-    csv_path = os.path.join(result_dir, 'metrics.csv')
+    csv_path = os.path.join(result_dir, folder_name + ".csv")
     csv_file = open(csv_path, 'w', newline='')
     writer = csv.writer(csv_file)
     writer.writerow([
@@ -431,9 +459,7 @@ if __name__ == '__main__':
                 val_acc = accuracy(model, test_loader)
                 if val_acc > best_acc:
                     torch.save(
-                        {'state_dict': model.state_dict(), 'args': args},
-                        os.path.join(result_dir, 'model.pth')
-                    )
+                        {'state_dict': model.state_dict(), 'args': args}, ckpt_path)
                     best_acc = val_acc
 
                 print(

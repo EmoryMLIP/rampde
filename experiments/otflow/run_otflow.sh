@@ -3,11 +3,14 @@
 # Make sure this file is executable: chmod +x submit_experiments.sh
 
 # Define the parameters.
-precisions=( "float32" "float16"  )
+precisions=(  "float16"  "tfloat32" "bfloat16" )
+precisions=( "float32" )
 methods=("rk4")
-odeints=( "torchmpnode" "torchdiffeq" )
+# odeints=( "torchmpnode" "torchdiffeq" )
+odeints=( "torchmpnode" )
 # List of datasets
-datasets=("8gaussians" "checkerboard"  "moons" "pinwheel")
+# datasets=("8gaussians" "checkerboard"  "moons" "pinwheel")
+datasets=( "pinwheel")
 # datasets=("swissroll" "8gaussians" "pinwheel" "circles" "moons" "2spirals" "checkerboard" "rings")
 
 

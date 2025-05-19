@@ -34,9 +34,8 @@ def antiderivTanh(x, cast=True):
         x = x.to(torch.float32)
     
     act = torch.abs(x) + torch.log1p(torch.exp(-2.0 * torch.abs(x)))
-    out = act.to(x.dtype) if cast else act
-    return out
-
+    return act.to(dtype) if cast else act
+    
 def derivTanh(x, cast=False):
     """
     d/dx tanh = 1 - tanh(x)^2

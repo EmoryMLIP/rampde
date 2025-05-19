@@ -5,14 +5,14 @@
 # Per-dataset arguments
 default_args=(
   --batch_size  128 
-  --nepochs   1  
+  --nepochs   5  
   --lr        1e-1
 )
 
 # Grid search choices
-precisions=("float32" "float16" "bfloat16")
+precisions=( "float16" "bfloat16" "float32" "tfloat32")
 methods=("rk4")
-odeints=("torchdiffeq" "torchmpnode")
+odeints=( "torchmpnode")
 
 
 mkdir -p slurm_logs

@@ -2,7 +2,7 @@
 # submit_large_experiments_local.sh
 # Usage: chmod +x submit_large_experiments_local.sh ; ./submit_large_experiments_local.sh
 
-datasets=("miniboone") #"power" "gas" "hepmass" "bsds300"
+datasets=("bsds300") #"power" "gas" "hepmass" "bsds300"
 
 # Per-dataset arguments
 declare -A dataset_args
@@ -13,9 +13,9 @@ dataset_args[miniboone]="--niters 8000 --alpha 1.0,100.0,15.0 --hidden_dim 256 -
 dataset_args[bsds300]="--niters 120000 --alpha 1.0,2000.0,800.0 --hidden_dim 512 --num_samples 300 --lr 0.001 --num_timesteps 14 --num_timesteps_val 30 --num_samples_val 1000 --val_freq 100 --weight_decay 0.0 --drop_freq 0 --lr_drop 3.3 --early_stopping 15"
 
 # Grid search choices
-precisions=("float32" "bfloat16" "float16")
+precisions=("float32" "tfloat32" "bfloat16" "float16")
 methods=("rk4")
-odeints=("torchdiffeq" "torchmpnode")
+odeints=("torchmpnode")
 
 # Seed
 seed=42

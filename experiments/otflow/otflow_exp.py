@@ -48,7 +48,7 @@ parser.add_argument('--train_dir', type=str, default=None)
 parser.add_argument('--seed', type=int, default=None, help="Random seed; if not provided, no seeding will occur")
 # new arguments
 parser.add_argument('--method', type=str, choices=['rk4', 'euler'], default='rk4')
-parser.add_argument('--precision', type=str, choices=['float32', 'float16','bfloat16'], default='float32')
+parser.add_argument('--precision', type=str, choices=['float32','tfloat32', 'float16','bfloat16'], default='float32')
 parser.add_argument('--odeint', type=str, choices=['torchdiffeq', 'torchmpnode'], default='torchdiffeq')
 
 args = parser.parse_args()
@@ -61,7 +61,8 @@ precision_str = args.precision
 precision_map = {
     'float32': torch.float32,
     'float16': torch.float16,
-    'bfloat16': torch.bfloat16
+    'bfloat16': torch.bfloat16,
+    'tfloat32': torch.float32
 }
 args.precision = precision_map[precision_str]
 
@@ -94,6 +95,15 @@ ckpt_path = os.path.join(result_dir, 'ckpt.pth')
 
 device = torch.device('cuda:' + str(args.gpu) if torch.cuda.is_available() else 'cpu')
 print("Running on device:", device)
+
+if precision_str == 'float32':
+    torch.backends.cuda.matmul.allow_tf32 = False
+    torch.backends.cudnn.allow_tf32 = False
+    print("Using strict float32 precision")
+elif precision_str == 'tfloat32':
+    torch.backends.cuda.matmul.allow_tf32 = True
+    torch.backends.cudnn.allow_tf32 = True
+    print("Using TF32 precision")
 
 
 # Print environment and hardware info for reproducibility and debugging
@@ -173,7 +183,7 @@ def get_batch(num_samples):
     # points, _ = make_circles(n_samples=num_samples, noise=0.06, factor=0.5)
     points = toy_data.inf_train_gen(args.data, batch_size=num_samples)
     x = torch.tensor(points).type(torch.float32).to(device)
-    logp_diff_t1 = torch.zeros(num_samples, 1).type(torch.float32).to(device)
+    logp_diff_t1 = torch.zeros(x.shape[0], 1).type(torch.float32).to(device)
     cost_L = torch.zeros_like(logp_diff_t1)
     cost_HJB = torch.zeros_like(logp_diff_t1)
 
@@ -301,12 +311,11 @@ if __name__ == '__main__':
                     print("new learning rate: {}".format(lr))
                     sys.stdout.flush()
         # save the final model
-        if args.train_dir is not None:
-            torch.save({
-                'theta': func.state_dict(),
-                'args': args                
-            }, ckpt_path)
-            print('Stored final model at {}'.format(ckpt_path))
+        torch.save({
+            'theta': func.state_dict(),
+            'args': args                
+        }, ckpt_path)
+        print('Stored final model at {}'.format(ckpt_path))
 
         total_training_time = time.perf_counter() - training_start
         print('Training complete after {} iters and {:.2f} seconds.'.format(itr, total_training_time))

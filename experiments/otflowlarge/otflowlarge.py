@@ -47,7 +47,7 @@ parser.add_argument('--gpu', type=int, default=0)
 parser.add_argument('--seed', type=int, default=None)
 parser.add_argument('--method', type=str, choices=['rk4', 'euler'], default='rk4')
 parser.add_argument('--precision', type=str,
-                    choices=['float32', 'float16','bfloat16'], default='float16')
+                    choices=['float32', 'tfloat32', 'float16','bfloat16'], default='float16')
 parser.add_argument('--odeint', type=str,
                     choices=['torchdiffeq', 'torchmpnode'], default='torchdiffeq')
 parser.add_argument('--weight_decay', type=float, default=0.0)
@@ -132,6 +132,17 @@ device = torch.device('cuda:' + str(args.gpu) if torch.cuda.is_available() else 
 print("Running on device:", device)
 
 
+if args.precision == 'float32':
+    torch.backends.cuda.matmul.allow_tf32 = False
+    torch.backends.cudnn.allow_tf32 = False
+    print("Using strict float32 precision")
+elif args.precision == 'tfloat32':
+    torch.backends.cuda.matmul.allow_tf32 = True
+    torch.backends.cudnn.allow_tf32 = True
+    print("Using TF32 precision")
+
+
+
 # Print environment and hardware info for reproducibility and debugging
 print("Environment Info:")
 print(f"  Python version: {sys.version}")
@@ -165,10 +176,12 @@ else:
     csv_writer = csv.writer(csv_file)
 
 # precision mapping
+precision_str = args.precision
 precision_map = {
     'float32': torch.float32,
     'float16': torch.float16,
-    'bfloat16': torch.bfloat16
+    'bfloat16': torch.bfloat16,
+    'tfloat32': torch.float32
 }
 func_dtype = precision_map[args.precision]
 
