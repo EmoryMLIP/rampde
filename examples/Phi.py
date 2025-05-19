@@ -113,7 +113,7 @@ class Phi(nn.Module):
 
         self.A  = nn.Parameter(torch.zeros(r, d+1) , requires_grad=True)
         self.A  = nn.init.xavier_uniform_(self.A)
-        self.c  = nn.Linear( d+1  , 1  , bias=False)  # b'*[x;t] + c
+        self.c  = nn.Linear( d+1  , 1  , bias=True)  # b'*[x;t] + c
         self.w  = nn.Linear( m    , 1  , bias=False)
 
         self.N = ResNN(d, m, nTh=nTh)
