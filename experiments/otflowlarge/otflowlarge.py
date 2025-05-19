@@ -295,7 +295,7 @@ if __name__ == '__main__':
         else:
             itr = 1
             clampMax, clampMin = 1.5, -1.5
-            stop_training = True
+            stop_training = False
             while itr <= args.niters:
                 for x_batch in batch_iter(train_x, args.num_samples, shuffle=True):
                     optimizer.zero_grad()
