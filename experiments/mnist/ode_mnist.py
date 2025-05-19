@@ -43,6 +43,8 @@ parser.add_argument('--results_dir', type=str, default='./results')
 parser.add_argument('--seed', type=int, default=0)
 parser.add_argument('--debug', action='store_true')
 parser.add_argument('--gpu', type=int, default=0)
+parser.add_argument('--test_freq', type=int, default=50,
+                    help='evaluate / log every N training steps')
 args = parser.parse_args()
 
 
@@ -98,6 +100,8 @@ elif precision_str == 'tfloat32':
     torch.backends.cudnn.allow_tf32 = True
     print("Using TF32 precision")
 
+torch.backends.cudnn.verbose = True
+torch.backends.cudnn.benchmark = True
 
 # Print environment and hardware info for reproducibility and debugging
 print("Environment Info:")
@@ -106,6 +110,7 @@ print(f"  PyTorch version: {torch.__version__}")
 print(f"  CUDA available: {torch.cuda.is_available()}")
 print(f"  CUDA version: {torch.version.cuda}")
 print(f"  cuDNN version: {torch.backends.cudnn.version()}")
+print("   cuDNN enabled:", torch.backends.cudnn.enabled)
 print(f"  GPU Device Name: {torch.cuda.get_device_name(device) if torch.cuda.is_available() else 'N/A'}")
 print(f"  Current Device: {torch.cuda.current_device() if torch.cuda.is_available() else 'N/A'}")
 
@@ -407,7 +412,8 @@ if __name__ == '__main__':
     csv_file = open(csv_path, 'w', newline='')
     writer = csv.writer(csv_file)
     writer.writerow([
-        'epoch', 'train_acc', 'test_acc',
+        'step', 'epoch',
+        'train_acc', 'test_acc',
         'f_nfe', 'b_nfe',
         'batch_time', 'step_time', 'max_memory'
     ])
@@ -451,8 +457,8 @@ if __name__ == '__main__':
         time_meter.update(elapsed_time)
         mem_meter.update(peak_memory)
 
-        # at the end of each epoch, compute and log
-        if itr % batches_per_epoch == 0:
+        # evaluate / log every test_freq steps
+        if itr % args.test_freq == 0:
             epoch = itr // batches_per_epoch
             with torch.no_grad():
                 train_acc = accuracy(model, train_eval_loader)
@@ -463,9 +469,10 @@ if __name__ == '__main__':
                     best_acc = val_acc
 
                 print(
-                    "Epoch {:04d} | Time {:.3f} ({:.3f}) | NFE-F {:.1f} | NFE-B {:.1f} | "
-                    "Train Acc {:.4f} | Test Acc {:.4f} | Max Mem {:.1f}MB".format(
-                        epoch, batch_time_meter.val, batch_time_meter.avg,
+                    "Step {:06d} | Epoch {:04d} | Time {:.3f} ({:.3f}) | "
+                    "NFE-F {:.1f} | NFE-B {:.1f} | Train Acc {:.4f} | "
+                    "Test Acc {:.4f} | Max Mem {:.1f}MB".format(
+                        itr, epoch, batch_time_meter.val, batch_time_meter.avg,
                         f_nfe_meter.avg, b_nfe_meter.avg,
                         train_acc, val_acc, mem_meter.max
                     )
@@ -473,6 +480,7 @@ if __name__ == '__main__':
 
             # write metrics row
             writer.writerow([
+                itr,
                 epoch,
                 train_acc,
                 val_acc,
