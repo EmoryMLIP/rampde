@@ -74,7 +74,7 @@ if args.seed is not None:
 
 ndecs = 0
 n_vals_wo_improve = 0
-best_val_loss = float('inf')
+best_mmd = float('inf')
 
 def update_lr(optimizer, n_vals_without_improvement):
     global ndecs
@@ -428,9 +428,8 @@ if __name__ == '__main__':
 
                         csv_file.flush()
                         nfe_fwd = nfe_bwd = 0
-
-                        if loss_val.item() < best_val_loss:
-                            best_val_loss = loss_val.item()
+                        if mmd_val < best_mmd:
+                            best_mmd = mmd_val
                             n_vals_wo_improve = 0
                             ckpt_path = os.path.join(result_dir, f"model_best.pt")
                             torch.save({
