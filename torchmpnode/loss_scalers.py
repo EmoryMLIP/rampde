@@ -1,5 +1,5 @@
 import torch
-
+import math
 
 
 class NoScaler:
@@ -70,19 +70,24 @@ class DynamicScaler(NoScaler):
         self.__name__=  "DynamicScaler"
 
     def init_scaling(self, a):
-        # Initialize S such that S * ||a|| ~ target.
-        self.S = self.target / (a.norm() + self.delta).to(torch.float32)
+        if not(a.isfinite().all()) or a.isnan().any():
+            raise ValueError("Input tensor contains non-finite or nan values.")
+        
+        # get the number of elements in a except for the 0th dimension
+        target = self.target / math.sqrt(a.numel() / a.shape[0])
+        self.S = target / (a.abs().max() + self.delta).to(torch.float32)
         self.S = 2**(torch.round(torch.log2(self.S))).item()
         
 
         # make sure S is a power of 2
-        anew = self.S * a
-        while not(anew.isfinite().all()):
-            print('inf')
-            self.S *= 0.5
+        for _ in range(20):         # 20 halvings = divide by 1 048 576
             anew = self.S * a
-        self.is_initialized=True
-    
+            if anew.isfinite().all():
+                break
+            self.S *= 0.5
+        else:
+            raise RuntimeError(f"Scaler failed to find finite scale after 20 steps for {a.shape} with ||a||_inf = {a.abs().max()}.")
+
             
     
     def _apply_scaling(self, x, factor, in_place=False):
@@ -126,7 +131,8 @@ class DynamicScaler(NoScaler):
         return tuple(scaled_args)
 
     def check_for_increase(self, a):
-        return  (torch.norm(a) / self.target < 0.5)
+        # Use .item() to return a Python bool, not a tensor
+        return ((a.abs().max()) / self.target < 0.5).item()
                  
     def update_on_small_grad(self, *args, in_place=False):
         """

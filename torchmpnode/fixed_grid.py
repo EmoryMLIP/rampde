@@ -29,14 +29,14 @@ class FixedGridODESolver(torch.autograd.Function):
     @staticmethod
     @custom_fwd(device_type='cuda')
     def forward(ctx, step, func, y0, t, loss_scaler, *params):
-        dtype_low = torch.get_autocast_dtype('cuda') if torch.is_autocast_enabled() else torch.float32
-        dtype_hi = y0.dtype
-        N = t.shape[0]
-        y = y0
-        yt = torch.zeros(N, *y.shape, dtype=dtype_low, device=y.device)
-        yt[0] = y0.to(dtype_low)
-        # print(f"yt: {yt.dtype}, y0: {y0.dtype}, t: {t.dtype}, dtype_hi: {dtype_hi}, dtype_low: {dtype_low}")
         with torch.no_grad():
+            dtype_low = torch.get_autocast_dtype('cuda') if torch.is_autocast_enabled() else torch.float32
+            dtype_hi = y0.dtype
+            N = t.shape[0]
+            y = y0
+            yt = torch.zeros(N, *y.shape, dtype=dtype_low, device=y.device)
+            yt[0] = y0.to(dtype_low)
+        # print(f"yt: {yt.dtype}, y0: {y0.dtype}, t: {t.dtype}, dtype_hi: {dtype_hi}, dtype_low: {dtype_low}")
             for i in range(N - 1):
                 dt = t[i + 1] - t[i]
                 with autocast(device_type='cuda', dtype=dtype_low):
@@ -76,17 +76,20 @@ class FixedGridODESolver(torch.autograd.Function):
         
         at = scaler.scale(at)
         a = at[-1].to(dtype_hi)
-
+        
         grad_theta = [torch.zeros_like(param) for param in params]
         grad_t = None if not t.requires_grad else torch.zeros_like(t)
 
         old_params = {name: param.data.clone() for name, param in func.named_parameters()}
         for name, param in func.named_parameters():
             param.data = param.data.to(dtype_low)
+        y_buffer = torch.zeros_like(yt[0])
         with torch.no_grad():
             for i in reversed(range(N - 1)):
                 dti = t[i + 1] - t[i]
-                y = yt[i].clone().detach().requires_grad_(True)
+                y_buffer.data.copy_(yt[i])
+                y = y_buffer.detach().requires_grad_(True)
+                # y = yt[i].clone().detach().requires_grad_(True)
                 attempts = 0
 
 
@@ -173,4 +176,3 @@ class FixedGridODESolver(torch.autograd.Function):
             grad_t = grad_t.to(dtype_t)
        
         return (None, None, a, grad_t, None, *grad_theta)
-    
