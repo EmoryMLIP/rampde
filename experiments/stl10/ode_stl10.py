@@ -185,8 +185,8 @@ class ODEFunc(nn.Module):
         # ---- weight & bias banks (learnable) ----
         
         # per-step norms remain (cheap, no descriptor)
-        # self.norms = nn.ModuleList([nn.InstanceNorm2d(ch, affine=True)
-        #                             for _ in range(9)])
+        self.norms = nn.ModuleList([nn.InstanceNorm2d(ch, affine=True)
+                                     for _ in range(9)])
 
         # map rounded time → index
         t_grid = torch.linspace(t_grid[0], t_grid[-1], 9)
@@ -205,7 +205,7 @@ class ODEFunc(nn.Module):
         # forward conv
         y = self.A(y)
         y = self.act(y)
-        # y = self.norms[idx](y)
+        y = self.norms[idx](y)
         y = self.A_T(y)
         return -y
 class ODEBlock(nn.Module):
@@ -319,40 +319,29 @@ def get_stl10_loaders(batch_size=128,
     mean = (0.4467, 0.4398, 0.4066)
     std  = (0.2241, 0.2210, 0.2239)
 
-    # transform_train = transforms.Compose([
-    #     transforms.RandomResizedCrop(96, scale=(0.5, 1.0), ratio=(0.75, 1.33)),
-    #     transforms.RandomHorizontalFlip(p=0.5),
-    #     transforms.ColorJitter(brightness=0.4, contrast=0.4, saturation=0.4, hue=0.1),
-    #     transforms.RandomGrayscale(p=0.1),
-    #     transforms.ToTensor(),
-    #     transforms.Normalize(mean, std),
-    #     # optional regularizers:
-    #     # t
-    #     # ransforms.RandomErasing(p=0.2, scale=(0.02,0.33), ratio=(0.3,3.3)),
-    # ])
+    # --- Training augmentation with 128×128 target ---
     transform_train = transforms.Compose([
-            transforms.RandomResizedCrop(96, scale=(0.5,1.0), ratio=(0.75,1.33)),
-            transforms.RandAugment(num_ops=2, magnitude=8),
-            transforms.RandomHorizontalFlip(p=0.5),
+        # first resize original 96×96 image to 128×128 (bilinear)
+        transforms.Resize(128, interpolation=transforms.InterpolationMode.BILINEAR),
 
-            # re-introduce color jitter & occasional grayscale
-            transforms.ColorJitter(
-                brightness=0.4,
-                contrast=0.4,
-                saturation=0.4,
-                hue=0.1
-            ),
-            transforms.RandomGrayscale(p=0.1),
+        # data‑augmentation ops
+        transforms.RandAugment(num_ops=2, magnitude=8),
+        transforms.RandomHorizontalFlip(p=0.5),
+        transforms.ColorJitter(0.4, 0.4, 0.4, 0.1),
+        transforms.RandomGrayscale(p=0.1),
 
-            transforms.ToTensor(),
-            transforms.Normalize(mean, std),
+        # convert to tensor & normalize
+        transforms.ToTensor(),
+        transforms.Normalize(mean, std),
 
-            # spatial erasing last
-            transforms.RandomErasing(p=0.2, scale=(0.02,0.15)),
-        ])
+        # spatial regulariser
+        transforms.RandomErasing(p=0.2, scale=(0.02, 0.15)),
+    ])
+
+    # --- Evaluation pipeline: deterministic 128×128 ---
     transform_test = transforms.Compose([
-        transforms.Resize(96),
-        transforms.CenterCrop(96),
+        transforms.Resize(128, interpolation=transforms.InterpolationMode.BILINEAR),
+        transforms.CenterCrop(128),
         transforms.ToTensor(),
         transforms.Normalize(mean, std),
     ])
