@@ -26,6 +26,17 @@ import os
 import sys
 import csv
 import matplotlib.pyplot as plt
+import argparse
+# Command‑line flag: choose sign of dynamics
+parser = argparse.ArgumentParser()
+parser.add_argument(
+    "--sign", choices=["pos", "neg"], default="pos",
+    help="Use 'pos' for y' =  +A y (default) or 'neg' for y' =  -A y"
+)
+args = parser.parse_args()
+SIGN      = 1.0 if args.sign == "pos" else -1.0
+SIGN_TAG  = args.sign        # 'pos' or 'neg' – used in output file names
+
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
 from torchmpnode import odeint as mpodeint
 
@@ -42,7 +53,7 @@ class ODEFunc(nn.Module):
     def __init__(self, dim):
         super().__init__()
         # Define a simple linear ODE: dz/dt = A z, with A diagonal matrix
-        A = torch.tensor([[0.5, 0.0], [0.0, 0.5]], dtype=torch.float32)
+        A = SIGN * torch.tensor([[0.5, 0.0], [0.0, 0.5]], dtype=torch.float32)
         self.theta = nn.Parameter(A)
     def forward(self, t, z):
         # Compute the derivative at time t for state z
@@ -160,7 +171,7 @@ for meth in method_list:
 
 # write relative error results to CSV
 os.makedirs('out', exist_ok=True)
-with open('out/relative_errors.csv','w',newline='') as f:
+with open(f'out/relative_errors_{SIGN_TAG}.csv','w',newline='') as f:
     w = csv.writer(f)
     w.writerow(['method','n_steps','sol_odeint','gz0_odeint','gth_odeint',
                 'sol_mp','gz0_mp','gth_mp'])
@@ -181,7 +192,7 @@ with open('out/relative_errors.csv','w',newline='') as f:
                         r['mpodeint']['sol'][i], r['mpodeint']['grad_z0'][i], r['mpodeint']['grad_theta'][i]])
 
 # write Taylor slopes to CSV
-with open('out/taylor_slopes.csv','w',newline='') as f:
+with open(f'out/taylor_slopes_{SIGN_TAG}.csv','w',newline='') as f:
     w = csv.writer(f)
     w.writerow(['method','precision','steps','solver','slope0','slope1'])
     for meth in method_list:
@@ -207,11 +218,12 @@ for meth in method_list:
                 plt.legend(fontsize=14)
                 plt.grid(True, which='both', linestyle='--', alpha=0.4)
                 plt.tight_layout()
+                prefix = f"out/decay_{meth}_{solver}_{precision_name}_{N}_{SIGN_TAG}"
                 # Save plot as PNG
-                plt.savefig(f"out/decay_{meth}_{solver}_{precision_name}_{N}.png")
+                plt.savefig(f"{prefix}.png")
                 plt.close()
                 # Save raw data to CSV for further analysis
-                csv_filename = f"out/decay_{meth}_{solver}_{precision_name}_{N}.csv"
+                csv_filename = f"{prefix}.csv"
                 with open(csv_filename, 'w', newline='') as cf:
                     cw = csv.writer(cf)
                     cw.writerow(['h', 'error0', 'error1'])
@@ -221,6 +233,6 @@ for meth in method_list:
                 # Attempt to save plot as TikZ file for LaTeX integration
                 try:
                     import tikzplotlib
-                    tikzplotlib.save(f"out/decay_{meth}_{solver}_{precision_name}_{N}.tex")
+                    tikzplotlib.save(f"{prefix}.tex")
                 except ImportError:
                     print("tikzplotlib not installed; skipping TikZ export.")
