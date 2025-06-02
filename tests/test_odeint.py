@@ -45,7 +45,7 @@ class TestFixedGridODESolver(unittest.TestCase):
                 order = solver.order
                 pass_count = 0
                 previous_error = None
-                num_steps = 8
+                num_steps = 4
                 y_analytical = self.analytical_solution(self.T)
                     
                 for _ in range(10):

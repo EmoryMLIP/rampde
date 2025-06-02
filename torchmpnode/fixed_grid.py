@@ -71,12 +71,10 @@ class FixedGridODESolver(torch.autograd.Function):
 
         # Initialize the dynamic scaler and scale the output adjoints
         scaler = ctx.loss_scaler
-        if scaler.is_initialized==False:
+        if scaler.S is None:
             scaler.init_scaling(at[-1])
         
-        at = scaler.scale(at)
         a = at[-1].to(dtype_hi)
-        
         grad_theta = [torch.zeros_like(param) for param in params]
         grad_t = None if not t.requires_grad else torch.zeros_like(t)
 
@@ -89,91 +87,67 @@ class FixedGridODESolver(torch.autograd.Function):
                 dti = t[i + 1] - t[i]
                 y_buffer.data.copy_(yt[i])
                 y = y_buffer.detach().requires_grad_(True)
-                # y = yt[i].clone().detach().requires_grad_(True)
-                attempts = 0
-
-
-                # Attempt gradient computation until all values are finite
-                # while attempts < scaler.max_attempts:
+                
                 ti = t[i].clone().detach()
                 dti_local = dti.clone().detach()
                 if t.requires_grad:
                     ti.requires_grad_(True)
                     dti_local.requires_grad_(True)
                 with torch.enable_grad():
-                        dy = step(func, y, ti, dti_local)
+                    # rebuild computational graph for the current time step
+                    dy = step(func, y, ti, dti_local)
                 
+                
+                attempts = 0
                 while attempts < scaler.max_attempts:
+                    if scaler._is_any_infinite((scaler.S*a)):
+                        scaler.update_on_overflow()
+                        continue
+
                     if t.requires_grad:
                         grads = torch.autograd.grad(
-                            dy, (y, ti, dti_local, *params), a,
+                            dy, (y, ti, dti_local, *params), scaler.S * a,
                             create_graph=True, allow_unused=True
                         )
                         da, gti, gdti, *dparams = grads
-                        gdti2 = torch.sum(a * dy, dim=-1)
+                        gti = gti.to(dtype_hi) if gti is not None else torch.zeros_like(ti)
+                        gdti = gdti.to(dtype_hi) if gdti is not None else torch.zeros_like(dti)
+                        gdti2 = torch.sum(scaler.S * a * dy, dim=-1)
                     else: 
                         grads = torch.autograd.grad(
-                            dy, (y, *params), a,
+                            dy, (y, *params), scaler.S * a,
                             create_graph=True, allow_unused=True
                         )
                         da, *dparams = grads
                         gti = gdti = gdti2 = None
-
                         
                         dparams = [d if d is not None else torch.zeros_like(p) for d, p in zip(dparams, params)]
                         
-                        # Always extract parameter gradients as a tuple.
-                        if scaler._is_any_infinite((da, gti, gdti, dparams)):
-                            scaler.update_on_overflow(a,at,grad_theta,grad_t,gti,in_place=True)
-                            attempts+=1
-                            continue
-                        else:
-                            break
+                    if scaler._is_any_infinite((da, gti, gdti, dparams)):
+                        scaler.update_on_overflow()
+                        attempts+=1
+                        continue
+                    else:
+                        break
                 
                 if attempts >= scaler.max_attempts:
                     raise RuntimeError(f"Reached maximum number of attempts in backward pass at time step i={i}")
 
-                update_attempts = 0
-                while update_attempts < scaler.max_attempts:
-                    a_new = a + dti * da.to(dtype_hi) + at[i].to(dtype_hi)
-                    grad_theta_new = [g + dti * d.to(g.dtype) for g, d in zip(grad_theta, dparams)]
+                a = a + (dti/scaler.S) * da.to(dtype_hi) + at[i].to(dtype_hi)
+                grad_theta = [g + (dti/scaler.S) * d.to(g.dtype) for g, d in zip(grad_theta, dparams)]
+                if grad_t is not None:
+                    grad_t[i] = grad_t[i] + (dti/scaler.S) * (gti - gdti) - (gdti2.to(dtype_hi))/scaler.S
+                    grad_t[i + 1] = grad_t[i + 1] + (dti/scaler.S) * gdti + gdti2.to(dtype_hi)/scaler.S
+                
+                if scaler._is_any_infinite((a, grad_t, grad_theta)):
+                    raise RuntimeError(f"Gradients are not representable at time step i={i}. ")
 
-                    if grad_t is not None:
-                        grad_t_new = grad_t.clone()
-                        gti_new = gti.clone() if gti is not None else torch.zeros_like(t[i])
-                        gdti_new = gdti.clone() if gdti is not None else torch.zeros_like(t[i])
-                        gdti2_new = gdti2.clone() if gdti2 is not None else torch.zeros_like(t[i])
-                        grad_t_new[i] = grad_t[i] + dti * (gti_new - gdti_new) - gdti2_new
-                        grad_t_new[i + 1] = grad_t[i + 1] + dti * gdti_new + gdti2_new
-                    else:
-                        grad_t_new = None
-
-                    if scaler._is_any_infinite((a_new, grad_t_new, grad_theta_new)):
-                        scaler.update_on_overflow(a,at,da,grad_theta,dparams,grad_t,gti,gdti,gdti2,in_place=True)
-                        update_attempts += 1
-                        if update_attempts >= scaler.max_attempts:
-                            raise RuntimeError(f"Reached maximum number of update attempts in backward pass at time step i={i}")
-                    else:
-                        break
 
                 # Adjust upward scaling if the norm is too small
-                if attempts == 0 and update_attempts == 0 and scaler.check_for_increase(a_new):
-                    temp = scaler.update_on_small_grad(a_new,at,grad_theta_new, grad_t_new)
-                    if not scaler._is_any_infinite(temp):
-                        a_new,at,grad_theta_new, grad_t_new = temp
-
-
-                a = a_new
-                grad_theta = grad_theta_new
-                if grad_t is not None:
-                    grad_t = grad_t_new
+                if attempts == 0 and scaler.check_for_increase(a):
+                    scaler.update_on_small_grad()
 
         for name, param in func.named_parameters():
             param.data = old_params[name].data
 
-        # Unscale the gradients before returning
-        scaler.unscale((a, grad_theta,grad_t),in_place=True)
-        if t.requires_grad:
-            grad_t = grad_t.to(dtype_t)
-       
         return (None, None, a, grad_t, None, *grad_theta)

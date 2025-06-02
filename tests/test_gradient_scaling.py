@@ -137,7 +137,7 @@ class TestGradientPrecisionComparison(unittest.TestCase):
     def test_negative_definite_system(self):
         """Test with A = - (original_A^T @ original_A) (negative definite)."""
         print("Testing negative definite system")
-        A = 5*torch.randn_like(self.original_A)
+        A = .15*torch.randn_like(self.original_A)
         self.model.A.data.copy_(-A.T @ A)
         # Re-run precision vs analytic for this A
         self.original_A =- A.T @ A

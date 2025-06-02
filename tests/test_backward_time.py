@@ -22,7 +22,7 @@ class NonlinearODE(torch.nn.Module):
 
     def forward(self, t, x):
         # Cast input to float32 so that the parameters are used in float32.
-        return self.B @ torch.tanh(self.A @ x + self.b)
+        return self.B @ torch.tanh(self.A @ x + t**2 * self.b)
 
 class TestTaylorExpansionODE(unittest.TestCase):
     def setUp(self):
@@ -30,14 +30,14 @@ class TestTaylorExpansionODE(unittest.TestCase):
             self.skipTest("CUDA not available; skipping GPU tests.")
         self.device = torch.device("cuda:0")
         self.dim = 2         # small state dimension
-        self.n_time = 10     # few time steps to keep the integration fast
+        self.n_time = 5     # few time steps to keep the integration fast
         self.t0 = 0.0
         self.t1 = 1.0
 
     def test_taylor_decay(self):
         # Test for both Euler and RK4 methods, and for three working precisions.
         for method in ['euler', 'rk4']:
-            for precision in [torch.float32]:
+            for precision in [torch.float32, torch.float16]:
                 with self.subTest(method=method, precision=precision):
                     print(f"\n\nTesting method {method} at precision {precision}")
                     dtype = precision
@@ -46,7 +46,7 @@ class TestTaylorExpansionODE(unittest.TestCase):
                     
                     # Create a time tensor on [t0,t1].
                     t = torch.linspace(self.t0, self.t1, self.n_time, device=self.device, dtype=dtype, requires_grad=True)
-                    vt = .2*(torch.rand_like(t)-0.5)*((self.t1-self.t0)/self.n_time)
+                    vt = .45*(torch.rand_like(t)-0.5)*((self.t1-self.t0)/self.n_time)
 
                     
 

@@ -57,7 +57,7 @@ class TestTaylorExpansionODE(unittest.TestCase):
                     def f(x):
                         with autocast(device_type='cuda', dtype=dtype):
                             out = odeint(model, x, t, method=method)
-                        return torch.sum(out[-1])
+                        return torch.sum(out)
                     
                     # Evaluate f at the base point.
                     with autocast(device_type='cuda', dtype=dtype):
