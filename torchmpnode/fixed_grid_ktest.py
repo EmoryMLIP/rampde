@@ -147,7 +147,6 @@ class FixedGridODESolver(torch.autograd.Function):
                             da, *dparams = grads
                             gti = gdti = gdti2 = None
 
-
                     dparams = [d if d is not None else torch.zeros_like(p)
                                for d, p in zip(dparams, params)]
                     if scaler._is_any_infinite((da, gti, gdti, dparams)):
@@ -159,48 +158,56 @@ class FixedGridODESolver(torch.autograd.Function):
                 else:
                     raise RuntimeError(f"Max attempts exceeded at step {i}")
 
-                # --- adjoint & param updates ---
-                a = a + dti * da.to(dtype_hi) + at[i].to(dtype_hi)
-                grad_theta = [g + dti * d.to(g.dtype) for g, d in zip(grad_theta, dparams)]
-
-                if grad_t is not None:
-                    grad_t = grad_t.clone()
-                    gti = gti.clone() if gti is not None else torch.zeros_like(t[i])
-                    gdti = gdti.clone() if gdti is not None else torch.zeros_like(t[i])
-                    gdti2 = gdti2.clone() if gdti2 is not None else torch.zeros_like(t[i])
-                    grad_t[i] = grad_t[i] + dti * (gti - gdti) - gdti2
-                    grad_t[i + 1] = grad_t[i + 1] + dti * gdti + gdti2
-                else:
-                    grad_t = None
-
-                # ---- periodic scaling ----
-                counter += 1
-                if strategy == "predictive" and counter % k_period == 0:
-                    # ||Jv|| / ||v||
-                    v = torch.randn_like(y)
-                    v = v / v.norm(p=2).clamp(min=Mmin)
-                    Jv = torch.autograd.grad(dy, y, v,
-                                             retain_graph=True, allow_unused=True)[0]
-                    Lj = Jv.norm(p=2)              # since ||v|| = 1
-                    pred = a.norm() * ((1 + Lj * dti) ** (k_period - 1))
-                    if pred > Mmax:
-                        a, da = scaler.update_on_overflow(a, da)
-                        grad_theta = [g * scaler.decrease_factor for g in grad_theta]
-                        if grad_t is not None:
-                            grad_t *= scaler.decrease_factor
-                    elif pred < Mmin:
-                        a, da = scaler.update_on_small_grad(a, da)
-                        grad_theta = [g * scaler.increase_factor for g in grad_theta]
-                        if grad_t is not None:
-                            grad_t *= scaler.increase_factor
-
                 update_attempts = 0
-                while scaler._is_any_infinite((a, grad_theta, grad_t)):
-                    scaler.update_on_overflow(a, at, grad_theta, grad_t,
-                                              in_place=True)
-                    update_attempts += 1
-                    if update_attempts >= scaler.max_attempts:
-                        raise RuntimeError("Update overflow retry limit hit.")
+                while update_attempts < scaler.max_attempts:
+                # ---- adjoint and gradients update ----
+                    a = a + dti * da.to(dtype_hi) + at[i].to(dtype_hi)
+                    grad_theta = [g + dti * d.to(g.dtype) for g, d in zip(grad_theta, dparams)]
+                    # print(f'time steps: {i}, a: {a}, grad_theta: {grad_theta}')
+                    if grad_t is not None:
+                        grad_t = grad_t.clone()
+                        gti = gti.clone() if gti is not None else torch.zeros_like(t[i])
+                        gdti = gdti.clone() if gdti is not None else torch.zeros_like(t[i])
+                        gdti2 = gdti2.clone() if gdti2 is not None else torch.zeros_like(t[i])
+                        grad_t[i] = grad_t[i] + dti * (gti - gdti) - gdti2
+                        grad_t[i + 1] = grad_t[i + 1] + dti * gdti + gdti2
+                    else:
+                        grad_t = None
+
+                    if scaler.max_attempts > 1:
+                        # ---- periodic scaling ----
+                        counter += 1
+                        if strategy == "predictive" and counter % k_period == 0:
+                            # ||Jv|| / ||v||
+                            v = torch.randn_like(y)
+                            v = v / v.norm(p=2).clamp(min=Mmin)
+                            Jv = torch.autograd.grad(dy, y, v,
+                                                    retain_graph=True, allow_unused=True)[0]
+                            Lj = Jv.norm(p=2)              # since ||v|| = 1
+                            pred = a.norm() * ((1 + Lj * dti) ** (k_period - 1))
+                            if pred > Mmax:
+                                print(f"Overflow detected at step {i}, scaling down in pred.")
+
+                                a, da = scaler.update_on_overflow(a, da)
+                                grad_theta = [g * scaler.decrease_factor for g in grad_theta]
+                                if grad_t is not None:
+                                    grad_t *= scaler.decrease_factor
+                            elif pred < Mmin:
+                                print(f"Underflow detected at step {i}, scaling up in pred.")
+                                a, da = scaler.update_on_small_grad(a, da)
+                                grad_theta = [g * scaler.increase_factor for g in grad_theta]
+                                if grad_t is not None:
+                                    grad_t *= scaler.increase_factor
+
+
+                    if scaler._is_any_infinite((a, grad_theta, grad_t)):
+                        scaler.update_on_overflow(a, at, grad_theta, grad_t,
+                                                in_place=True)
+                        update_attempts += 1
+                        if update_attempts >= scaler.max_attempts:
+                            raise RuntimeError("Update overflow retry limit hit.")
+                    else:
+                        break
 
         for name, param in func.named_parameters():
             param.data = old_params[name].data
