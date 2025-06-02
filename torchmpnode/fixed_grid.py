@@ -94,40 +94,41 @@ class FixedGridODESolver(torch.autograd.Function):
 
 
                 # Attempt gradient computation until all values are finite
+                # while attempts < scaler.max_attempts:
+                ti = t[i].clone().detach()
+                dti_local = dti.clone().detach()
+                if t.requires_grad:
+                    ti.requires_grad_(True)
+                    dti_local.requires_grad_(True)
+                with torch.enable_grad():
+                        dy = step(func, y, ti, dti_local)
+                
                 while attempts < scaler.max_attempts:
-                    ti = t[i].clone().detach()
-                    dti_local = dti.clone().detach()
                     if t.requires_grad:
-                        ti.requires_grad_(True)
-                        dti_local.requires_grad_(True)
-                        with torch.enable_grad():
-                            dy = step(func, y, ti, dti_local)
-                    
-                            grads = torch.autograd.grad(
-                                dy, (y, ti, dti_local, *params), a,
-                                create_graph=True, allow_unused=True
-                            )
-                            da, gti, gdti, *dparams = grads
-                            gdti2 = torch.sum(a * dy, dim=-1)
+                        grads = torch.autograd.grad(
+                            dy, (y, ti, dti_local, *params), a,
+                            create_graph=True, allow_unused=True
+                        )
+                        da, gti, gdti, *dparams = grads
+                        gdti2 = torch.sum(a * dy, dim=-1)
                     else: 
-                        with torch.enable_grad():
-                            dy = step(func, y, ti, dti_local)
-                            grads = torch.autograd.grad(
-                                dy, (y, *params), a,
-                                create_graph=True, allow_unused=True
-                            )
-                            da, *dparams = grads
-                            gti = gdti = gdti2 = None
+                        grads = torch.autograd.grad(
+                            dy, (y, *params), a,
+                            create_graph=True, allow_unused=True
+                        )
+                        da, *dparams = grads
+                        gti = gdti = gdti2 = None
+
                         
-                    dparams = [d if d is not None else torch.zeros_like(p) for d, p in zip(dparams, params)]
+                        dparams = [d if d is not None else torch.zeros_like(p) for d, p in zip(dparams, params)]
                         
-                    # Always extract parameter gradients as a tuple.
-                    if scaler._is_any_infinite((da, gti, gdti, dparams)):
-                        scaler.update_on_overflow(a,at,grad_theta,grad_t,gti,in_place=True)
-                        attempts+=1
-                        continue
-                    else:
-                        break
+                        # Always extract parameter gradients as a tuple.
+                        if scaler._is_any_infinite((da, gti, gdti, dparams)):
+                            scaler.update_on_overflow(a,at,grad_theta,grad_t,gti,in_place=True)
+                            attempts+=1
+                            continue
+                        else:
+                            break
                 
                 if attempts >= scaler.max_attempts:
                     raise RuntimeError(f"Reached maximum number of attempts in backward pass at time step i={i}")
