@@ -4,180 +4,144 @@
 # ------------------------------------------------------------
 
 
+
 import torch
 import torch.nn as nn
 from torch.amp import autocast
 from torchdiffeq import odeint
-import sys
-import os
 
-sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
-from torchmpnode import odeint as mpodeint
-import csv
-import matplotlib.pyplot as plt
+device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+if device.type != 'cuda':
+    raise RuntimeError("Please run on a CUDA device")
 
+torch.backends.cuda.matmul.allow_tf32 = True
+torch.backends.cudnn.allow_tf32 = True
 
 prec = torch.float16
 
-class ODEFunc(nn.Module):
-    """
-    A simple ODE dz/dt = A z,
-    where A is a learnable 2×2 matrix (stored in float32).
-    """
-    def __init__(self, dim):
-        super().__init__()
-        A = torch.tensor([[-0.5, 0.0],
-                                     [0.0, -1.5]], dtype=torch.float32)
+# Problem setup
+dim = 8
+t0, t1 = 0.0, 1.0
+N = 64 
+torch.manual_seed(42)
 
+
+class ODEFunc(nn.Module):
+
+    def __init__(self, dim, init_A=None):
+        super().__init__()
+        if init_A is None:
+            A = torch.randn((dim, dim), dtype=torch.float32, device=device) 
+        else:
+            A = init_A.clone().to(device)
         self.theta = nn.Parameter(A)
-    
+
     def forward(self, t, z):
         return torch.matmul(self.theta, z)
 
 
-def euler_forward_manual_pseudoac(z0, func, t0, t1, N):
+def run_autocast_odeint(func, N, device, t0, t1, dim, prec):
     """
-    Forward Euler in “pseudo‐autocast” mode:
-    - matmul and step‐size cast into low precision
-    - step computed in low precision then converted back to float32
+    torchdiffeq.odeint under autocast
     """
-        
-    h = (t1 - t0) / (N - 1)
-    z_list = []
-    current_z = z0.clone() 
-    t = t0
-    z_list.append(current_z)
-    for _ in range(N - 1):
-        z_half = current_z
-        f_val_half = torch.matmul(func.theta.to(prec), z_half.to(prec))
-        h_half = torch.tensor(h, dtype=prec, device=current_z.device)
-        z_next_half = z_half + (h_half * f_val_half).float()
-        z_next = z_next_half
-        z_list.append(z_next)
-        current_z = z_next
-        t += h
-    return z_list
 
-def manual_pseudoac(z_list, func, t0, t1):
+    # print(f"run_autocast_odeint: N={N}, t0={t0}, t1={t1}, dim={dim}, prec={prec}")
+    t_span = torch.linspace(t0, t1, N, device=device)
+    z0 = torch.ones((dim, 1), dtype=torch.float32, device=device, requires_grad=True)
+    target = torch.full((dim, 1), 2.0, dtype=torch.float32, device=device)
+    with autocast(device_type='cuda', dtype=prec):
 
+        sol = odeint(func, z0, t_span, method='euler')
+        loss = 0.5 * ((sol[-1] - target)**2).sum()
+        loss.backward()
+
+    return sol.detach(), z0.grad.detach().clone(), func.theta.grad.detach().clone()
+
+
+def manual_pseudoac(z_list, func, t0, t1, h, N, cast_matmul_inputs=False):
     """
-    Manual backward pass that mimics autocast+torchdiffeq:
-      - Uses low precsion for the matmul‐update accumulation
-      - Casts FP32 updates once to low precsion
-      - Performs all additions in low precsion
-      - Casts final dθ back to FP32.
+    Backward pass with manual casting
     Returns:
-      dL/dz0 (float32 Tensor), dL/dθ (float32 Tensor)
+      dL/dz0 (float32 Tensor), dL/dtheta (float32 Tensor)
     """
-
-    N = len(z_list) - 1
-    h = (t1 - t0) / N
+    N = len(z_list) -1
+    # # print(f"manual_pseudoac: N={N}, len(z_list)={len(z_list)}, t0={t0}, t1={t1}, cast_matmul_inputs={cast_matmul_inputs}")
+    # h = (t1 - t0) / (N)
     h = torch.tensor(h, dtype=torch.float32, device=z_list[0].device)
+    print(f"manual_pseudoac: h={h}, t0={t0}, t1={t1}, N={N}")
     dim = func.theta.shape[0]
     target = torch.full((dim, 1), 2.0, dtype=torch.float32, device=z_list[0].device)
-    I = torch.eye(dim, dtype=torch.float32, device=z_list[0].device)
     
-    dL_dz_half = [None]*(N+1)
-    dL_dz_half[N] = z_list[-1] - target
-    dL_dtheta_half = torch.zeros_like(func.theta)
+    dL_dz = [None] * (N + 1)
+    dL_dz[-1] = (z_list[-1] - target).to(torch.float32)
+    
+    dL_dtheta = torch.zeros_like(func.theta)
     
     for k in reversed(range(N)):
-        factor_half = ((h * func.theta).transpose(0,1)).to(prec)
-        dL_dz_half[k] = dL_dz_half[k+1].float() + torch.matmul(factor_half, dL_dz_half[k+1].to(prec))
-        # if k == N-1:
-        # dL_dtheta_half = (dL_dtheta_half 
-        #                 + (h * torch.matmul(dL_dz_half[k+1].float(),
-        #                                     z_list[k].float().transpose(0,1))).to(prec))
-        # else:
 
-        dL_dtheta_half = (dL_dtheta_half.to(prec) 
-                        + (h * torch.matmul(dL_dz_half[k+1].float(),
-                                            z_list[k].float().transpose(0,1))).to(prec))
-        dL_dtheta_half = dL_dtheta_half.float()
-    return dL_dz_half[0], dL_dtheta_half#, dL_dz_half[N]
 
-# Full precision
-def run_baseline(method, N, device, t0, t1, dim):
-    t_span = torch.linspace(t0, t1, N, device=device)
-    func = ODEFunc(dim).to(device)
+        # matmul for dL/dz
+        dL_next = dL_dz[k + 1]                     # float32
+        dL_part = torch.matmul((h*func.theta.to(prec)).transpose(0, 1), dL_next.to(prec))   
+        dL_dz[k] = dL_next.to(torch.float32) + dL_part.to(torch.float32)           # float32
+        
+        # dL/dtheta
+        dz = dL_dz[k + 1]#.to(prec)                          # float32
+        z_prev = z_list[k]#.to(prec)                         # float32
+        
+        matmul_a = dz.to(prec)
+        matmul_b = z_prev.transpose(0, 1).to(prec)
+        
+        d_theta_part = torch.matmul(h*matmul_a, matmul_b)  # float32
+        dL_dtheta = dL_dtheta.to(prec)  + d_theta_part.to(prec)
+        
+    return dL_dz[0].to(torch.float32), dL_dtheta.to(torch.float32)
 
-    z0 = torch.ones((dim, 1), dtype=torch.float32, device=device, requires_grad=True)
-    target = torch.full((dim, 1), 2.0, dtype=torch.float32, device=device)
-    # sol = odeint(func, z0, t_span, method=method)[-1]
-    # Analytical solution for the ODE: z(t) = exp(theta * t) * z0
-    sol = torch.matmul(torch.matrix_exp(func.theta * t_span[-1]), z0)
-    loss = 0.5 * ((sol - target)**2).sum()
-    loss.backward()
-    # Return the final solution and the gradients.
-    return sol.detach().clone(), z0.grad.detach().clone(), func.theta.grad.detach().clone()
 
-# Run torchdiffeq under autocast
-def run_autocast_odeint(method, N, device, t0, t1, dim, prec):
+def euler_forward(z0, func, t0, t1, N, h):
     """
-    Mixed‐precision via torchdiffeq’s odeint under autocast:
-      - All ops eligible for autocast run in low precision
-      - torchdiffeq handles its own backward in mixed precision
+    Forward Euler manual implementation
     """
-    t_span = torch.linspace(t0, t1, N, device=device)
-    func = ODEFunc(dim).to(device)
-    z0 = torch.ones((dim, 1), dtype=torch.float32, device=device, requires_grad=True)
-    target = torch.full((dim, 1), 2.0, dtype=torch.float32, device=device)
-    with autocast(device_type='cuda', dtype=prec):
-        sol = odeint(func, z0, t_span, method=method)
-        loss = 0.5 * ((sol[-1] - target)**2).sum()
-        loss.backward()
-
-    return sol[-1].detach().clone(), z0.grad.detach().clone(), func.theta.grad.detach().clone()#, zt.grad.detach().clone()
-
-# Run torchmpnode under autocast
-def run_autocast_mpodeint(method, N, device, t0, t1, dim, prec):
-    """
-    Mixed‐precision via torchmpnode’s odeint under autocast
-    """
-    t_span = torch.linspace(t0, t1, N, device=device)
-    func = ODEFunc(dim).to(device)
-    z0 = torch.ones((dim, 1), dtype=torch.float32, device=device, requires_grad=True)
-    target = torch.full((dim, 1), 2.0, dtype=torch.float32, device=device)
-    with autocast(device_type='cuda', dtype=prec):
-        sol = mpodeint(func, z0, t_span, method=method)
-        loss = 0.5 * ((sol[-1] - target)**2).sum()
-        loss.backward()
-    return sol[-1].detach().clone(), z0.grad.detach().clone(), func.theta.grad.detach().clone()
-
-def pseudo_autocast(N, device, t0, t1, dim):
-    """
-    Manual forward and backward that mirrors autocast behavior
-    """
-    z0_manual_noac = torch.ones((dim, 1), dtype=torch.float32, device=device)
-    func_manual_noac = ODEFunc(dim).to(device)
-    z_list_manual_noac = euler_forward_manual_pseudoac(z0_manual_noac, func_manual_noac, t0, t1, N)
-    dL_dz0_manual_noac, dL_dtheta_manual_noac = manual_pseudoac(z_list_manual_noac, func_manual_noac, t0, t1)
     
-    return z_list_manual_noac[-1].detach().clone(), dL_dz0_manual_noac, dL_dtheta_manual_noac
+    # print(f"euler_forward: N={N}, h={h}, t0={t0}, t1={t1}")
+    h = torch.tensor(h, dtype=torch.float32, device=z0.device)
+    z_list = [z0.clone()]
+    current_z = z0.clone()
+    for _ in range(N - 1):
+        f_val = torch.matmul(func.theta.to(prec), current_z.to(prec))  # float32
+        z_next = current_z.to(torch.float32) + (h*f_val).to(torch.float32)             # float32
+        z_list.append(z_next)
+        current_z = z_next.to(torch.float32)  # ensure next z is float32
+    return z_list
 
 
+if __name__ == "__main__":
+    h = (t1 - t0) / (N -1)
 
-device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-t0, t1 = 0.0, 2.0
-dim = 2
-steps_list = [32, 64, 128, 256, 512, 1024]
-method_list = ['euler']
+    init_A = torch.randn((dim, dim), dtype=torch.float32, device=device)*0.01
+    func1 = ODEFunc(dim, init_A=init_A).to(device)
+    func2 = ODEFunc(dim, init_A=init_A).to(device)
 
-results = []  
-error_data = {}
-for meth in method_list:
-    error_data[meth] = {
-        'steps': [],
-        'odeint': {'sol': [], 'grad_z0': [], 'grad_theta': []},
-        # 'mpodeint': {'sol': [], 'grad_z0': [], 'grad_theta': []}
-    }
 
-for meth in method_list:
-    print("Processing method:", meth)
-    for N in steps_list:
+    sol_full, odeint_grad_z0, odeint_grad_theta = run_autocast_odeint(
+        func1, N, device, t0, t1, dim, prec
+    )
 
-        baseline_sol, baseline_grad_z0, baseline_grad_theta = run_baseline(meth, N, device, t0, t1, dim)
-        ac_sol, ac_grad_z0, ac_grad_theta = run_autocast_odeint(meth, N, device, t0, t1, dim, prec)
-        manual_sol, manual_grad_z0, manual_grad_theta = pseudo_autocast(N, device, t0, t1, dim)
-        print("ODEINT solution:", ac_sol, "gradient z0:", ac_grad_z0, "theta:", ac_grad_theta)
-        print("Manual solution:", manual_sol, " z0:", manual_grad_z0, "Manual gradient  theta:", manual_grad_theta)
+
+    z0_manual = torch.ones((dim, 1), dtype=torch.float32, device=device)
+    z_list_manual = euler_forward(z0_manual, func2, t0, t1, N, h)
+    options=False
+    manual_grad_z0, manual_grad_theta = manual_pseudoac(z_list_manual, func2, t0, t1, h, N, cast_matmul_inputs=options)
+
+
+    final_odeint = sol_full[-1]       # float32
+    final_manual = z_list_manual[-1]  # float32
+    diff_final = torch.abs(final_odeint - final_manual).max().item()
+
+    gradz0_diff = torch.abs(odeint_grad_z0 - manual_grad_z0).max().item()
+    gradtheta_diff = torch.abs(odeint_grad_theta - manual_grad_theta).max().item()
+
+    print(f"Max abs‐difference in final z:        {diff_final:.6f}")      
+    print(f"Max abs‐difference in dL/dz0:          {gradz0_diff:.6f}")      
+    print(f"Max abs‐difference in dL/dtheta:           {gradtheta_diff:.6f}")  
+
