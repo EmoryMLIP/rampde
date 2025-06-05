@@ -131,7 +131,7 @@ class FixedGridODESolver(torch.autograd.Function):
                         break
                 
                 if attempts >= scaler.max_attempts:
-                    raise RuntimeError(f"Reached maximum number of attempts in backward pass at time step i={i}")
+                    raise RuntimeError(f"Reached maximum number of {scaler.max_attempts} attempts in backward pass at time step i={i}")
 
                 a = a + (dti/scaler.S) * da.to(dtype_hi) + at[i].to(dtype_hi)
                 grad_theta = [g + (dti/scaler.S) * d.to(g.dtype) for g, d in zip(grad_theta, dparams)]

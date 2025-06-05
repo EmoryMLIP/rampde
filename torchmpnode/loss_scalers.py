@@ -48,7 +48,7 @@ class NoScaler:
 
 class DynamicScaler(NoScaler):
     def __init__(self, dtype_low, target_factor=None, increase_factor=2.0, decrease_factor=0.5,
-                  max_attempts=10, delta=0):
+                  max_attempts=50, delta=0):
         super().__init__(dtype_low)
         # Set a target norm if not provided: 1/epsilon for low precision.
         self.eps = torch.finfo(dtype_low).eps
