@@ -21,6 +21,7 @@ class RK4(torch.nn.Module):
         k2 = func(t + half_dt, y + k1*half_dt)
         k3 = func(t + half_dt, y + k2*half_dt)
         k4 = func(t + dt, y + k3*dt)
+        # with autocast(device_type='cuda', enabled=False):
         return (k1 + 2*(k2 + k3) + k4)*_one_sixth
 
 
@@ -45,6 +46,12 @@ class FixedGridODESolver(torch.autograd.Function):
 
         with torch.no_grad():
             dtype_low = torch.get_autocast_dtype('cuda') if torch.is_autocast_enabled() else torch.float32
+            
+            
+            # ###
+            # y0  = y0.to(torch.float32)
+            # ###
+
             dtype_hi = y0.dtype
             N = t.shape[0]
             y = y0
@@ -72,6 +79,8 @@ class FixedGridODESolver(torch.autograd.Function):
     @staticmethod
     @custom_bwd(device_type='cuda')
     def backward(ctx, at):
+
+
         yt, *params = ctx.saved_tensors
         step = ctx.step
         func = ctx.func
@@ -102,6 +111,7 @@ class FixedGridODESolver(torch.autograd.Function):
         Mmax = 1.0 / torch.finfo(torch.float16).eps
         Mmin = torch.finfo(torch.float16).eps
         counter = 0
+        pred = 0
 
         y_buffer = torch.zeros_like(yt[0])
 
@@ -125,17 +135,15 @@ class FixedGridODESolver(torch.autograd.Function):
                 attempts = 0
                 while attempts < scaler.max_attempts:
 
-                    if strategy == "predictive":
+                    if attempts == 0 and strategy == "predictive":
                         counter += 1
 
                         # Only perform the check every k_period steps
                         if counter % k_period == 0:
-                            # Generate a random unit vector v in the tangent space of y
+                            # Generate a random unit vector v
                             v = torch.randn_like(y)
                             v = v / v.norm(p=2).clamp(min=Mmin)
 
-                            # Compute Jv = ∂(dy)/∂y @ v
-                            # We already have dy as a function of y, so backpropagate from dy w.r.t. y
                             Jv = torch.autograd.grad(dy, y, v, retain_graph=True, allow_unused=True)[0]
                             # Estimate Lipschitz constant L_j ≈ ||Jv||₂
                             Lj = Jv.norm(p=2)
@@ -144,24 +152,16 @@ class FixedGridODESolver(torch.autograd.Function):
                             pred = a.norm() * ((1 + Lj * dti) ** (k_period - 1))
 
                             if pred > Mmax:
-                                # Overflow predicted: down‐scale
                                 scaler.update_on_overflow()
-                                # Since S decreased, rescale existing parameter gradients
-                                # grad_theta = [g * scaler.decrease_factor for g in grad_theta]
-                                # if grad_t is not None:
-                                #     grad_t *= scaler.decrease_factor
+                                # attempts += 1
 
                             elif pred < Mmin:
-                                # Underflow predicted: up‐scale
                                 scaler.update_on_small_grad()
-                            #     grad_theta = [g * scaler.increase_factor for g in grad_theta]
-                            #     if grad_t is not None:
-                            #         grad_t *= scaler.increase_factor
-                    # else:
-                        # For the default strategy, we only check for overflow/underflow
-                    if scaler._is_any_infinite((scaler.S * a)):
+                            #     print(f"Scaling down at step {i}, new scale: {scaler.S}")
+                                # attempts += 1
+ 
+                    if scaler._is_any_infinite((scaler.S*a)):
                         scaler.update_on_overflow()
-                        attempts += 1
                         continue
 
                     if t.requires_grad:
@@ -171,9 +171,9 @@ class FixedGridODESolver(torch.autograd.Function):
                         )
                         da, gti, gdti, *dparams = grads
                         gti = gti.to(dtype_hi) if gti is not None else torch.zeros_like(ti)
-                        gdti = gdti.to(dtype_hi) if gdti is not None else torch.zeros_like(dti_local.clone())
+                        gdti = gdti.to(dtype_hi) if gdti is not None else torch.zeros_like(dti)
                         gdti2 = torch.sum(scaler.S * a * dy, dim=-1)
-                    else:
+                    else: 
                         grads = torch.autograd.grad(
                             dy, (y, *params), scaler.S * a,
                             create_graph=True, allow_unused=True
@@ -181,27 +181,29 @@ class FixedGridODESolver(torch.autograd.Function):
                         da, *dparams = grads
                         gti = gdti = gdti2 = None
 
+
                     dparams = [d if d is not None else torch.zeros_like(p) for d, p in zip(dparams, params)]
+
 
                     if scaler._is_any_infinite((da, gti, gdti, dparams)):
                         scaler.update_on_overflow()
-                        attempts += 1
+                        attempts+=1
                         continue
                     else:
                         break
 
                 if attempts >= scaler.max_attempts:
-                    raise RuntimeError(f"Reached maximum number of attempts in backward pass at time step i={i}")
+                    raise RuntimeError(f"Reached maximum number of {scaler.max_attempts} attempts in backward pass at time step i={i}")
 
                 a = a + (dti/scaler.S) * da.to(dtype_hi) + at[i].to(dtype_hi)
                 grad_theta = [g + (dti/scaler.S) * d.to(g.dtype) for g, d in zip(grad_theta, dparams)]
-
                 if grad_t is not None:
                     grad_t[i] = grad_t[i] + (dti/scaler.S) * (gti - gdti) - (gdti2.to(dtype_hi))/scaler.S
                     grad_t[i + 1] = grad_t[i + 1] + (dti/scaler.S) * gdti + gdti2.to(dtype_hi)/scaler.S
 
                 if scaler._is_any_infinite((a, grad_t, grad_theta)):
                     raise RuntimeError(f"Gradients are not representable at time step i={i}. ")
+
 
                 # Adjust upward scaling if the norm is too small
                 if attempts == 0 and scaler.check_for_increase(a):
