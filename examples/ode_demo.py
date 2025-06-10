@@ -1,4 +1,3 @@
-
 import os
 import sys
 import argparse
@@ -18,7 +17,7 @@ from torchmpnode import odeint as odeint_mp
 from utils import RunningAverageMeter, RunningMaximumMeter
 
 parser = argparse.ArgumentParser('ODE demo')
-parser.add_argument('--data_size',     type=int, default=30000)
+parser.add_argument('--data_size',     type=int, default=10000)
 parser.add_argument('--batch_time',    type=int, default=100)
 parser.add_argument('--batch_size',    type=int, default=20)
 parser.add_argument('--niters',        type=int, default=1000)
@@ -29,37 +28,48 @@ parser.add_argument('--adjoint',       action='store_true')
 parser.add_argument('--method',        type=str, choices=['rk4','dopri5','euler'], default='rk4')
 parser.add_argument('--precision',     type=str, choices=['float32','float16','bfloat16'], default='float16')
 parser.add_argument('--odeint',        type=str, choices=['torchdiffeq','torchmpnode'], default='torchmpnode')
-parser.add_argument('--results_dir',   type=str, default='ode_ktest_0at_nosq')
+parser.add_argument('--results_dir',   type=str, default='ode_demo')
 parser.add_argument('--hidden_dim',    type=int, default=128)
 parser.add_argument('--lr',            type=float, default=1e-4)
 args = parser.parse_args()
-
 
 torch.manual_seed(0)
 np.random.seed(0)
 precision_map = {'float32': torch.float32, 'float16': torch.float16, 'bfloat16': torch.bfloat16}
 args.precision = precision_map[args.precision]
 device = torch.device(f'cuda:{args.gpu}' if torch.cuda.is_available() else 'cpu')
+torch.backends.cuda.matmul.allow_tf32 = False  # toggle TF32 off so fp16 autocast goes to Tensor Cores
+torch.backends.cudnn.allow_tf32       = False
 
-# --- True dynamics setup ---
-true_y0 = torch.tensor([[2., 0.]], device=device)  # [1,2]
-# time grid
-t = torch.linspace(0., 30., args.data_size, device=device)
-true_A  = torch.tensor([[-0.1, 6.0], [-2.0, -0.1]], device=device)
+# pad state dimension to multiple of 8 for Tensor Cores
+orig_dim      = 2
+pad_dim       = ((orig_dim + 7)//8)*8  # =8
+# initial state
+true_y0_small = torch.tensor([[2.,0.]], device=device)
+true_y0       = torch.cat([
+    true_y0_small,
+    torch.zeros(1, pad_dim - orig_dim, device=device)
+], dim=1)  # shape [1,8]
+# dynamics matrix
+true_A_small  = torch.tensor([[-0.1,6.0],[-2.0,-0.1]], device=device)
+true_A        = torch.zeros(pad_dim, pad_dim, device=device)
+true_A[:orig_dim,:orig_dim] = true_A_small
 
-# ground-truth trajectory via high-precision solver
+# time grid and reference trajectory
+t = torch.linspace(0., 1., args.data_size, device=device)
 with torch.no_grad():
-    true_y = odeint_diffeq(lambda tt, yy: (yy**3) @ true_A, true_y0, t, method='dopri5')
-# extract reference trajectory [T,2]
-y_ref = true_y
+    true_y = odeint_diffeq(
+        lambda tt, yy: (yy**3) @ true_A,
+        true_y0, t, method='dopri5'
+    )  # shape [T,1,8]
+y_ref = true_y  # [T,8]
 
-# --- Data batch sampling ---
 def get_batch():
     idx = np.random.choice(np.arange(args.data_size - args.batch_time),
                            args.batch_size, replace=False)
     y0 = true_y[idx]  # [batch,1,2]
     bt = t[:args.batch_time]
-    y  = torch.stack([true_y[idx + i] for i in range(args.batch_time)], dim=0)
+    y  = torch.stack([true_y[idx + i] for i in range(args.batch_time)], dim=0) 
     # y: [T_batch, batch, 2]
     return y0.to(device), bt.to(device), y.to(device)
 
@@ -103,19 +113,19 @@ def visualize_compare(true_y, func_d, func_m, odeint_option, itr):
         plt.savefig(os.path.join(out_dir, f'compare_{itr:03d}.png'))
         plt.draw(); plt.pause(0.001)
 
+
 class ODEFunc(nn.Module):
     def __init__(self):
         super().__init__()
         self.net = nn.Sequential(
-            nn.Linear(2, args.hidden_dim),
+            nn.Linear(pad_dim, args.hidden_dim),
             nn.Tanh(),
-            nn.Linear(args.hidden_dim, 2),
+            nn.Linear(args.hidden_dim, pad_dim),
         )
         for m in self.net.modules():
             if isinstance(m, nn.Linear):
                 nn.init.normal_(m.weight, mean=0, std=0.1)
                 nn.init.constant_(m.bias, 0)
-
     def forward(self, t, y):
         return self.net(y**3)
 
@@ -138,7 +148,6 @@ def generate_and_save_taylor(func, y0, t_span, y_ref_seq, method,
     h_vals = [0.92**i for i in range(50)]
     for prec_str, dtype in precisions.items():
         for solver_name, solver_fn in solvers.items():
-            # use the trained func directly
             def loss_fn(x):
                 with autocast(device_type='cuda', dtype=dtype):
                     sol = solver_fn(func, x, t_span, method=method)
@@ -152,19 +161,15 @@ def generate_and_save_taylor(func, y0, t_span, y_ref_seq, method,
                 y0.clone().detach().requires_grad_(True),
                 v, loss_fn, grad_fn, h_vals
             )
-            # save CSV and plot
             csv_path = os.path.join(output_dir, f"taylor_{solver_name}_{prec_str}.csv")
             with open(csv_path, 'w', newline='') as cf:
                 writer = csv.writer(cf)
                 writer.writerow(['h','error0','error1'])
-                for h,e0,e1 in zip(h_vals, err0, err1): writer.writerow([h,e0,e1])
-
-
-            # Ensure all are CPU numpy arrays or Python lists
+                for h,e0,e1 in zip(h_vals, err0, err1):
+                    writer.writerow([h,e0,e1])
             h_vals_plot = [float(h.cpu()) if torch.is_tensor(h) else float(h) for h in h_vals]
             err0_plot = [float(e.cpu()) if torch.is_tensor(e) else float(e) for e in err0]
             err1_plot = [float(e.cpu()) if torch.is_tensor(e) else float(e) for e in err1]
-
             plt.figure()
             plt.loglog(h_vals_plot, err0_plot, '-', label='E0 (O(r))')
             plt.loglog(h_vals_plot, err1_plot, '--', label='E1 (O(r^2))')
@@ -175,7 +180,6 @@ def generate_and_save_taylor(func, y0, t_span, y_ref_seq, method,
             plt.tight_layout()
             plt.savefig(os.path.join(output_dir, f"taylor_{solver_name}_{prec_str}.png"))
             plt.close()
-
 
 if __name__ == '__main__':
     torch.manual_seed(0)
@@ -195,7 +199,7 @@ if __name__ == '__main__':
         csv_path = os.path.join(results_dir_exp, 'metrics.csv')
         with open(csv_path, 'w', newline='') as csv_file:
             writer = csv.writer(csv_file)
-            writer.writerow(['iter','train_loss','val_loss','time_s','mem_MB'])
+            writer.writerow(['iter','train_loss','val_loss','time_s','mem_MB','forward_kernel_ms','backward_kernel_ms'])
             time_meter = RunningAverageMeter(0.97)
             mem_meter  = RunningMaximumMeter()
             loss_meter = RunningAverageMeter(0.97)
@@ -205,9 +209,21 @@ if __name__ == '__main__':
                 y0_batch, bt, y_true = get_batch()
                 torch.cuda.reset_peak_memory_stats(device)
                 with autocast(device_type='cuda', dtype=args.precision):
+                    start_fwd = torch.cuda.Event(enable_timing=True)
+                    end_fwd   = torch.cuda.Event(enable_timing=True)
+                    start_fwd.record()
                     pred = odeint_fn(func, y0_batch, bt, method=args.method)
+                    end_fwd.record()
+                    torch.cuda.synchronize()
+                    fwd_ms = start_fwd.elapsed_time(end_fwd)
                     loss = torch.mean((pred - y_true) ** 2)
+                    start_bwd = torch.cuda.Event(enable_timing=True)
+                    end_bwd   = torch.cuda.Event(enable_timing=True)
+                    start_bwd.record()
                     loss.backward()
+                    end_bwd.record()
+                    torch.cuda.synchronize()
+                    bwd_ms = start_bwd.elapsed_time(end_bwd)
                 optimizer.step()
                 now = time.time()
                 time_meter.update(now - last_time)
@@ -220,9 +236,8 @@ if __name__ == '__main__':
                     with torch.no_grad():
                         val_pred = odeint_fn(func, y0_val, bt_val, method=args.method)
                         val_loss = float(torch.mean((val_pred - y_val) ** 2))
-                    writer.writerow([itr, loss_meter.avg, val_loss, time_meter.avg, mem_meter.max])
-        final_path = os.path.join(results_dir_exp,
-                                  f'{odeint_option}_final.pth')
+                    writer.writerow([itr, loss_meter.avg, val_loss, time_meter.avg, mem_meter.max, fwd_ms, bwd_ms])
+        final_path = os.path.join(results_dir_exp, f'{odeint_option}_final.pth')
         torch.save({
             'func_state_dict': func.state_dict(),
             'optimizer_state_dict': optimizer.state_dict(),
@@ -231,11 +246,9 @@ if __name__ == '__main__':
 
         with open(csv_path, "r") as f:
             reader = csv.reader(f)
-            next(reader)                      # skip header
-            rows = list(reader)   
-            # rows = [row[1:] for row in reader]  # drop the odeint_option string column
+            next(reader)
+            rows = list(reader)
         data = np.array(rows, dtype=np.float32)
-
         iters      = data[:, 0]
         train_loss = data[:, 1]
         val_loss   = data[:, 2]
@@ -268,7 +281,6 @@ if __name__ == '__main__':
         if args.viz:
             visualize_compare(true_y, func_d, func_m, odeint_option, itr)
 
-
     # After training both solvers, run Taylor analysis on the trained models
     precisions = {'float32': torch.float32, 'float16': torch.float16, 'bfloat16': torch.bfloat16}
     for odeint_option, func, solver_name, solver_fn in [
@@ -282,4 +294,3 @@ if __name__ == '__main__':
             args.method, precisions, solvers,
             os.path.join(exp_dir, 'taylor')
         )
-
