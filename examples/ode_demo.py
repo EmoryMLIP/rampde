@@ -38,22 +38,27 @@ np.random.seed(0)
 precision_map = {'float32': torch.float32, 'float16': torch.float16, 'bfloat16': torch.bfloat16}
 args.precision = precision_map[args.precision]
 device = torch.device(f'cuda:{args.gpu}' if torch.cuda.is_available() else 'cpu')
-torch.backends.cuda.matmul.allow_tf32 = False  # toggle TF32 off so fp16 autocast goes to Tensor Cores
-torch.backends.cudnn.allow_tf32       = False
 
-# pad state dimension to multiple of 8 for Tensor Cores
-orig_dim      = 2
-pad_dim       = ((orig_dim + 7)//8)*8  # =8
-# initial state
-true_y0_small = torch.tensor([[2.,0.]], device=device)
-true_y0       = torch.cat([
-    true_y0_small,
-    torch.zeros(1, pad_dim - orig_dim, device=device)
-], dim=1)  # shape [1,8]
-# dynamics matrix
-true_A_small  = torch.tensor([[-0.1,6.0],[-2.0,-0.1]], device=device)
-true_A        = torch.zeros(pad_dim, pad_dim, device=device)
-true_A[:orig_dim,:orig_dim] = true_A_small
+# # pad state dimension to multiple of 8 for Tensor Cores
+# orig_dim      = 2
+# pad_dim       = ((orig_dim + 7)//8)*8  # =8
+# # initial state
+# true_y0_small = torch.tensor([[2.,0.]], device=device)
+# true_y0       = torch.cat([
+#     true_y0_small,
+#     torch.zeros(1, pad_dim - orig_dim, device=device)
+# ], dim=1)  # shape [1,8]
+# # dynamics matrix
+# true_A_small  = torch.tensor([[-0.1,6.0],[-2.0,-0.1]], device=device)
+# true_A        = torch.zeros(pad_dim, pad_dim, device=device)
+# true_A[:orig_dim,:orig_dim] = true_A_small
+
+dim = 2
+true_y0 = torch.tensor([[2., 0.]], device=device)  # [1,2]
+# time grid
+t = torch.linspace(0., 30., args.data_size, device=device)
+true_A  = torch.tensor([[-0.1, 6.0], [-2.0, -0.1]], device=device)
+
 
 # time grid and reference trajectory
 t = torch.linspace(0., 1., args.data_size, device=device)
@@ -118,9 +123,9 @@ class ODEFunc(nn.Module):
     def __init__(self):
         super().__init__()
         self.net = nn.Sequential(
-            nn.Linear(pad_dim, args.hidden_dim),
+            nn.Linear(dim, args.hidden_dim),
             nn.Tanh(),
-            nn.Linear(args.hidden_dim, pad_dim),
+            nn.Linear(args.hidden_dim, dim),
         )
         for m in self.net.modules():
             if isinstance(m, nn.Linear):
