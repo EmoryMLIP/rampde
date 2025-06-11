@@ -24,8 +24,6 @@ sys.path.insert(0, os.path.join(base_dir, "examples"))
 from utils import RunningAverageMeter, RunningMaximumMeter
 
 
-
-
 parser = argparse.ArgumentParser('ODE demo')
 parser.add_argument('--data_size',     type=int, default=20000)
 parser.add_argument('--batch_time',    type=int, default=100)
@@ -37,9 +35,9 @@ parser.add_argument('--gpu',           type=int, default=0)
 parser.add_argument('--adjoint',       action='store_true')
 parser.add_argument('--method',        type=str, choices=['rk4','dopri5','euler'], default='rk4')
 parser.add_argument('--precision',     type=str, choices=['float32','float16','bfloat16'], default='float16')
-parser.add_argument('--odeint',        type=str, choices=['torchdiffeq','torchmpnode'], default='torchmpnode')
+parser.add_argument('--odeint',        type=str, choices=['torchdiffeq','torchmpnode'], default='torchdiffeq')
 parser.add_argument('--results_dir',   type=str, default='./results/png_rmsproptest')
-parser.add_argument('--scaler',        type=str, choices=['noscaler','dynamicscaler'], default='noscaler')
+parser.add_argument('--scaler',        type=str, choices=['noscaler','dynamicscaler'], default='dynamicscaler')
 parser.add_argument('--hidden_dim',    type=int, default=128)
 parser.add_argument('--lr',            type=float, default=1e-4)
 parser.add_argument('--seed',         type=int, default=0)
@@ -231,13 +229,15 @@ else:
     #     else:
     #         from torchdiffeq import odeint
 
+
+
     csv_path = os.path.join(result_dir, f"{folder_name}metrics.csv")
     if not os.path.exists(csv_path):
         print(f"[INFO] Logging metrics to {csv_path}")
         csv_file = open(csv_path, 'w', newline='')
         csv_writer = csv.writer(csv_file)
         csv_writer.writerow([
-            'iter', 'train_loss', 'val_loss', 'val_vf_err', 'time_avg_s', 'mem_peak_MB'
+            'iter', 'train_loss', 'val_loss', 'val_vf_err', 'time_avg_s', 'mem_peak_MB', 'fwd_ms', 'bwd_ms'
         ])
     else:
         print(f"[INFO] Metrics file {csv_path} already exists. Appending to it.")
@@ -263,12 +263,35 @@ else:
                 }
                 scaler = scaler_map[args.scaler]
                 solver_kwargs = {'loss_scaler': scaler}
+
+                start_fwd = torch.cuda.Event(enable_timing=True)
+                end_fwd   = torch.cuda.Event(enable_timing=True)
+                start_fwd.record()
                 pred = torchmpnode.odeint(func, y0, bt, method=args.method, **solver_kwargs)
                 
             else:
+
+                start_fwd = torch.cuda.Event(enable_timing=True)
+                end_fwd   = torch.cuda.Event(enable_timing=True)
+                start_fwd.record()
                 pred = torchdiffeq.odeint(func, y0, bt, method=args.method)
+
+            end_fwd.record()
+            torch.cuda.synchronize()
+            fwd_ms = start_fwd.elapsed_time(end_fwd)
+
             loss = torch.mean(torch.abs(pred - y))
+
+            start_bwd = torch.cuda.Event(enable_timing=True)
+            end_bwd   = torch.cuda.Event(enable_timing=True)
+            start_bwd.record()
+            
             loss.backward()
+
+            end_bwd.record()
+            torch.cuda.synchronize()
+            bwd_ms = start_bwd.elapsed_time(end_bwd)
+            
         optimizer.step()
 
         now = time.time()
@@ -316,7 +339,7 @@ else:
                 val_loss,
                 vf_rel_error,
                 time_meter.avg,
-                mem_meter.max
+                mem_meter.max, fwd_ms, bwd_ms
             ])
             csv_file.flush()
 
@@ -341,6 +364,8 @@ else:
     vf_rel_err = data[:, 3]
     time_vals  = data[:, 4]
     mem_vals   = data[:, 5]
+    fwd_times  = data[:, 6]
+    bwd_times  = data[:, 7]
 
     fig = plt.figure(figsize=(8, 4), facecolor='white')  # Same as visualize_compare
     ax_loss = fig.add_subplot(121, frameon=False)
