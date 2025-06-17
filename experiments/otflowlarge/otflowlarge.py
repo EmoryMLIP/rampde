@@ -208,12 +208,21 @@ from utils import RunningAverageMeter, RunningMaximumMeter
 if args.odeint == 'torchmpnode':
     print("Using torchmpnode")
     from torchmpnode import odeint
+    from torchmpnode import NoScaler, DynamicScaler
+    scaler_map = {
+        'noscaler': NoScaler(dtype_low=args.precision),
+        'dynamicscaler': DynamicScaler(dtype_low=args.precision)
+    }
+    scaler = scaler_map[args.scaler]
+    solver_kwargs = {'loss_scaler': scaler}
 else:
     print("Using torchdiffeq")
     if args.adjoint:
         from torchdiffeq import odeint_adjoint as odeint
+        solver_kwargs = {}
     else:
         from torchdiffeq import odeint
+        solver_kwargs = {}
 from Phi import Phi
 
 class OTFlow(nn.Module):
