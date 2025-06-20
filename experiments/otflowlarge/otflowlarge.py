@@ -19,7 +19,6 @@ import datetime
 
 import sys
 
-
 from torch.nn.functional import pad
 # sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
 base_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), '../..'))
@@ -63,6 +62,9 @@ parser.add_argument('--drop_freq', type=int, default=0,
                     help="Drop LR every drop_freq iterations")
 parser.add_argument('--alpha', type=str, default='1.0,100.0,15.0',
                     help="alpha values for L, NLL, HJB respectively")
+parser.add_argument('--scaler', type=str, default='noscaler',
+                    choices=['noscaler', 'dynamicscaler'],
+                    help="Scaler to use for torchmpnode")
 
 args = parser.parse_args()
 args.alpha = [float(a) for a in args.alpha.split(',')]
@@ -167,7 +169,7 @@ if not os.path.exists(csv_path):
     print(f"Writing metrics to {csv_path}")
     csv_file = open(csv_path, "w", newline='')
     csv_writer = csv.writer(csv_file)
-    csv_writer.writerow(["iteration", "learning rate","running loss","val loss", "val loss (mp)","running L", "val L", "val L(mp)", "running NLL", "val NLL", "val NLL (mp)", "running HJB", "val HJB", "val HJB (mp)",  "time fwd","time bwd", "max memory (MB)","nfe fwd", "nfe bwd", "mmd"])
+    csv_writer.writerow(["iteration", "learning rate","running loss","val loss", "val loss (mp)","running L", "val L", "val L(mp)", "running NLL", "val NLL", "val NLL (mp)", "running HJB", "val HJB", "val HJB (mp)",  "time fwd","time bwd", "max memory (MB)","nfe fwd", "nfe bwd", "mmd", "fwd time (ms)", "bwd time (ms)"])
 
     csv_file.flush()
 else:
@@ -210,8 +212,8 @@ if args.odeint == 'torchmpnode':
     from torchmpnode import odeint
     from torchmpnode import NoScaler, DynamicScaler
     scaler_map = {
-        'noscaler': NoScaler(dtype_low=args.precision),
-        'dynamicscaler': DynamicScaler(dtype_low=args.precision)
+        'noscaler': NoScaler(dtype_low=func_dtype),
+        'dynamicscaler': DynamicScaler(dtype_low=func_dtype)
     }
     scaler = scaler_map[args.scaler]
     solver_kwargs = {'loss_scaler': scaler}
@@ -219,7 +221,6 @@ else:
     print("Using torchdiffeq")
     if args.adjoint:
         from torchdiffeq import odeint_adjoint as odeint
-        solver_kwargs = {}
     else:
         from torchdiffeq import odeint
         solver_kwargs = {}
@@ -337,24 +338,46 @@ if __name__ == '__main__':
                         # print('==============================training==============================')
                         start_time = time.perf_counter()
                         func.nfe = 0
+
+                        start_fwd = torch.cuda.Event(enable_timing=True)
+                        end_fwd   = torch.cuda.Event(enable_timing=True)
+                        start_fwd.record()
+
                         ts = torch.linspace(t0, t1, args.num_timesteps+1, device=device) 
                         z_t, logp_t, cL_t, cH_t = odeint(
                             func,
                             (z0, logp0, cL0, cH0),
                             ts,
-                            method=args.method
+                            method=args.method, **solver_kwargs
                         )
+
+                        end_fwd.record()
+                        torch.cuda.synchronize()
+                        fwd_ms = start_fwd.elapsed_time(end_fwd)  # Forward time in milliseconds
+
+
                         z1, logp1, cL1, cH1 = z_t[-1], logp_t[-1], cL_t[-1], cH_t[-1]
                         logp_x = p_z0.log_prob(z1).view(-1,1) + logp1
                         loss   = (-alpha[1]*logp_x.mean()
                                 + alpha[0]*cL1.mean()
                                 + alpha[2]*cH1.mean())
                         time_fwd.update(time.perf_counter() - start_time)
+
                         nfe_fwd += func.nfe
                         func.nfe = 0
 
                         start_time = time.perf_counter()
+
+                        start_bwd = torch.cuda.Event(enable_timing=True)
+                        end_bwd   = torch.cuda.Event(enable_timing=True)
+                        start_bwd.record()
+
                         loss.backward()
+                        end_bwd.record()
+                        torch.cuda.synchronize()
+                        bwd_ms = start_bwd.elapsed_time(end_bwd)  # Backward time in milliseconds
+
+
                         time_bwd.update(time.perf_counter() - start_time)
                         nfe_bwd += func.nfe
 
@@ -384,7 +407,7 @@ if __name__ == '__main__':
                                 func,
                                 (vz0, vpl0, vL0, vH0),
                                 torch.linspace(t0, t1, args.num_timesteps_val+1, device=device),
-                                method=args.method
+                                method=args.method, **solver_kwargs
                             )
                             vz1, vpl1, vL1, vH1 = vz_t[-1], vpl_t[-1], vL_t[-1], vH_t[-1]
                             logp_val = p_z0.log_prob(vz1).view(-1,1) + vpl1
@@ -402,7 +425,7 @@ if __name__ == '__main__':
                                     func,
                                     (vz0, logp_diff_val_mp_t0, cost_L_val_mp_t0, cost_HJB_val_mp_t0),
                                     torch.linspace(t0, t1, args.num_timesteps_val+1).to(device),
-                                    method=args.method
+                                    method=args.method, **solver_kwargs
                                 )
                                 z_val_mp_t1, logp_diff_val_mp_t1, cost_L_val_mp_t1, cost_HJB_val_mp_t1 = z_val_mp_t[-1], logp_diff_val_mp_t[-1], cost_L_val_mp_t[-1], cost_HJB_val_mp_t[-1]
                                 logp_x_val_mp = p_z0.log_prob(z_val_mp_t1).to(device) + logp_diff_val_mp_t1.view(-1)
@@ -417,7 +440,7 @@ if __name__ == '__main__':
                                 func,
                                 (y, logp0, cL0, cH0),
                                 t_grid_inv,
-                                method=args.method
+                                method=args.method, **solver_kwargs
                             )
                             z_inv1    = z_inv_t[-1]
                             modelGen  = z_inv1[:, :d].cpu().numpy()
@@ -431,9 +454,9 @@ if __name__ == '__main__':
                             'running NLL: {:.3e}, val NLL: {:.3e}, val NLL (mp): {:.3e}'.format(NLL_meter.avg,(-logp_val.mean()).item(), -logp_x_val_mp.mean(0).item()), 
                             'running HJB: {:.3e}, val HJB: {:.3e}, val HJB (mp): {:.3e}'.format(cost_HJB_meter.avg, vH1.mean().item(), cost_HJB_val_mp_t1.mean(0).item()), 
                             'time (fwd): {:.4f}s'.format(time_fwd.avg),'time (bwd): {:.4f}s'.format(time_bwd.avg), 'max memory: {:.0f}MB'.format(peak_m),
-                            'nfe (fwd) : {}, nfe (bwd): {}'.format(nfe_fwd, nfe_bwd), 'mmd: {:.5e}'.format(mmd_val))
+                            'nfe (fwd) : {}, nfe (bwd): {}'.format(nfe_fwd, nfe_bwd), 'mmd: {:.5e}'.format(mmd_val), 'fwd time: {:.3f}ms, bwd time: {:.3f}ms'.format(fwd_ms, bwd_ms))
 
-                        csv_writer.writerow([itr, optimizer.param_groups[0]['lr'], loss_meter.avg, loss_val.item(), loss_val_mp.item(), cost_L_meter.avg, vL1.mean().item(), cost_L_val_mp_t1.mean(0).item(), NLL_meter.avg, (-logp_val.mean()).item(), -logp_x_val_mp.mean(0).item(), cost_HJB_meter.avg, vH1.mean().item(), cost_HJB_val_mp_t1.mean(0).item(), time_fwd.avg, time_bwd.avg, peak_m,nfe_fwd,nfe_bwd, mmd_val])
+                        csv_writer.writerow([itr, optimizer.param_groups[0]['lr'], loss_meter.avg, loss_val.item(), loss_val_mp.item(), cost_L_meter.avg, vL1.mean().item(), cost_L_val_mp_t1.mean(0).item(), NLL_meter.avg, (-logp_val.mean()).item(), -logp_x_val_mp.mean(0).item(), cost_HJB_meter.avg, vH1.mean().item(), cost_HJB_val_mp_t1.mean(0).item(), time_fwd.avg, time_bwd.avg, peak_m,nfe_fwd,nfe_bwd, mmd_val, fwd_ms, bwd_ms])
 
                         csv_file.flush()
                         nfe_fwd = nfe_bwd = 0
@@ -598,7 +621,7 @@ if __name__ == '__main__':
                 func,
                 (vz0, vpl0, vL0, vH0),
                 t_grid,
-                method=args.method
+                method=args.method, **solver_kwargs
             )
         z_fwd = z_t[-1]
         modelFx = z_fwd[:, :d].cpu().numpy()
@@ -616,7 +639,7 @@ if __name__ == '__main__':
                 func,
                 (y, logp0, cL0, cH0),
                 t_grid_inv,
-                method=args.method
+                method=args.method, **solver_kwargs
             )
         z_inv = z_inv_t[-1]
         modelGen    = z_inv[:, :d].cpu().numpy()
@@ -654,7 +677,7 @@ if __name__ == '__main__':
                 z_t, _, _, _  = odeint(func,
                                        (x0, logp0, cL0, cH0),
                                        ts,
-                                       method=args.method)
+                                       method=args.method, **solver_kwargs)
                 fx     = z_t[-1][:, :d]
 
                 # inverse map 
@@ -662,7 +685,7 @@ if __name__ == '__main__':
                 z_inv_t, _, _, _ = odeint(func,
                                           (fx, logp0, cL0, cH0),
                                           ts_inv,
-                                          method=args.method)
+                                          method=args.method, **solver_kwargs)
                 finvfx = z_inv_t[-1][:, :d]
 
             sz = end - start
