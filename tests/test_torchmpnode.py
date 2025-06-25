@@ -17,14 +17,24 @@ For each ODE function:
 
 """
 
+
 import unittest
 import torch
 import torch.nn as nn
-from torchdiffeq import odeint as torch_odeint
 import os, sys, copy
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
 from torchmpnode import odeint as mpodeint
 
+# Try to import torchdiffeq, skip all tests if not available
+try:
+    from torchdiffeq import odeint as torch_odeint
+    _TORCHDIFFEQ_AVAILABLE = True
+except ImportError:
+    _TORCHDIFFEQ_AVAILABLE = False
+
+
+
+@unittest.skipUnless(_TORCHDIFFEQ_AVAILABLE, "torchdiffeq is not available")
 class TestODEintEquivalence(unittest.TestCase):
 
     def setUp(self):
@@ -88,24 +98,21 @@ class TestODEintEquivalence(unittest.TestCase):
         loss(my_solution).backward()
         my_grad_params = [p.grad for p in f2.parameters() if p.requires_grad]
 
-        # print grads in torch
-        print("Torchdiffeq grads:")
-        for name, param in f1.named_parameters():
-            print("Parameter name: ", name, "grad: ",torch.norm(param.grad))        
-            
-        # print grads in mpodeint
-        print("mpodeint grads:")
-        for name, param in f2.named_parameters():
-            print("Parameter name: ", name, "grad: ",torch.norm(param.grad))        
-
-        # For debugging, print errors.
-        print("Torchdiffeq final state:", torch_solution[-1])
-        print("mpodeint final state:", my_solution[-1])
-        print("Solution absolute error:", torch.norm(torch_solution - my_solution).item())
-        print("Solution relative error:", torch.norm((torch_solution - my_solution) / torch.norm(torch_solution)).item())
-        for g1, g2 in zip(grad_params, my_grad_params):
-            print("Gradient absolute error:", torch.norm(g1 - g2).item())
-            print("Gradient relative error:", torch.norm((g1 - g2) / torch.norm(g1)).item())
+        quiet = os.environ.get("TORCHMPNODE_TEST_QUIET", "0") == "1"
+        if not quiet:
+            print("Torchdiffeq grads:")
+            for name, param in f1.named_parameters():
+                print("Parameter name: ", name, "grad: ",torch.norm(param.grad))        
+            print("mpodeint grads:")
+            for name, param in f2.named_parameters():
+                print("Parameter name: ", name, "grad: ",torch.norm(param.grad))        
+            print("Torchdiffeq final state:", torch_solution[-1])
+            print("mpodeint final state:", my_solution[-1])
+            print("Solution absolute error:", torch.norm(torch_solution - my_solution).item())
+            print("Solution relative error:", torch.norm((torch_solution - my_solution) / torch.norm(torch_solution)).item())
+            for g1, g2 in zip(grad_params, my_grad_params):
+                print("Gradient absolute error:", torch.norm(g1 - g2).item())
+                print("Gradient relative error:", torch.norm((g1 - g2) / torch.norm(g1)).item())
 
         # Compare the final solutions.
         self.assertTrue(torch.allclose(my_solution, torch_solution, rtol=1e-5, atol=1e-5),

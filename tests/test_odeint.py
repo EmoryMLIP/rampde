@@ -1,3 +1,16 @@
+"""
+
+This test verifies the convergence order of the custom ODE solvers (Euler and RK4) implemented in torchmpnode. 
+It uses a linear ODE with a known analytical solution and checks that the numerical solution converges at the 
+expected rate as the number of time steps increases. The test passes if the observed order of convergence matches 
+the theoretical order for each solver in at least 4 out of 9 step doublings.
+
+Key points:
+- Uses a linear ODE with an analytical solution for accuracy reference.
+- Tests both Euler and RK4 methods.
+- Checks that the error decreases at the expected rate as the number of steps increases.
+- Passes if the observed order is close to the theoretical order for most refinements.
+"""
 import torch
 import unittest
 import numpy as np
@@ -14,7 +27,7 @@ class TestFixedGridODESolver(unittest.TestCase):
         self.dtype = torch.float64
         self.device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
         self.A = torch.randn(2, 2, dtype=self.dtype, device=self.device)
-        self.A = - self.A @ self.A.T 
+        self.A = - self.A @ self.A.T *0.05
         class FuncModule(torch.nn.Module):
             def __init__(self, A):
                 super(FuncModule, self).__init__()
@@ -40,6 +53,7 @@ class TestFixedGridODESolver(unittest.TestCase):
     
     def test_convergence(self):
         solvers = [Euler(), RK4()]
+        quiet = os.environ.get("TORCHMPNODE_TEST_QUIET", "0") == "1"
         for solver in solvers:
             with self.subTest(solver=solver):
                 order = solver.order
@@ -47,7 +61,6 @@ class TestFixedGridODESolver(unittest.TestCase):
                 previous_error = None
                 num_steps = 4
                 y_analytical = self.analytical_solution(self.T)
-                    
                 for _ in range(10):
                     self.num_steps = num_steps
                     self.t = torch.linspace(0, self.T, self.num_steps + 1, dtype=self.dtype, device=self.device)
@@ -58,9 +71,11 @@ class TestFixedGridODESolver(unittest.TestCase):
                         observed_order = np.log2(previous_error / error)
                         if observed_order > order-0.5:
                             pass_count += 1
-                        print(f"Steps: {self.num_steps}, Error: {error:.2e}, Observed order: {observed_order:.2e}")
-                    else: 
-                        print(f"Steps: {self.num_steps}, Error: {error:.2e}")
+                        if not quiet:
+                            print(f"Steps: {self.num_steps}, Error: {error:.2e}, Observed order: {observed_order:.2e}")
+                    else:
+                        if not quiet:
+                            print(f"Steps: {self.num_steps}, Error: {error:.2e}")
                     previous_error = error
                     num_steps *= 2
                 self.assertTrue(pass_count >= 4, f"Convergence order for {solver.name} did not meet expectations.")

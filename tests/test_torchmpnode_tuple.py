@@ -64,19 +64,20 @@ class TestODEintEquivalence(unittest.TestCase):
         torch_solution = torch.cat([sol.reshape(-1) for sol in torch_solution])
         my_solution = torch.cat([sol.reshape(-1) for sol in my_solution])
         
-        # print last 20 elements in torhc_solution and my_soluton
-        print(f"torch_solution: {torch_solution[-30:]}")
-        print(f"my_solution: {my_solution[-30:]}")
-        # print absolute and relative norm of solutions
-        print(f"Absolute norm of solution difference: {torch.norm((torch_solution - my_solution)).item()}")
-        print(f"Relative norm of solution difference: {torch.norm((torch_solution - my_solution)/torch.norm(torch_solution)).item()}")
+        quiet = os.environ.get("TORCHMPNODE_TEST_QUIET", "0") == "1"
+        if not quiet:
+            print(f"torch_solution: {torch_solution[-30:]}")
+            print(f"my_solution: {my_solution[-30:]}")
+            print(f"Absolute norm of solution difference: {torch.norm((torch_solution - my_solution)).item()}")
+            print(f"Relative norm of solution difference: {torch.norm((torch_solution - my_solution)/torch.norm(torch_solution)).item()}")
 
         # Compare
         self.assertTrue(torch.allclose(my_solution, torch_solution, rtol=1e-4, atol=1e6),
                         "The solutions from torchmpnode and torchdiffeq differ more than expected.")
                 
-        print(torch.norm((grad - my_grad)).item())
-        print(torch.norm((grad - my_grad)/torch.norm(grad)).item())
+        if not quiet:
+            print(torch.norm((grad - my_grad)).item())
+            print(torch.norm((grad - my_grad)/torch.norm(grad)).item())
         self.assertTrue(torch.allclose(grad, my_grad, rtol=1e-5, atol=1e-5),
                         "The gradients from torchmpnode and torchdiffeq differ more than expected.")
         

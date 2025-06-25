@@ -3,6 +3,7 @@ job_id = os.environ.get("SLURM_JOB_ID", "")
 import argparse
 import logging
 import time
+import json
 import numpy as np
 import torch
 import torch.nn as nn
@@ -30,6 +31,7 @@ parser = argparse.ArgumentParser()
 parser.add_argument('--tol', type=float, default=1e-3)
 parser.add_argument('--nepochs', type=int, default=160)
 parser.add_argument('--lr', type=float, default=0.1)
+parser.add_argument('--momentum', type=float, default=0.9)
 parser.add_argument('--batch_size', type=int, default=128)
 parser.add_argument('--test_batch_size', type=int, default=100)
 parser.add_argument('--weight_decay', type=float, default=1e-4)
@@ -42,8 +44,10 @@ parser.add_argument('--results_dir', type=str, default='./results')
 parser.add_argument('--seed', type=int, default=0)
 parser.add_argument('--debug', action='store_true')
 parser.add_argument('--gpu', type=int, default=0)
-parser.add_argument('--test_freq', type=int, default=150,
+parser.add_argument('--test_freq', type=int, default=1,
                     help='evaluate / log every N training steps')
+parser.add_argument('--width', type=int, default=64,
+                    help='Base channel width (default: 64)')
 args = parser.parse_args()
 
 
@@ -116,98 +120,56 @@ print("Results will be saved in:", result_dir)
 print("SLURM job id",job_id )
 print("Model checkpoint path:", ckpt_path)
 
-
-# class ODEFunc(nn.Module):
-#     def __init__(self, ch, t_grid, act=nn.ReLU(inplace=True)):
-#         super().__init__()
-#         self.As = nn.ModuleList([nn.Conv2d(ch, ch, 3, padding=1, bias=True) for _ in range(9)])
-#         for k in range(9):
-#             self.As[k].weight.data *=0.1
-#             self.As[k].bias.data *=0.0
-#         self.norms = nn.ModuleList([nn.InstanceNorm2d(ch, affine=True) for _ in range(9)])
-#         t_grid = torch.linspace(t_grid[0], t_grid[-1], 9)
-#         self.lookup= {
-#             round(t_grid[i].item(), 6): i
-#             for i in range(len(t_grid))
-#         }
-#         self.act = act
-
-#     def forward(self, t, y):
-#         idx = self.lookup[round(t.item(), 6)]
-#         A = self.As[idx]
-#         norm = self.norms[idx]
-
-#         y = A(y)        
-#         y = self.act(y)
-#         y = norm(y)
-#         y = F.conv_transpose2d(
-#                     y,
-#                     A.weight.permute(1,0,2,3),  # transpose in/out channels
-#                     bias=None,
-#                     stride=A.stride,
-#                     padding=A.padding)
-
-#         # y = self.B(y)
-#         return -y
 class ODEFunc(nn.Module):
-    """Time-dependent conv using a single descriptor.
-
-    * One Conv2d (`self.A`) is created.
-    * A learnable weight bank (9×C×C×3×3) and bias bank (9×C) are stored.
-    * At each call we copy the slice for the current time step into `self.A.weight`
-      and `self.A.bias`, then apply the convolution.
-    """
     def __init__(self, ch, t_grid, act=nn.ReLU(inplace=True)):
         super().__init__()
 
-        # ---- single convolution descriptor ----
-        self.A = nn.Conv2d(ch, ch, 3, padding=1, bias=True)
-        self.A.weight.data.mul_(0.1)
-        self.A.bias.data.zero_()
-        self.weight_bank = nn.Parameter(self.A.weight.data.repeat(9, 1, 1, 1, 1))
-        self.bias_bank   = nn.Parameter(self.A.bias.data.repeat(9,1))
-        self.A._parameters.pop('weight')
-        self.A._parameters.pop('bias')
-        self.A.register_buffer('weight', self.weight_bank[0].clone())
-        self.A.register_buffer('bias', self.bias_bank[0].clone())
-        # alias the bias buffer for module repr and forward
-        self.A.bias = self.A.bias
-        self.A_T = nn.ConvTranspose2d(ch, ch, 3, padding=1, bias=False)
-        self.A_T._parameters.pop('weight')
-        self.A_T.register_buffer('weight', self.weight_bank[0].permute(1,0,2,3).clone())
+        n_steps = len(t_grid)-1
         
+        # Create a parameter for the weight and bias banks
+        init_weight = torch.randn(ch, ch, 3, 3).mul_(0.1)
+        init_bias = torch.zeros(ch)
         
-        # ---- pre‑allocated transpose conv sharing descriptor (weights copied each step) ----
-        # self.A_T.weight.requires_grad_(False)   # exclude from optimizer
-
-        # initialise weights small then replicate 9×
-        
-        # ---- weight & bias banks (learnable) ----
+        self.weight_bank = nn.Parameter(init_weight.unsqueeze(0).repeat(2*n_steps+1, 1, 1, 1, 1))
+        self.bias_bank = nn.Parameter(init_bias.unsqueeze(0).repeat(2*n_steps+1, 1))
         
         # per-step norms remain (cheap, no descriptor)
         self.norms = nn.ModuleList([nn.InstanceNorm2d(ch, affine=True)
-                                     for _ in range(9)])
+                                   for _ in range(2*n_steps+1)])
 
         # map rounded time → index
-        t_grid = torch.linspace(t_grid[0], t_grid[-1], 9)
+        t_grid = torch.linspace(t_grid[0], t_grid[-1], 2*n_steps+1)
         self.lookup = {round(t.item(), 6): i for i, t in enumerate(t_grid)}
-
+        
+        self.padding = 1
+        self.stride = 1
         self.act = act
 
     def forward(self, t, y):
         idx = self.lookup[round(t.item(), 6)]
-
-        # copy weights/bias into the shared conv (in-place, no new descriptor)
-        self.A.weight.data.copy_(self.weight_bank[idx])
-        self.A.bias.data.copy_(self.bias_bank[idx])
-        self.A_T.weight.data.copy_(self.A.weight.data.permute(1, 0, 2, 3))
         
-        # forward conv
-        y = self.A(y)
+        # Use F.conv2d directly with the indexed weight and bias
+        # This creates a computational graph that autograd can track
+        weight = self.weight_bank[idx]
+        bias = self.bias_bank[idx]
+        
+        # Do forward pass using functional operations
+        y = F.conv2d(y, weight, bias, stride=self.stride, padding=self.padding)
         y = self.act(y)
         y = self.norms[idx](y)
-        y = self.A_T(y)
+        
+        # Use transposed convolution with the same weight
+        # Note: For convolution transpose, we need to permute the dimensions
+        y = F.conv_transpose2d(
+            y, 
+            weight,  # transpose in/out channels
+            bias=None, 
+            stride=self.stride, 
+            padding=self.padding
+        )
+        
         return -y
+    
 class ODEBlock(nn.Module):
     def __init__(self, func,t_grid, solver="rk4", steps=4, loss_scaler=None):
         super().__init__()
@@ -224,9 +186,9 @@ class ODEBlock(nn.Module):
         return out[-1]
 
 class MPNODE_STL10(nn.Module):
-    def __init__(self):
+    def __init__(self,width):
         super().__init__()
-        ch = 64
+        ch = width
         t_grid = torch.linspace(0, 1.0, 5)
         # 1) stem: 3×96×96 -> 64×96×96
         self.stem = nn.Conv2d(3, ch, 3, padding=1, bias=True)
@@ -249,7 +211,7 @@ class MPNODE_STL10(nn.Module):
         # 4) ODE block #2
         if args.odeint == 'torchmpnode':
             S2 = DynamicScaler(args.precision)
-        else:   
+        else:
             S2 = None
         self.ode2 = ODEBlock(ODEFunc(2*ch, t_grid), t_grid, solver="rk4", steps=4, loss_scaler=S2)
         self.conn2 = nn.Conv2d(2*ch, 4*ch, 1,  padding=0, bias=True)
@@ -319,29 +281,20 @@ def get_stl10_loaders(batch_size=128,
     mean = (0.4467, 0.4398, 0.4066)
     std  = (0.2241, 0.2210, 0.2239)
 
-    # --- Training augmentation with 128×128 target ---
     transform_train = transforms.Compose([
-        # first resize original 96×96 image to 128×128 (bilinear)
-        transforms.Resize(128, interpolation=transforms.InterpolationMode.BILINEAR),
-
-        # data‑augmentation ops
-        transforms.RandAugment(num_ops=2, magnitude=8),
+        transforms.RandomResizedCrop(96, scale=(0.5, 1.0), ratio=(0.75, 1.33)),
         transforms.RandomHorizontalFlip(p=0.5),
-        transforms.ColorJitter(0.4, 0.4, 0.4, 0.1),
+        transforms.ColorJitter(brightness=0.4, contrast=0.4, saturation=0.4, hue=0.1),
         transforms.RandomGrayscale(p=0.1),
-
-        # convert to tensor & normalize
         transforms.ToTensor(),
         transforms.Normalize(mean, std),
-
-        # spatial regulariser
-        transforms.RandomErasing(p=0.2, scale=(0.02, 0.15)),
+        # optional regularizers:
+        # transforms.RandomErasing(p=0.2, scale=(0.02,0.33), ratio=(0.3,3.3)),
     ])
 
-    # --- Evaluation pipeline: deterministic 128×128 ---
     transform_test = transforms.Compose([
-        transforms.Resize(128, interpolation=transforms.InterpolationMode.BILINEAR),
-        transforms.CenterCrop(128),
+        transforms.Resize(96),
+        transforms.CenterCrop(96),
         transforms.ToTensor(),
         transforms.Normalize(mean, std),
     ])
@@ -354,7 +307,7 @@ def get_stl10_loaders(batch_size=128,
     # ----- deterministic split -----
     g = torch.Generator().manual_seed(42)
     idx = torch.randperm(len(full_train_aug), generator=g)
-    idx_train, idx_val = idx[:4000], idx[4000:]          # 4 k / 1 k
+    idx_train, idx_val = idx[:int(4000*perc)], idx[4000:]          # 4 k / 1 k
 
     train_set = Subset(full_train_aug,  idx_train)
     val_set   = Subset(full_train_eval, idx_val)         # no augmentation
@@ -454,7 +407,7 @@ def makedirs(dirname):
 
 if __name__ == '__main__':
 
-    model = MPNODE_STL10().to(device)
+    model = MPNODE_STL10(args.width).to(device)
     print(model)
     print('Number of parameters: {}'.format(count_parameters(model)))
 
@@ -467,11 +420,12 @@ if __name__ == '__main__':
     data_gen = inf_generator(train_loader)
     batches_per_epoch = len(train_loader)
 
-    optimizer = torch.optim.SGD(model.parameters(), lr=args.lr, momentum=0.9, weight_decay=args.weight_decay)
+    optimizer = torch.optim.SGD(model.parameters(), lr=args.lr, momentum=args.momentum, weight_decay=args.weight_decay)
     # optimizer = torch.optim.AdamW(model.parameters(), 3e-4, weight_decay=1e-4)
     scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=args.nepochs*batches_per_epoch, eta_min=1e-4)
     # scheduler that does nothing
-        
+
+    
 
     best_acc = 0
     batch_time_meter = RunningAverageMeter()
@@ -480,8 +434,6 @@ if __name__ == '__main__':
     b_nfe_meter = RunningAverageMeter()
     time_meter = RunningAverageMeter()
     mem_meter = RunningMaximumMeter()
-
-    
 
     csv_path = os.path.join(result_dir, folder_name + ".csv")
     csv_file = open(csv_path, 'w', newline='')
@@ -513,13 +465,11 @@ if __name__ == '__main__':
         
         for param in model.parameters():
             param.data = param.data.clamp_(-1, 1)
-            # param.data = torch.clamp(param.data, -1, 1)
-        
         torch.cuda.synchronize() 
         elapsed_time = time.perf_counter() - start_time
-        peak_memory = torch.cuda.max_memory_allocated(device) / (1024 * 1024)
-
+        peak_memory = torch.cuda.max_memory_allocated(device) / (1024 * 1024)        
         nfe_backward = -1
+
         batch_time_meter.update(elapsed_time)
         f_nfe_meter.update(nfe_forward)
         b_nfe_meter.update(nfe_backward)
@@ -528,7 +478,7 @@ if __name__ == '__main__':
         mem_meter.update(peak_memory)
 
         # evaluate / log every test_freq steps
-        if itr % args.test_freq == 0:
+        if itr % batches_per_epoch*args.test_freq == 0:
             epoch = itr // batches_per_epoch
 
             with torch.no_grad():
@@ -553,6 +503,7 @@ if __name__ == '__main__':
                 )
 
             # write metrics row
+            # print(json.dumps({"epoch": epoch,"train_acc": train_acc, "val_acc": val_acc}), flush=True)        
             writer.writerow([
                 itr,
                 epoch,

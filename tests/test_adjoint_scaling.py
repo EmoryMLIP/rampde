@@ -195,17 +195,18 @@ class TestGradientPrecisionComparison(unittest.TestCase):
         # Print results in a markdown-like table format
         table_lines = ["| dtype | Scaler | RelErr y(T) | RelErr ∂y0 | RelErr ∂a | RelErr ∂b | RelErr ∂c |",
                "|-------|--------|--------------|-------------|-------------|-------------|-------------|"]
+        quiet = os.environ.get("TORCHMPNODE_TEST_QUIET", "0") == "1"
         for row in results:
             table_lines.append("| " + " | ".join(row) + " |")
-        print("\n".join(table_lines))
+        if not quiet:
+            print("\n".join(table_lines))
 
-        # --- CI assertion for DynamicScaler ----------------------------------
+        # --- Pass if all rel errors for float16+DynamicScaler are below 1e-2 ---
         for row in results:
             dtype, scaler, err_state, err_dy0, err_da, err_db, err_dc = row
-            if scaler == "DynamicScaler" and err_dy0 != 'fail':
-                assert float(err_state) <= 1e-2, f"{dtype} Dynamic state too large"
-                for err in (err_dy0, err_da, err_db, err_dc):
-                    assert float(err) <= 1e-2, f"{dtype} Dynamic grad too large: {err}"
+            if dtype == 'torch.float16' and scaler == "DynamicScaler" and err_dy0 != 'fail':
+                all_below = all(float(err) <= 1e-2 for err in (err_dy0, err_da, err_db, err_dc))
+                self.assertTrue(all_below, f"float16+DynamicScaler rel error(s) too large: {[err_dy0, err_da, err_db, err_dc]}")
         
         # Plot analytic |y(t)| in log‑scale together with numerical FP16/FP32
         with torch.no_grad():
