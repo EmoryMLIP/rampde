@@ -166,7 +166,7 @@ class TestGradientPrecisionComparison(unittest.TestCase):
             state_errors[str(wdtype)] = f"{err:.8e}"
 
         scalers_str = ["NoScaler", "DynamicScaler"]
-        for working_dtype in [torch.float32, torch.float16]:
+        for working_dtype in [torch.float32, torch.float16, torch.bfloat16]:
             for (scaler, name_str) in zip([NoScaler, DynamicScaler], scalers_str):
 
                 sol, grad_y0_num, grad_a_num, grad_b_num, grad_c_num = compute_gradients(

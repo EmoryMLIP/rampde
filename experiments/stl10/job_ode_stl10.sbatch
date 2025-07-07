@@ -2,11 +2,11 @@
 #SBATCH --job-name=ode_stl10
 #SBATCH --output=slurm_logs/ode_stl10_%j.out
 #SBATCH --error=slurm_logs/ode_stl10_%j.err
-#SBATCH --time=03:00:00
+#SBATCH --time=24:00:00
 #SBATCH --gres=gpu:1
 #SBATCH --mem=4G
 
-# Load your conda environment
+# Load conda environment
 source /local/scratch/lruthot/miniconda3/etc/profile.d/conda.sh
 # Determine which conda environment to use based on the --odeint flag
 ODEINT=""

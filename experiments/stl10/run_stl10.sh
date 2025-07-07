@@ -5,15 +5,15 @@
 # Per-dataset arguments
 default_args=(
   --batch_size  16 
-  --nepochs   60 
+  --nepochs   160
   --lr 0.05
   --momentum 0.9
-  --weight_decay 1e-4
+  --weight_decay 5e-4
   --width 64
 )
 
 # Grid search choices
-precisions=(  "float16")
+precisions=("float16" "float32" "tfloat32" "bfloat16")
 methods=("rk4")
 odeints=( "torchmpnode")
 
