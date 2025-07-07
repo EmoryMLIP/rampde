@@ -149,55 +149,7 @@ def setup_experiment(args, base_dir):
     
     return result_dir, ckpt_path, folder_name, device, log_file
 
-class ODEFuncOld(nn.Module):
-    def __init__(self, ch, t_grid, act=nn.ReLU(inplace=True)):
-        super().__init__()
 
-        n_steps = len(t_grid)-1
-        
-        # Create a parameter for the weight and bias banks
-        init_weight = torch.randn(ch, ch, 3, 3).mul_(0.1)
-        init_bias = torch.zeros(ch)
-        
-        self.weight_bank = nn.Parameter(init_weight.unsqueeze(0).repeat(2*n_steps+1, 1, 1, 1, 1))
-        self.bias_bank = nn.Parameter(init_bias.unsqueeze(0).repeat(2*n_steps+1, 1))
-        
-        # per-step norms remain (cheap, no descriptor)
-        self.norms = nn.ModuleList([nn.InstanceNorm2d(ch, affine=True)
-                                   for _ in range(2*n_steps+1)])
-
-        # map rounded time → index
-        t_grid = torch.linspace(t_grid[0], t_grid[-1], 2*n_steps+1)
-        self.lookup = {round(t.item(), 6): i for i, t in enumerate(t_grid)}
-        
-        self.padding = 1
-        self.stride = 1
-        self.act = act
-
-    def forward(self, t, y):
-        idx = self.lookup[round(t.item(), 6)]
-        
-        # Use F.conv2d directly with the indexed weight and bias
-        # This creates a computational graph that autograd can track
-        weight = self.weight_bank[idx]
-        bias = self.bias_bank[idx]
-        
-        # Do forward pass using functional operations
-        y = F.conv2d(y, weight, bias, stride=self.stride, padding=self.padding)
-        y = self.act(y)
-        y = self.norms[idx](y)
-        
-        # Use transposed convolution with the same weight
-        # Note: For convolution transpose, we need to permute the dimensions
-        y = F.conv_transpose2d(
-            y, 
-            weight,  # transpose in/out channels
-            bias=None, 
-            stride=self.stride, 
-            padding=self.padding
-        )
-        
-        return -y
 class ODEFunc(nn.Module):
     """Time-dependent conv using buffered weights for efficiency.
 
@@ -235,14 +187,35 @@ class ODEFunc(nn.Module):
                                      for _ in range(2*n_steps+1)])
 
         # map rounded time → index
-        t_grid = torch.linspace(t_grid[0], t_grid[-1], 2*n_steps+1)
-        self.lookup = {round(t.item(), 6): i for i, t in enumerate(t_grid)}
+        # Ensure the interpolated t_grid is on the same device as the input t_grid
+        t_grid_interp = torch.linspace(t_grid[0], t_grid[-1], 2*n_steps+1, device=t_grid.device)
+        self.register_buffer('t_grid_lookup', t_grid_interp)  # Register as buffer so it moves with model
+        self.lookup = {round(t.item(), 6): i for i, t in enumerate(t_grid_interp)}
 
         self.act = act
 
 
     def forward(self, t, y):
-        idx = self.lookup[round(t.item(), 6)]
+        # More robust lookup that handles small numerical differences
+        # Ensure t is on the same device as our lookup grid for comparison
+        if t.device != self.t_grid_lookup.device:
+            t_for_lookup = t.to(self.t_grid_lookup.device)
+        else:
+            t_for_lookup = t
+            
+        t_val = t_for_lookup.item()
+        
+        # First try the exact lookup
+        t_rounded = round(t_val, 6)
+        if t_rounded in self.lookup:
+            idx = self.lookup[t_rounded]
+        else:
+            # If exact lookup fails, find the closest time in t_grid
+            t_differences = torch.abs(self.t_grid_lookup - t_val)
+            idx = int(torch.argmin(t_differences).item())
+            # Debug info when fallback is used (comment out for production)
+            print(f"DEBUG: Fallback lookup for t={t_val:.8f}, rounded={t_rounded:.6f}, closest_idx={idx}, closest_t={self.t_grid_lookup[idx].item():.8f}")
+            print(f"Available keys in lookup: {sorted(list(self.lookup.keys()))}")
 
         self.A._buffers['weight'] = self.weight_bank[idx]
         self.A._buffers['bias'] = self.bias_bank[idx]
@@ -259,7 +232,8 @@ class ODEBlock(nn.Module):
         super().__init__()
         self.func   = func
         self.solver = solver
-        self.t_grid = t_grid
+        # Register t_grid as a buffer so it moves with the model
+        self.register_buffer('t_grid', t_grid)
         self.loss_scaler = loss_scaler
         self.odeint_func = odeint_func
 
@@ -274,7 +248,9 @@ class MPNODE_STL10(nn.Module):
     def __init__(self, width, args, precision, odeint_func, DynamicScaler):
         super().__init__()
         ch = width
-        t_grid = torch.linspace(0, 1.0, 5)
+        # Create t_grid on the appropriate device
+        device = torch.device('cuda:' + str(args.gpu) if torch.cuda.is_available() else 'cpu')
+        t_grid = torch.linspace(0, 1.0, 5, device=device)
         # 1) stem: 3×96×96 -> 64×96×96
         self.stem = nn.Conv2d(3, ch, 3, padding=1, bias=True)
         self.norm1 = nn.InstanceNorm2d(ch, affine=True)
@@ -586,9 +562,9 @@ def main():
 
                     print(
                         "Step {:06d} | Epoch {:04d} | Time {:.3f} ({:.3f}) | "
-                        "Running Loss {:.4f} | Train Loss {:.4f} | Test Loss {:.4f} | "
+                        "Running Loss {:.4f} | Train Loss {:.4f} | Val Loss {:.4f} | "
                         "NFE-F {:.1f} | NFE-B {:.1f} | Train Acc {:.4f} | "
-                        "Test Acc {:.4f} | Max Mem {:.1f}MB".format(
+                        "Val Acc {:.4f} | Max Mem {:.1f}MB".format(
                             itr, epoch, batch_time_meter.val, batch_time_meter.avg,
                             train_loss_meter.val, train_loss, val_loss,
                             f_nfe_meter.avg, b_nfe_meter.avg,
@@ -597,7 +573,6 @@ def main():
                     )
 
                 # write metrics row
-                # print(json.dumps({"epoch": epoch,"train_acc": train_acc, "val_acc": val_acc}), flush=True)        
                 writer.writerow([
                     itr,
                     epoch,
@@ -623,7 +598,7 @@ def main():
         # 1) accuracy plot
         plt.figure(figsize=(6, 4))
         plt.plot(df['epoch'], df['train_acc'], label='Train Acc')
-        plt.plot(df['epoch'], df['test_acc'], label='Test Acc')
+        plt.plot(df['epoch'], df['val_acc'], label='Val Acc')
         plt.xlabel('Epoch')
         plt.ylabel('Accuracy')
         plt.legend()
