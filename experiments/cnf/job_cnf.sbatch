@@ -5,6 +5,7 @@
 #SBATCH --time=03:00:00
 #SBATCH --gres=gpu:1
 #SBATCH --mem=4G
+#SBATCH --account=mathg3
 
 # Load your conda environment
 source /local/scratch/lruthot/miniconda3/etc/profile.d/conda.sh
