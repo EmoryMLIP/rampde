@@ -57,6 +57,10 @@ def create_parser():
     # Model arguments
     parser.add_argument('--hidden_dim', type=int, default=256)
     parser.add_argument('--num_timesteps', type=int, default=8)
+    parser.add_argument('--num_timesteps_val', type=int, default=None,
+                        help='Number of timesteps for validation (if None, uses num_timesteps)')
+    parser.add_argument('--alpha', type=str, default='1.0,100.0,15.0',
+                        help='Alpha hyperparameters as comma-separated values (e.g., 1.0,100.0,15.0)')
     
     # Experiment arguments
     parser.add_argument('--test_freq', type=int, default=100)
@@ -113,7 +117,31 @@ def setup_precision(precision_str):
         torch.backends.cudnn.allow_tf32 = True
         print("Using TF32 precision")
 
-def setup_experiment(args, base_dir):
+def determine_scaler(args, DynamicScaler, precision):
+    """Determine which scaler to use and return (scaler_instance, scaler_name)."""
+    if args.odeint == 'torchdiffeq' and args.precision == 'float16' and args.grad_scaler:
+        from torch.amp import GradScaler
+        scaler = GradScaler('cuda')
+        scaler_name = 'grad'
+        print(f"Using PyTorch GradScaler for float16 precision with torchdiffeq (initial scale: {scaler.get_scale()})")
+        return scaler, scaler_name
+    elif args.odeint == 'torchmpnode' and args.precision == 'float16' and not args.dynamic_scaler and args.grad_scaler:
+        # Special case: torchmpnode with dynamic scaler disabled but grad scaler enabled
+        from torch.amp import GradScaler
+        scaler = GradScaler('cuda')
+        scaler_name = 'grad'
+        print(f"Using PyTorch GradScaler for float16 precision with torchmpnode (DynamicScaler disabled) (initial scale: {scaler.get_scale()})")
+        return scaler, scaler_name
+    elif args.odeint == 'torchmpnode' and args.precision == 'float16' and args.dynamic_scaler:
+        # Initialize DynamicScaler once for reuse during training
+        scaler = DynamicScaler(precision)
+        scaler_name = 'dynamic'
+        print("Using DynamicScaler for float16 precision with torchmpnode")
+        return scaler, scaler_name
+    else:
+        return None, None
+
+def setup_experiment(args, base_dir, DynamicScaler=None, precision=None):
     """Setup experiment directories, logging, and environment."""
     job_id = os.environ.get("SLURM_JOB_ID", "")
     
@@ -124,8 +152,16 @@ def setup_experiment(args, base_dir):
     args.grad_scaler = not args.no_grad_scaler
     args.dynamic_scaler = not args.no_dynamic_scaler
     
+    # Determine scaler type and create folder name with scaler info
+    loss_scaler, scaler_name = determine_scaler(args, DynamicScaler, precision)
+    
     timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
-    folder_name = f"{args.precision}_{args.odeint}_{args.method}_{seed_str}_{timestamp}"
+    # Build folder name with scaler type
+    precision_scaler = args.precision
+    if scaler_name:
+        precision_scaler = f"{args.precision}_{scaler_name}"
+    
+    folder_name = f"{precision_scaler}_{args.odeint}_{args.method}_{seed_str}_{timestamp}"
     result_dir = os.path.join(base_dir, "results", "otflowlarge", folder_name)
     ckpt_path = os.path.join(result_dir, 'ckpt.pth')
     os.makedirs(result_dir, exist_ok=True)
@@ -174,7 +210,7 @@ def setup_experiment(args, base_dir):
     print("SLURM job id", job_id)
     print("Model checkpoint path:", ckpt_path)
     
-    return result_dir, ckpt_path, folder_name, device, log_file
+    return result_dir, ckpt_path, folder_name, device, log_file, loss_scaler
 
 
 def get_minibatch(X, num_samples):
@@ -228,6 +264,13 @@ def main():
     args.grad_scaler = not args.no_grad_scaler
     args.dynamic_scaler = not args.no_dynamic_scaler
     
+    # Parse alpha hyperparameters
+    args.alpha = [float(a) for a in args.alpha.split(',')]
+    
+    # Set default for num_timesteps_val if not provided
+    if args.num_timesteps_val is None:
+        args.num_timesteps_val = args.num_timesteps
+    
     # Set random seeds for reproducibility
     if args.seed is not None:
         print(f"Setting random seed to {args.seed}")
@@ -256,7 +299,7 @@ def main():
     base_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), '..'))
     
     # Setup experiment directories and logging
-    result_dir, ckpt_path, folder_name, device, log_file = setup_experiment(args, base_dir)
+    result_dir, ckpt_path, folder_name, device, log_file, loss_scaler = setup_experiment(args, base_dir, DynamicScaler, precision)
     
     try:
         # load data
@@ -268,7 +311,7 @@ def main():
 
         # setup model, optimizer, meters
         t0, t1 = 0.0, 1.0
-        alpha  = [1.0, 15.0, 100.0]
+        alpha  = args.alpha
         func   = OTFlow(in_out_dim=d, hidden_dim=args.hidden_dim, alpha=alpha).to(device)
         optimizer = optim.Adam(func.parameters(), lr=args.lr, weight_decay=args.weight_decay)
         cov = torch.eye(d, device=device) * 0.1
@@ -283,18 +326,6 @@ def main():
         cost_HJB_meter = RunningAverageMeter()
         time_meter     = RunningAverageMeter()
         mem_meter      = RunningMaximumMeter()
-        
-        # Setup loss scaler for torchdiffeq with float16
-        loss_scaler = None
-        if args.odeint == 'torchdiffeq' and args.precision == 'float16' and args.grad_scaler:
-            from torch.amp import GradScaler
-            loss_scaler = GradScaler('cuda')
-            print(f"Using PyTorch GradScaler for float16 precision with torchdiffeq (initial scale: {loss_scaler.get_scale()})")
-        elif args.odeint == 'torchmpnode' and args.precision == 'float16' and not args.dynamic_scaler and args.grad_scaler:
-            # Special case: torchmpnode with dynamic scaler disabled but grad scaler enabled
-            from torch.amp import GradScaler
-            loss_scaler = GradScaler('cuda')
-            print(f"Using PyTorch GradScaler for float16 precision with torchmpnode (DynamicScaler disabled) (initial scale: {loss_scaler.get_scale()})")
         
         # CSV setup
         csv_path = os.path.join(result_dir, folder_name + ".csv")
@@ -334,14 +365,13 @@ def main():
                 with autocast(device_type='cuda', dtype=precision):
                     ts = torch.linspace(t0, t1, args.num_timesteps, device=device)
                     if args.odeint == 'torchmpnode' and args.precision == 'float16' and args.dynamic_scaler:
-                        # Use DynamicScaler
-                        scaler = DynamicScaler(precision)
+                        # Use pre-initialized DynamicScaler
                         z_t, logp_t, cL_t, cH_t = odeint_func(
                             func,
                             (z0, logp0, cL0, cH0),
                             ts,
                             method=args.method,
-                            loss_scaler=scaler
+                            loss_scaler=loss_scaler
                         )
                     else:
                         z_t, logp_t, cL_t, cH_t = odeint_func(
@@ -357,8 +387,8 @@ def main():
                               + alpha[1]*cH1.mean())
                 
                 # Handle backward pass with or without loss scaling
-                if loss_scaler is not None:
-                    # Track loss scale before step
+                if loss_scaler is not None and hasattr(loss_scaler, 'scale'):
+                    # Track loss scale before step (for GradScaler only)
                     old_scale = loss_scaler.get_scale()
                     
                     # Use gradient scaling for torchdiffeq with float16
@@ -373,7 +403,7 @@ def main():
                     elif itr < 20 or itr % 100 == 0:  # Log scale periodically for first 20 iterations or every 100
                         print(f"Iteration {itr}: Loss scale = {new_scale} (no overflow)")
                 else:
-                    # Standard backward pass
+                    # Standard backward pass (for DynamicScaler or no scaler)
                     loss.backward()
                     optimizer.step()
                 torch.cuda.synchronize()
@@ -426,10 +456,11 @@ def main():
                     with torch.no_grad():
                         vz0, vpl0, vL0, vH0 = get_minibatch(val_x, args.num_samples_val)
                         with autocast(device_type='cuda', dtype=precision):
+                            # Validation: no scaler needed
                             vz_t, vpl_t, vL_t, vH_t = odeint_func(
                                 func,
                                 (vz0, vpl0, vL0, vH0),
-                                torch.linspace(t0, t1, args.num_timesteps, device=device),
+                                torch.linspace(t0, t1, args.num_timesteps_val, device=device),
                                 method=args.method
                             )
                             vz1, vpl1, vL1, vH1 = vz_t[-1], vpl_t[-1], vL_t[-1], vH_t[-1]
@@ -558,7 +589,8 @@ def main():
             with torch.no_grad():
                 # x_batch = torch.from_numpy(testData).to(device)
                 vz0, vpl0, vL0, vH0 = get_minibatch(val_x, args.num_samples_val)
-                t_grid = torch.linspace(t0, t1, args.num_timesteps, device=device)
+                t_grid = torch.linspace(t0, t1, args.num_timesteps_val, device=device)
+                # Visualization: no scaler needed
                 z_t, logp_t, cL_t, cH_t   = odeint_func(
                     func,
                     (vz0, vpl0, vL0, vH0),
@@ -575,8 +607,9 @@ def main():
             cL0   = torch.zeros_like(logp0)
             cH0   = torch.zeros_like(logp0)
             # for backward, reverse the time grid
-            t_grid_inv = torch.linspace(t1, t0, args.num_timesteps, device=device)
+            t_grid_inv = torch.linspace(t1, t0, args.num_timesteps_val, device=device)
             with torch.no_grad():
+                # Visualization: no scaler needed
                 z_inv_t, _, _, _ = odeint_func(
                     func,
                     (y, logp0, cL0, cH0),

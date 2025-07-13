@@ -90,7 +90,30 @@ def setup_precision(precision_str):
         torch.backends.cudnn.allow_tf32 = True
         print("Using TF32 precision")
 
-def setup_experiment(args, base_dir):
+def determine_scaler(args, DynamicScaler, precision):
+    """Determine which scaler to use and return (scaler_instance, scaler_name)."""
+    if args.odeint == 'torchdiffeq' and args.precision == 'float16' and args.grad_scaler:
+        from torch.amp import GradScaler
+        scaler = GradScaler('cuda')
+        scaler_name = 'grad'
+        print(f"Using PyTorch GradScaler for float16 precision with torchdiffeq (initial scale: {scaler.get_scale()})")
+        return scaler, scaler_name
+    elif args.odeint == 'torchmpnode' and args.precision == 'float16' and not args.dynamic_scaler and args.grad_scaler:
+        # Special case: torchmpnode with dynamic scaler disabled but grad scaler enabled
+        from torch.amp import GradScaler
+        scaler = GradScaler('cuda')
+        scaler_name = 'grad'
+        print(f"Using PyTorch GradScaler for float16 precision with torchmpnode (DynamicScaler disabled) (initial scale: {scaler.get_scale()})")
+        return scaler, scaler_name
+    elif args.odeint == 'torchmpnode' and args.precision == 'float16' and args.dynamic_scaler:
+        # DynamicScaler is created per-call in training loop, but we track it for naming
+        scaler_name = 'dynamic'
+        print("Using DynamicScaler for float16 precision with torchmpnode")
+        return None, scaler_name  # None because DynamicScaler is created per-call
+    else:
+        return None, None
+
+def setup_experiment(args, base_dir, DynamicScaler=None, precision=None):
     """Setup experiment directories, logging, and environment."""
     job_id = os.environ.get("SLURM_JOB_ID", "")
     
@@ -98,9 +121,16 @@ def setup_experiment(args, base_dir):
     seed_str = f"seed{args.seed}" if args.seed is not None else "noseed"
     stable_str = "stable" if args.stable else "unstable"
     
+    # Determine scaler type and create folder name with scaler info
+    loss_scaler, scaler_name = determine_scaler(args, DynamicScaler, precision)
     
     timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
-    folder_name = f"{args.precision}_{args.odeint}_{args.method}_{stable_str}_{seed_str}_{timestamp}"
+    # Build folder name with scaler type
+    precision_scaler = args.precision
+    if scaler_name:
+        precision_scaler = f"{args.precision}_{scaler_name}"
+    
+    folder_name = f"{precision_scaler}_{args.odeint}_{args.method}_{stable_str}_{seed_str}_{timestamp}"
     result_dir = os.path.join(base_dir, "results", "ode_stl10", folder_name)
     ckpt_path = os.path.join(result_dir, 'ckpt.pth')
     os.makedirs(result_dir, exist_ok=True)
@@ -149,7 +179,7 @@ def setup_experiment(args, base_dir):
     print("SLURM job id", job_id)
     print("Model checkpoint path:", ckpt_path)
     
-    return result_dir, ckpt_path, folder_name, device, log_file
+    return result_dir, ckpt_path, folder_name, device, log_file, loss_scaler
 
 
 class ODEFunc(nn.Module):
@@ -498,7 +528,7 @@ def main():
     base_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), '../..'))
     
     # Setup experiment directories and logging
-    result_dir, ckpt_path, folder_name, device, log_file = setup_experiment(args, base_dir)
+    result_dir, ckpt_path, folder_name, device, log_file, loss_scaler = setup_experiment(args, base_dir, DynamicScaler, precision)
     
     try:
         # Create model
@@ -519,18 +549,6 @@ def main():
         # optimizer = torch.optim.AdamW(model.parameters(), 3e-4, weight_decay=1e-4)
         scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=args.nepochs*batches_per_epoch, eta_min=1e-4)
         # scheduler that does nothing
-
-        # Setup loss scaler for torchdiffeq with float16
-        loss_scaler = None
-        if args.odeint == 'torchdiffeq' and args.precision == 'float16' and args.grad_scaler:
-            from torch.amp import GradScaler
-            loss_scaler = GradScaler('cuda')
-            print(f"Using PyTorch GradScaler for float16 precision with torchdiffeq (initial scale: {loss_scaler.get_scale()})")
-        elif args.odeint == 'torchmpnode' and args.precision == 'float16' and not args.dynamic_scaler and args.grad_scaler:
-            # Special case: torchmpnode with dynamic scaler disabled but grad scaler enabled
-            from torch.amp import GradScaler
-            loss_scaler = GradScaler('cuda')
-            print(f"Using PyTorch GradScaler for float16 precision with torchmpnode (DynamicScaler disabled) (initial scale: {loss_scaler.get_scale()})")
 
         best_acc = 0
         batch_time_meter = RunningAverageMeter()

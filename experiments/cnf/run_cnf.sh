@@ -35,12 +35,12 @@ for dataset in "${datasets[@]}"; do
       )
       extra_args=${dataset_args[$dataset]}
       echo "Submitting: $odeint $precision no-scaling - ${fixed_args[*]} $extra_args"
-      python cnf.py "${fixed_args[@]}" $extra_args &
+      sbatch job_cnf.sbatch "${fixed_args[@]}" $extra_args
     done
   done
 done
 
-wait  # Wait for all background jobs to complete
+# Remove wait commands since we're using sbatch instead of background jobs
 
 # Test 2: torchdiffeq in fp16 with and without grad scaling
 echo "Test 2: torchdiffeq fp16 scaling comparison"
@@ -57,7 +57,7 @@ for dataset in "${datasets[@]}"; do
   )
   extra_args=${dataset_args[$dataset]}
   echo "Submitting: torchdiffeq float16 no-grad-scaler - ${fixed_args[*]} $extra_args"
-  python cnf.py "${fixed_args[@]}" $extra_args &
+  sbatch job_cnf.sbatch "${fixed_args[@]}" $extra_args
   
   # torchdiffeq fp16 with grad scaling
   fixed_args=(
@@ -70,10 +70,10 @@ for dataset in "${datasets[@]}"; do
   )
   extra_args=${dataset_args[$dataset]}
   echo "Submitting: torchdiffeq float16 with-grad-scaler - ${fixed_args[*]} $extra_args"
-  python cnf.py "${fixed_args[@]}" $extra_args &
+  sbatch job_cnf.sbatch "${fixed_args[@]}" $extra_args
 done
 
-wait  # Wait for all background jobs to complete
+# Remove wait commands since we're using sbatch instead of background jobs
 
 # Test 3: torchmpnode in fp16 with different scaling options
 echo "Test 3: torchmpnode fp16 scaling comparison"
@@ -91,7 +91,7 @@ for dataset in "${datasets[@]}"; do
   )
   extra_args=${dataset_args[$dataset]}
   echo "Submitting: torchmpnode float16 no-scaling - ${fixed_args[*]} $extra_args"
-  python cnf.py "${fixed_args[@]}" $extra_args &
+  sbatch job_cnf.sbatch "${fixed_args[@]}" $extra_args
   
   # torchmpnode fp16 with only grad scaling
   fixed_args=(
@@ -105,7 +105,7 @@ for dataset in "${datasets[@]}"; do
   )
   extra_args=${dataset_args[$dataset]}
   echo "Submitting: torchmpnode float16 only-grad-scaler - ${fixed_args[*]} $extra_args"
-  python cnf.py "${fixed_args[@]}" $extra_args &
+  sbatch job_cnf.sbatch "${fixed_args[@]}" $extra_args
   
   # torchmpnode fp16 with only dynamic scaling (default)
   fixed_args=(
@@ -119,8 +119,8 @@ for dataset in "${datasets[@]}"; do
   )
   extra_args=${dataset_args[$dataset]}
   echo "Submitting: torchmpnode float16 only-dynamic-scaler - ${fixed_args[*]} $extra_args"
-  python cnf.py "${fixed_args[@]}" $extra_args &
+  sbatch job_cnf.sbatch "${fixed_args[@]}" $extra_args
 done
 
-wait  # Wait for all background jobs to complete
+# Remove wait commands since we're using sbatch instead of background jobs
 echo "All experiments submitted!"

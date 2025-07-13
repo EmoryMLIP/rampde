@@ -5,7 +5,7 @@
 # Default training arguments
 default_args=(
   --batch_size  16 
-  --nepochs   120
+  --nepochs   80
   --lr 0.05
   --momentum 0.9
   --weight_decay 5e-4
@@ -34,11 +34,11 @@ for precision in "float32" "tfloat32" "bfloat16"; do
       --no_dynamic_scaler
     )
     echo "Submitting: $odeint $precision no-scaling - ${fixed_args[*]}"
-    python ode_stl10.py "${fixed_args[@]}" "${default_args[@]}" &
+    sbatch job_ode_stl10.sbatch "${fixed_args[@]}" "${default_args[@]}"
   done
 done
 
-wait  # Wait for all background jobs to complete
+# Remove wait commands since we're using sbatch instead of background jobs
 
 # Test 2: torchdiffeq in fp16 with and without grad scaling
 echo "Test 2: torchdiffeq fp16 scaling comparison"
@@ -51,7 +51,7 @@ fixed_args=(
   --no_grad_scaler
 )
 echo "Submitting: torchdiffeq float16 no-grad-scaler - ${fixed_args[*]}"
-python ode_stl10.py "${fixed_args[@]}" "${default_args[@]}" &
+sbatch job_ode_stl10.sbatch "${fixed_args[@]}" "${default_args[@]}"
 
 # torchdiffeq fp16 with grad scaling
 fixed_args=(
@@ -61,9 +61,9 @@ fixed_args=(
   --seed "$seed"
 )
 echo "Submitting: torchdiffeq float16 with-grad-scaler - ${fixed_args[*]}"
-python ode_stl10.py "${fixed_args[@]}" "${default_args[@]}" &
+sbatch job_ode_stl10.sbatch "${fixed_args[@]}" "${default_args[@]}"
 
-wait  # Wait for all background jobs to complete
+# Remove wait commands since we're using sbatch instead of background jobs
 
 # Test 3: torchmpnode in fp16 with different scaling options
 echo "Test 3: torchmpnode fp16 scaling comparison"
@@ -77,7 +77,7 @@ fixed_args=(
   --no_dynamic_scaler
 )
 echo "Submitting: torchmpnode float16 no-scaling - ${fixed_args[*]}"
-python ode_stl10.py "${fixed_args[@]}" "${default_args[@]}" &
+sbatch job_ode_stl10.sbatch "${fixed_args[@]}" "${default_args[@]}"
 
 # torchmpnode fp16 with only grad scaling
 fixed_args=(
@@ -88,7 +88,7 @@ fixed_args=(
   --no_dynamic_scaler
 )
 echo "Submitting: torchmpnode float16 only-grad-scaler - ${fixed_args[*]}"
-python ode_stl10.py "${fixed_args[@]}" "${default_args[@]}" &
+sbatch job_ode_stl10.sbatch "${fixed_args[@]}" "${default_args[@]}"
 
 # torchmpnode fp16 with only dynamic scaling (default)
 fixed_args=(
@@ -99,7 +99,7 @@ fixed_args=(
   --no_grad_scaler
 )
 echo "Submitting: torchmpnode float16 only-dynamic-scaler - ${fixed_args[*]}"
-python ode_stl10.py "${fixed_args[@]}" "${default_args[@]}" &
+sbatch job_ode_stl10.sbatch "${fixed_args[@]}" "${default_args[@]}"
 
-wait  # Wait for all background jobs to complete
+# Remove wait commands since we're using sbatch instead of background jobs
 echo "All experiments submitted!"
