@@ -1,9 +1,7 @@
 import os, sys
 job_id = os.environ.get("SLURM_JOB_ID", "")
 import argparse
-import logging
 import time
-import json
 import random
 import numpy as np
 import torch
@@ -38,6 +36,12 @@ def create_parser():
     parser.add_argument('--method', type=str, choices=['rk4', 'euler'], default='rk4')
     parser.add_argument('--precision', type=str, choices=['tfloat32', 'float32', 'float16','bfloat16'], default='float16')
     parser.add_argument('--odeint', type=str, choices=['torchdiffeq', 'torchmpnode'], default='torchmpnode')
+    parser.add_argument('--unstable', action='store_true', 
+                        help='Use unstable ODE formulation (default: stable)')
+    parser.add_argument('--no_grad_scaler', action='store_true',
+                        help='Disable GradScaler for torchdiffeq with float16 (default: enabled)')
+    parser.add_argument('--no_dynamic_scaler', action='store_true',
+                        help='Disable DynamicScaler for torchmpnode with float16 (default: enabled)')
 
     parser.add_argument('--results_dir', type=str, default='./results')
     parser.add_argument('--seed', type=int, default=0)
@@ -57,7 +61,6 @@ def setup_environment(args):
     
     if args.odeint == 'torchmpnode':
         print("Using torchmpnode")
-        assert args.method == 'rk4' 
         sys.path.insert(0, base_dir)
         from torchmpnode import odeint, DynamicScaler
         return odeint, DynamicScaler
@@ -93,8 +96,11 @@ def setup_experiment(args, base_dir):
     
     os.makedirs(args.results_dir, exist_ok=True)
     seed_str = f"seed{args.seed}" if args.seed is not None else "noseed"
+    stable_str = "stable" if args.stable else "unstable"
+    
+    
     timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
-    folder_name = f"{args.precision}_{args.odeint}_{args.method}_{seed_str}_{timestamp}"
+    folder_name = f"{args.precision}_{args.odeint}_{args.method}_{stable_str}_{seed_str}_{timestamp}"
     result_dir = os.path.join(base_dir, "results", "ode_stl10", folder_name)
     ckpt_path = os.path.join(result_dir, 'ckpt.pth')
     os.makedirs(result_dir, exist_ok=True)
@@ -121,10 +127,6 @@ def setup_experiment(args, base_dir):
     # Setup precision
     setup_precision(args.precision)
 
-    try:
-        torch.backends.cudnn.verbose = True
-    except:
-        pass  # Some PyTorch versions don't have this attribute
     torch.backends.cudnn.benchmark = True
 
     # Print environment and hardware info for reproducibility and debugging
@@ -151,13 +153,25 @@ def setup_experiment(args, base_dir):
 
 
 class ODEFunc(nn.Module):
-    """Time-dependent conv using buffered weights for efficiency.
-
-    * One Conv2d (`self.A`) is created.
-    * A learnable weight bank (2*n_steps+1×C×C×3×3) and bias bank (2*n_steps+1×C) are stored.
-    * At each call we reassign buffers to point to the current time step weights (no copy).
     """
-    def __init__(self, ch, t_grid, act=nn.ReLU(inplace=True)):
+    Time-dependent ODE function with piecewise constant weights.
+    
+    This implementation uses piecewise constant weights that change at discrete time intervals.
+    The weights are held constant within each interval and use left-neighbor interpolation.
+    This approach is compatible with any ODE solver (Euler, RK4, adaptive methods, etc.)
+    since it doesn't rely on specific intermediate time points.
+    
+    For a time grid [t0, t1, t2, ..., tn], we create n intervals:
+    - [t0, t1): uses weights[0]
+    - [t1, t2): uses weights[1] 
+    - ...
+    - [tn-1, tn]: uses weights[n-1]
+    
+    * One Conv2d (`self.A`) is created.
+    * A learnable weight bank (n_intervals×C×C×3×3) and bias bank (n_intervals×C) are stored.
+    * At each call we reassign buffers to point to the current interval weights (no copy).
+    """
+    def __init__(self, ch, t_grid, act=nn.ReLU(inplace=True),is_stable=True):
         super().__init__()
 
         n_steps = len(t_grid)-1
@@ -167,8 +181,9 @@ class ODEFunc(nn.Module):
         init_bias = torch.zeros(ch)
         
         # Use the exact same pattern as ODEFunc for consistency
-        self.weight_bank = nn.Parameter(init_weight.unsqueeze(0).repeat(2*n_steps+1, 1, 1, 1, 1))
-        self.bias_bank = nn.Parameter(init_bias.unsqueeze(0).repeat(2*n_steps+1, 1))
+        # Create weight banks for piecewise constant weights (one per interval)
+        self.weight_bank = nn.Parameter(init_weight.unsqueeze(0).repeat(n_steps, 1, 1, 1, 1))
+        self.bias_bank = nn.Parameter(init_bias.unsqueeze(0).repeat(n_steps, 1))
         
         # Create a single conv and register buffers for its weights
         self.A = nn.Conv2d(ch, ch, 3, padding=1, bias=True)
@@ -182,41 +197,43 @@ class ODEFunc(nn.Module):
         self.A_T._parameters.pop('weight')
         self.A_T.register_buffer('weight', self.weight_bank[0])
 
-        # per-step norms remain (cheap, no descriptor)
-        self.norms = nn.ModuleList([nn.InstanceNorm2d(ch, affine=True)
-                                     for _ in range(2*n_steps+1)])
+        # per-step norms for each interval (one per original time step)
+        self.norms = nn.ModuleList([nn.InstanceNorm2d(ch, affine=False)
+                                     for _ in range(n_steps)])
 
-        # map rounded time → index
-        # Ensure the interpolated t_grid is on the same device as the input t_grid
-        t_grid_interp = torch.linspace(t_grid[0], t_grid[-1], 2*n_steps+1, device=t_grid.device)
-        self.register_buffer('t_grid_lookup', t_grid_interp)  # Register as buffer so it moves with model
-        self.lookup = {round(t.item(), 6): i for i, t in enumerate(t_grid_interp)}
-
+        # Store original time grid parameters for piecewise constant interpolation
+        self.t_start = float(t_grid[0])
+        self.t_end = float(t_grid[-1])
+        self.n_intervals = n_steps  # number of intervals between time points
+        
         self.act = act
+        self.is_stable = is_stable
+        if is_stable:
+            self.factor = -1.0
+        else:
+            self.factor = 1.0
 
 
     def forward(self, t, y):
-        # More robust lookup that handles small numerical differences
-        # Ensure t is on the same device as our lookup grid for comparison
-        if t.device != self.t_grid_lookup.device:
-            t_for_lookup = t.to(self.t_grid_lookup.device)
-        else:
-            t_for_lookup = t
-            
-        t_val = t_for_lookup.item()
+        """
+        Piecewise constant weights with left-neighbor interpolation.
         
-        # First try the exact lookup
-        t_rounded = round(t_val, 6)
-        if t_rounded in self.lookup:
-            idx = self.lookup[t_rounded]
-        else:
-            # If exact lookup fails, find the closest time in t_grid
-            t_differences = torch.abs(self.t_grid_lookup - t_val)
-            idx = int(torch.argmin(t_differences).item())
-            # Debug info when fallback is used (comment out for production)
-            print(f"DEBUG: Fallback lookup for t={t_val:.8f}, rounded={t_rounded:.6f}, closest_idx={idx}, closest_t={self.t_grid_lookup[idx].item():.8f}")
-            print(f"Available keys in lookup: {sorted(list(self.lookup.keys()))}")
+        For any time t in [t_start, t_end], find the interval it belongs to:
+        - Normalize t to [0, 1] range
+        - Scale by number of intervals and take floor for left-neighbor
+        - Clamp to valid range to handle boundary cases
+        
+        This works with any ODE solver since it doesn't depend on specific
+        intermediate evaluation points.
+        """
+        # Normalize t to [0, 1] range of the grid  
+        t_normalized = (t.item() - self.t_start) / (self.t_end - self.t_start)
+        
+        # Scale to interval index and take floor for left-neighbor
+        # Clamp to ensure we stay within valid indices [0, n_intervals-1]
+        idx = max(0, min(int(t_normalized * self.n_intervals), self.n_intervals - 1))
 
+        # Set the current weights and biases for this interval
         self.A._buffers['weight'] = self.weight_bank[idx]
         self.A._buffers['bias'] = self.bias_bank[idx]
         self.A_T._buffers['weight'] = self.weight_bank[idx]
@@ -225,7 +242,8 @@ class ODEFunc(nn.Module):
         y = self.act(y)
         y = self.norms[idx](y)
         y = self.A_T(y)
-        return -y
+
+        return self.factor*y
     
 class ODEBlock(nn.Module):
     def __init__(self, func, t_grid, solver="rk4", steps=4, loss_scaler=None, odeint_func=None):
@@ -256,11 +274,12 @@ class MPNODE_STL10(nn.Module):
         self.norm1 = nn.InstanceNorm2d(ch, affine=True)
 
         # 2) ODE block #1
-        if args.odeint == 'torchmpnode':
+        if args.odeint == 'torchmpnode' and args.precision == 'float16' and args.dynamic_scaler:
+            print("Using DynamicScaler for float16 precision with torchmpnode")
             S1 = DynamicScaler(precision)
         else:
             S1 = None
-        self.ode1 = ODEBlock(ODEFunc(ch, t_grid), t_grid, solver="rk4", steps=4, loss_scaler=S1, odeint_func=odeint_func)
+        self.ode1 = ODEBlock(ODEFunc(ch, t_grid, is_stable=args.stable), t_grid, solver="rk4", steps=4, loss_scaler=S1, odeint_func=odeint_func)
         
         # 3) down-sample stride-2 3×3
         self.conn1 = nn.Conv2d(ch, 2*ch, 1,  padding=0, bias=True)
@@ -269,20 +288,20 @@ class MPNODE_STL10(nn.Module):
         # self.norm3 = nn.InstanceNorm2d(ch)
 
         # 4) ODE block #2
-        if args.odeint == 'torchmpnode':
+        if args.odeint == 'torchmpnode' and args.precision == 'float16' and args.dynamic_scaler:
             S2 = DynamicScaler(precision)
         else:
             S2 = None
-        self.ode2 = ODEBlock(ODEFunc(2*ch, t_grid), t_grid, solver="rk4", steps=4, loss_scaler=S2, odeint_func=odeint_func)
+        self.ode2 = ODEBlock(ODEFunc(2*ch, t_grid, is_stable=args.stable), t_grid, solver="rk4", steps=4, loss_scaler=S2, odeint_func=odeint_func)
         self.conn2 = nn.Conv2d(2*ch, 4*ch, 1,  padding=0, bias=True)
         self.avg2 = nn.AvgPool2d(2, stride=2)
         self.norm4 = nn.InstanceNorm2d(4*ch, affine=True)
         
-        if args.odeint == 'torchmpnode':
+        if args.odeint == 'torchmpnode' and args.precision == 'float16' and args.dynamic_scaler:
             S3 = DynamicScaler(precision)
         else:
             S3 = None
-        self.ode3 = ODEBlock(ODEFunc(4*ch, t_grid), t_grid, solver="rk4", steps=4, loss_scaler=S3, odeint_func=odeint_func)
+        self.ode3 = ODEBlock(ODEFunc(4*ch, t_grid, is_stable=args.stable), t_grid, solver="rk4", steps=4, loss_scaler=S3, odeint_func=odeint_func)
         
         self.act = nn.ReLU(inplace=True)
         # 5) global avg-pool + FC
@@ -449,6 +468,11 @@ def main():
     parser = create_parser()
     args = parser.parse_args()
     
+    # Set derived boolean values based on flags
+    args.stable = not args.unstable  # stable is True unless --unstable is passed
+    args.grad_scaler = not args.no_grad_scaler  # grad_scaler is True unless --no_grad_scaler is passed
+    args.dynamic_scaler = not args.no_dynamic_scaler  # dynamic_scaler is True unless --no_dynamic_scaler is passed
+    
     # Set random seeds for reproducibility
     if args.seed is not None:
         print(f"Setting random seed to {args.seed}")
@@ -496,7 +520,17 @@ def main():
         scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=args.nepochs*batches_per_epoch, eta_min=1e-4)
         # scheduler that does nothing
 
-        
+        # Setup loss scaler for torchdiffeq with float16
+        loss_scaler = None
+        if args.odeint == 'torchdiffeq' and args.precision == 'float16' and args.grad_scaler:
+            from torch.amp import GradScaler
+            loss_scaler = GradScaler('cuda')
+            print(f"Using PyTorch GradScaler for float16 precision with torchdiffeq (initial scale: {loss_scaler.get_scale()})")
+        elif args.odeint == 'torchmpnode' and args.precision == 'float16' and not args.dynamic_scaler and args.grad_scaler:
+            # Special case: torchmpnode with dynamic scaler disabled but grad scaler enabled
+            from torch.amp import GradScaler
+            loss_scaler = GradScaler('cuda')
+            print(f"Using PyTorch GradScaler for float16 precision with torchmpnode (DynamicScaler disabled) (initial scale: {loss_scaler.get_scale()})")
 
         best_acc = 0
         batch_time_meter = RunningAverageMeter()
@@ -529,9 +563,34 @@ def main():
                 logits = model(x)
                 loss = criterion(logits.float(), y)
                 nfe_forward = -1
+                
+            # Handle backward pass with or without loss scaling
+            if loss_scaler is not None:
+                # Track loss scale before step
+                old_scale = loss_scaler.get_scale()
+                
+                # Use gradient scaling for torchdiffeq with float16
+                loss_scaler.scale(loss).backward()
+                loss_scaler.step(optimizer)
+                loss_scaler.update()
+                
+                # Track loss scale after step and log changes
+                new_scale = loss_scaler.get_scale()
+                if old_scale != new_scale:
+                    print(f"Iteration {itr}: Loss scale changed from {old_scale} to {new_scale} (gradient overflow detected)")
+                elif itr < 20 or itr % 100 == 0:  # Log scale periodically for first 20 iterations or every 100
+                    print(f"Iteration {itr}: Loss scale = {new_scale} (no overflow)")
+                
+                # Only step scheduler if no overflow occurred (scale didn't change)
+                if old_scale == new_scale:
+                    scheduler.step()
+                else:
+                    print(f"Iteration {itr}: Skipping scheduler step due to gradient overflow")
+            else:
+                # Standard backward pass
                 loss.backward()
-            optimizer.step()
-            scheduler.step()
+                optimizer.step()
+                scheduler.step()
             
             for param in model.parameters():
                 param.data = param.data.clamp_(-1, 1)
@@ -539,6 +598,54 @@ def main():
             elapsed_time = time.perf_counter() - start_time
             peak_memory = torch.cuda.max_memory_allocated(device) / (1024 * 1024)        
             nfe_backward = -1
+
+            # Check for NaN or infinite loss (outside timed zone)
+            if not torch.isfinite(loss).all():
+                print(f"Training stopped at iteration {itr}: Loss is {'NaN' if torch.isnan(loss).any() else 'infinite'}")
+                print(f"Loss value: {loss.item()}")
+                print("Saving current model state before stopping...")
+                torch.save({
+                    'state_dict': model.state_dict(), 
+                    'args': args,
+                    'iteration': itr,
+                    'loss': loss.item()
+                }, ckpt_path.replace('.pth', '_emergency_stop.pth'))
+                return  # Exit the training function
+            
+            # Check for NaN gradients (outside timed zone)
+            # Only stop training for NaN gradients if we're not using gradient scaling
+            # When using GradScaler, NaN/inf gradients are expected and handled automatically
+            if loss_scaler is None:
+                has_nan_grad = False
+                for name, param in model.named_parameters():
+                    if param.grad is not None and not torch.isfinite(param.grad).all():
+                        print(f"Training stopped at iteration {itr}: NaN/infinite gradient detected in parameter '{name}'")
+                        print(f"Gradient stats - min: {param.grad.min().item()}, max: {param.grad.max().item()}")
+                        has_nan_grad = True
+                        break
+                
+                if has_nan_grad:
+                    print("Saving current model state before stopping...")
+                    torch.save({
+                        'state_dict': model.state_dict(), 
+                        'args': args,
+                        'iteration': itr,
+                        'loss': loss.item()
+                    }, ckpt_path.replace('.pth', '_gradient_nan_stop.pth'))
+                    return  # Exit the training function
+            else:
+                # When using gradient scaling, just log if we encounter NaN gradients
+                # but don't stop training as GradScaler handles this automatically
+                has_nan_grad = False
+                for name, param in model.named_parameters():
+                    if param.grad is not None and not torch.isfinite(param.grad).all():
+                        print(f"NaN/inf gradients detected in '{name}' at iteration {itr} - GradScaler will handle this")
+                        has_nan_grad = True
+                        break
+                
+                # Also log if we have finite gradients for comparison
+                if not has_nan_grad and (itr < 5 or itr % 50 == 0):
+                    print(f"Iteration {itr}: All gradients are finite")
 
             batch_time_meter.update(elapsed_time)
             f_nfe_meter.update(nfe_forward)

@@ -1,21 +1,16 @@
 #!/bin/bash
-# submit_large_experiments_local.sh
-# Usage: chmod +x submit_large_experiments_local.sh ; ./submit_large_experiments_local.sh
+# run_largeot.sh - Updated with gradient scaling test matrix
+# Usage: chmod +x run_largeot.sh ; ./run_largeot.sh
 
-datasets=("bsds300") #"power" "gas" "hepmass" "bsds300"
+datasets=("bsds300") #"power" "gas" "hepmass" "miniboone" "bsds300"
 
-# Per-dataset arguments
+# Per-dataset arguments - simplified for comparison tests
 declare -A dataset_args
-dataset_args[power]="--niters 36000 --alpha 1.0,500.0,5.0 --hidden_dim 128 --num_samples 10000 --lr 0.03 --num_timesteps 10 --num_timesteps_val 22 --num_samples_val 120000 --val_freq 30 --weight_decay 0.0 --drop_freq 0"
-dataset_args[gas]="--niters 60000 --alpha 1.0,1200.0,40.0 --hidden_dim 350 --num_samples 2000 --lr 0.01 --num_timesteps 10 --num_timesteps_val 28 --num_samples_val 55000 --val_freq 50 --weight_decay 0.0 --drop_freq 0 --early_stopping 20"
-dataset_args[hepmass]="--niters 40000 --alpha 1.0,500.0,40.0 --hidden_dim 256 --num_samples 2000 --lr 0.02 --num_timesteps 12 --num_timesteps_val 24 --num_samples_val 20000 --val_freq 50 --weight_decay 0.0 --drop_freq 0 --early_stopping 15"
-dataset_args[miniboone]="--niters 8000 --alpha 1.0,100.0,15.0 --hidden_dim 256 --num_samples 2000 --lr 0.02 --num_timesteps 6 --num_timesteps_val 10 --num_samples_val 5000 --val_freq 20 --weight_decay 0.0 --drop_freq 0 --early_stopping 15"
-dataset_args[bsds300]="--niters 120000 --alpha 1.0,2000.0,800.0 --hidden_dim 512 --num_samples 300 --lr 0.001 --num_timesteps 14 --num_timesteps_val 30 --num_samples_val 1000 --val_freq 100 --weight_decay 0.0 --drop_freq 0 --lr_drop 3.3 --early_stopping 15"
-
-# Grid search choices
-precisions=("float32" "tfloat32" "bfloat16" "float16")
-methods=("rk4")
-odeints=("torchmpnode")
+dataset_args[power]="--niters 5000 --hidden_dim 128 --num_samples 2000 --lr 0.02 --num_timesteps 8 --test_freq 50"
+dataset_args[gas]="--niters 5000 --hidden_dim 256 --num_samples 1000 --lr 0.01 --num_timesteps 8 --test_freq 50"
+dataset_args[hepmass]="--niters 5000 --hidden_dim 256 --num_samples 1000 --lr 0.02 --num_timesteps 8 --test_freq 50"
+dataset_args[miniboone]="--niters 5000 --hidden_dim 256 --num_samples 1000 --lr 0.02 --num_timesteps 8 --test_freq 50"
+dataset_args[bsds300]="--niters 5000 --hidden_dim 256 --num_samples 200 --lr 0.001 --num_timesteps 8 --test_freq 50"
 
 # Seed
 seed=42
@@ -23,26 +18,106 @@ seed=42
 # Make log directory
 mkdir -p slurm_logs
 
+echo "Running OTFlow Large Experiments with Gradient Scaling Comparison"
+echo "================================================================"
 
-# Loop!
+# Test 1: torchdiffeq and torchmpnode with no scaling in various precisions
+echo "Test 1: No scaling comparison - float32, tfloat32, bfloat16"
 for dataset in "${datasets[@]}"; do
-  for precision in "${precisions[@]}"; do
-    for method in "${methods[@]}"; do
-      for odeint in "${odeints[@]}"; do
-
-        # assemble the args
-        fixed_args=(
-          --viz
-          --precision "$precision"
-          --data "$dataset"
-          --method "$method"
-          --odeint "$odeint"
-          --seed "$seed"
-        )
-        extra_args=${dataset_args[$dataset]}
-        echo "Submitting job: ${fixed_args[*]} $extra_args"
-        sbatch job_otflowlarge.sbatch "${fixed_args[@]}" $extra_args
-      done
+  for precision in "float32" "tfloat32" "bfloat16"; do
+    for odeint in "torchdiffeq" "torchmpnode"; do
+      fixed_args=(
+        --precision "$precision"
+        --data "$dataset"
+        --method "rk4"
+        --odeint "$odeint"
+        --seed "$seed"
+        --no_grad_scaler
+        --no_dynamic_scaler
+      )
+      extra_args=${dataset_args[$dataset]}
+      echo "Submitting: $odeint $precision no-scaling - ${fixed_args[*]} $extra_args"
+      python otflowlarge.py "${fixed_args[@]}" $extra_args &
     done
   done
 done
+
+wait  # Wait for all background jobs to complete
+
+# Test 2: torchdiffeq in fp16 with and without grad scaling
+echo "Test 2: torchdiffeq fp16 scaling comparison"
+for dataset in "${datasets[@]}"; do
+  # torchdiffeq fp16 without grad scaling
+  fixed_args=(
+    --precision "float16"
+    --data "$dataset"
+    --method "rk4"
+    --odeint "torchdiffeq"
+    --seed "$seed"
+    --no_grad_scaler
+  )
+  extra_args=${dataset_args[$dataset]}
+  echo "Submitting: torchdiffeq float16 no-grad-scaler - ${fixed_args[*]} $extra_args"
+  python otflowlarge.py "${fixed_args[@]}" $extra_args &
+  
+  # torchdiffeq fp16 with grad scaling
+  fixed_args=(
+    --precision "float16"
+    --data "$dataset"
+    --method "rk4"
+    --odeint "torchdiffeq"
+    --seed "$seed"
+  )
+  extra_args=${dataset_args[$dataset]}
+  echo "Submitting: torchdiffeq float16 with-grad-scaler - ${fixed_args[*]} $extra_args"
+  python otflowlarge.py "${fixed_args[@]}" $extra_args &
+done
+
+wait  # Wait for all background jobs to complete
+
+# Test 3: torchmpnode in fp16 with different scaling options
+echo "Test 3: torchmpnode fp16 scaling comparison"
+for dataset in "${datasets[@]}"; do
+  # torchmpnode fp16 with no scaling
+  fixed_args=(
+    --precision "float16"
+    --data "$dataset"
+    --method "rk4"
+    --odeint "torchmpnode"
+    --seed "$seed"
+    --no_grad_scaler
+    --no_dynamic_scaler
+  )
+  extra_args=${dataset_args[$dataset]}
+  echo "Submitting: torchmpnode float16 no-scaling - ${fixed_args[*]} $extra_args"
+  python otflowlarge.py "${fixed_args[@]}" $extra_args &
+  
+  # torchmpnode fp16 with only grad scaling
+  fixed_args=(
+    --precision "float16"
+    --data "$dataset"
+    --method "rk4"
+    --odeint "torchmpnode"
+    --seed "$seed"
+    --no_dynamic_scaler
+  )
+  extra_args=${dataset_args[$dataset]}
+  echo "Submitting: torchmpnode float16 only-grad-scaler - ${fixed_args[*]} $extra_args"
+  python otflowlarge.py "${fixed_args[@]}" $extra_args &
+  
+  # torchmpnode fp16 with only dynamic scaling (default)
+  fixed_args=(
+    --precision "float16"
+    --data "$dataset"
+    --method "rk4"
+    --odeint "torchmpnode"
+    --seed "$seed"
+    --no_grad_scaler
+  )
+  extra_args=${dataset_args[$dataset]}
+  echo "Submitting: torchmpnode float16 only-dynamic-scaler - ${fixed_args[*]} $extra_args"
+  python otflowlarge.py "${fixed_args[@]}" $extra_args &
+done
+
+wait  # Wait for all background jobs to complete
+echo "All experiments submitted!"

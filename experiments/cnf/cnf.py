@@ -2,9 +2,7 @@
 import os, sys
 job_id = os.environ.get("SLURM_JOB_ID", "")
 import argparse
-import logging
 import time
-import json
 import random
 import numpy as np
 import torch
@@ -26,38 +24,43 @@ def create_parser():
     """Create and return the argument parser."""
     parser = argparse.ArgumentParser()
     
-    # Data and visualization
-    parser.add_argument(
-        '--data', choices=['swissroll', '8gaussians', 'pinwheel', 'circles', 'moons', '2spirals', 'checkerboard', 'rings'],
-        type=str, default='swissroll')
-    parser.add_argument('--viz', default=True, action='store_true')
-    
     # Training parameters
     parser.add_argument('--niters', type=int, default=2000)
-    parser.add_argument('--test_freq', type=int, default=20)
     parser.add_argument('--lr', type=float, default=1e-2)
     parser.add_argument('--num_samples', type=int, default=1024)
     parser.add_argument('--num_samples_val', type=int, default=1024)
     parser.add_argument('--num_timesteps', type=int, default=128)
     
-    # Model parameters
-    parser.add_argument('--width', type=int, default=128)
-    parser.add_argument('--hidden_dim', type=int, default=32)
-    
-    # Method and precision
+    # ODE solver arguments
     parser.add_argument('--method', type=str, choices=['rk4', 'euler'], default='rk4')
     parser.add_argument('--precision', type=str, choices=['tfloat32', 'float32', 'float16', 'bfloat16'], default='float32')
     parser.add_argument('--odeint', type=str, choices=['torchdiffeq', 'torchmpnode'], default='torchmpnode')
-    parser.add_argument('--scaler', type=str, choices=['noscaler', 'dynamicscaler'], default='dynamicscaler')
-    
-    # Legacy arguments for compatibility
     parser.add_argument('--adjoint', action='store_true')
     
-    # Experiment setup
+    # Gradient scaling arguments
+    parser.add_argument('--no_grad_scaler', action='store_true',
+                        help='Disable GradScaler for torchdiffeq with float16 (default: enabled)')
+    parser.add_argument('--no_dynamic_scaler', action='store_true',
+                        help='Disable DynamicScaler for torchmpnode with float16 (default: enabled)')
+    
+    # Data arguments
+    parser.add_argument('--data', choices=['swissroll', '8gaussians', 'pinwheel', 'circles', 'moons', '2spirals', 'checkerboard', 'rings'],
+                        type=str, default='swissroll', help="Dataset to use")
+    
+    # Model arguments
+    parser.add_argument('--width', type=int, default=128)
+    parser.add_argument('--hidden_dim', type=int, default=32)
+    
+    # Experiment arguments
+    parser.add_argument('--test_freq', type=int, default=20)
     parser.add_argument('--results_dir', type=str, default='./results')
     parser.add_argument('--seed', type=int, default=0)
     parser.add_argument('--debug', action='store_true')
     parser.add_argument('--gpu', type=int, default=0)
+    
+    # Visualization
+    parser.add_argument('--viz', action='store_true', default=True,
+                        help="Generate flow visualizations")
     
     return parser
 
@@ -69,31 +72,24 @@ def setup_environment(args):
     
     if args.odeint == 'torchmpnode':
         print("Using torchmpnode")
-        assert args.method == 'rk4' 
         sys.path.insert(0, base_dir)
-        from torchmpnode import odeint, NoScaler, DynamicScaler
-        scaler_map = {
-            'noscaler': NoScaler,
-            'dynamicscaler': DynamicScaler
-        }
-        return odeint, scaler_map[args.scaler]
+        from torchmpnode import odeint, DynamicScaler
+        return odeint, DynamicScaler
     else:    
         print("using torchdiffeq")
         try:
             if args.adjoint:
                 from torchdiffeq import odeint_adjoint as odeint
+                print("Warning: Using torchdiffeq with adjoint method, which is not recommended for low precision training.")
+                
             else:
                 from torchdiffeq import odeint
             return odeint, None
         except ImportError:
             print("torchdiffeq not available, falling back to torchmpnode")
             sys.path.insert(0, base_dir)
-            from torchmpnode import odeint, NoScaler, DynamicScaler
-            scaler_map = {
-                'noscaler': NoScaler,
-                'dynamicscaler': DynamicScaler
-            }
-            return odeint, scaler_map.get(args.scaler, DynamicScaler)
+            from torchmpnode import odeint, DynamicScaler
+            return odeint, DynamicScaler
 
 def get_precision_dtype(precision_str):
     """Convert precision string to torch dtype."""
@@ -314,6 +310,10 @@ def main():
     parser = create_parser()
     args = parser.parse_args()
     
+    # Set derived boolean values based on flags
+    args.grad_scaler = not args.no_grad_scaler
+    args.dynamic_scaler = not args.no_dynamic_scaler
+    
     # Set random seeds for reproducibility
     if args.seed is not None:
         print(f"Setting random seed to {args.seed}")
@@ -327,7 +327,7 @@ def main():
         print("No seed specified, using random initialization")
     
     # Setup environment and imports
-    odeint_func, scaler_class = setup_environment(args)
+    odeint_func, DynamicScaler = setup_environment(args)
     
     # Import utilities after setting up the path
     from utils import RunningAverageMeter, RunningMaximumMeter
@@ -367,20 +367,25 @@ def main():
         time_meter = RunningAverageMeter()
         mem_meter = RunningMaximumMeter()
 
-        # Setup solver kwargs and loss scaling
-        if args.odeint == 'torchmpnode' and scaler_class is not None:
-            scaler = scaler_class(dtype_low=precision)
+        # Setup loss scaler for torchdiffeq with float16
+        loss_scaler = None
+        if args.odeint == 'torchdiffeq' and args.precision == 'float16' and args.grad_scaler:
+            from torch.amp import GradScaler
+            loss_scaler = GradScaler('cuda')
+            print(f"Using PyTorch GradScaler for float16 precision with torchdiffeq (initial scale: {loss_scaler.get_scale()})")
+        elif args.odeint == 'torchmpnode' and args.precision == 'float16' and not args.dynamic_scaler and args.grad_scaler:
+            # Special case: torchmpnode with dynamic scaler disabled but grad scaler enabled
+            from torch.amp import GradScaler
+            loss_scaler = GradScaler('cuda')
+            print(f"Using PyTorch GradScaler for float16 precision with torchmpnode (DynamicScaler disabled) (initial scale: {loss_scaler.get_scale()})")
+        
+        # Setup solver kwargs for torchmpnode
+        solver_kwargs = {}
+        if args.odeint == 'torchmpnode' and args.precision == 'float16' and args.dynamic_scaler:
+            # Use DynamicScaler for torchmpnode
+            scaler = DynamicScaler(precision)
             solver_kwargs = {'loss_scaler': scaler}
-            loss_scaler = None  # torchmpnode handles its own scaling
-        else:
-            solver_kwargs = {}
-            # Use PyTorch's GradScaler for torchdiffeq with float16
-            if args.precision == 'float16':
-                from torch.cuda.amp import GradScaler
-                loss_scaler = GradScaler()
-                print("Using PyTorch GradScaler for float16 precision with torchdiffeq")
-            else:
-                loss_scaler = None
+            print(f"Using DynamicScaler for float16 precision with torchmpnode")
 
         # Setup CSV logging
         csv_path = os.path.join(result_dir, folder_name + ".csv")
@@ -427,12 +432,22 @@ def main():
                 logp_x = p_z0.log_prob(z_t0) - logp_diff_t0.view(-1)
                 loss = -logp_x.mean(0)
 
-            # Handle backward pass with optional loss scaling
+            # Handle backward pass with or without loss scaling
             if loss_scaler is not None:
-                # Scale loss and backward pass for float16 with torchdiffeq
+                # Track loss scale before step
+                old_scale = loss_scaler.get_scale()
+                
+                # Use gradient scaling for torchdiffeq with float16
                 loss_scaler.scale(loss).backward()
                 loss_scaler.step(optimizer)
                 loss_scaler.update()
+                
+                # Track loss scale after step and log changes
+                new_scale = loss_scaler.get_scale()
+                if old_scale != new_scale:
+                    print(f"Iteration {itr}: Loss scale changed from {old_scale} to {new_scale} (gradient overflow detected)")
+                elif itr < 20 or itr % 100 == 0:  # Log scale periodically for first 20 iterations or every 100
+                    print(f"Iteration {itr}: Loss scale = {new_scale} (no overflow)")
             else:
                 # Standard backward pass
                 loss.backward()
@@ -462,6 +477,26 @@ def main():
                     'loss': loss.item()
                 }, ckpt_path.replace('.pth', '_emergency_stop.pth'))
                 break
+            
+            # Check for NaN gradients (only if not using gradient scaling)
+            if loss_scaler is None:
+                has_nan_grad = False
+                for name, param in func.named_parameters():
+                    if param.grad is not None and not torch.isfinite(param.grad).all():
+                        print(f"Training stopped at iteration {itr}: NaN/infinite gradient detected in parameter '{name}'")
+                        print(f"Gradient stats - min: {param.grad.min().item()}, max: {param.grad.max().item()}")
+                        has_nan_grad = True
+                        break
+                
+                if has_nan_grad:
+                    print("Saving current model state before stopping...")
+                    torch.save({
+                        'func_state_dict': func.state_dict(), 
+                        'optimizer_state_dict': optimizer.state_dict(),
+                        'iteration': itr,
+                        'loss': loss.item()
+                    }, ckpt_path.replace('.pth', '_gradient_nan_stop.pth'))
+                    break
 
             # Evaluate and log every test_freq iterations
             if itr % args.test_freq == 0:

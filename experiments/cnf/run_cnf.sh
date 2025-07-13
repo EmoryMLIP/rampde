@@ -1,52 +1,126 @@
 #!/bin/bash
-# submit_data_loop.sh
-# Usage:
-#   chmod +x submit_data_loop.sh
-#   ./submit_data_loop.sh
+# run_cnf.sh - CNF gradient scaling comparison experiments
+# Usage: chmod +x run_cnf.sh ; ./run_cnf.sh
 
-# ========== USER CONFIG ==========
-# All the choices for your --data argument
 datasets=("pinwheel" "2spirals")
-precisions=( "bfloat16" "float16" "float32"  )
-methods=("rk4")
-odeints=("torchdiffeq" "torchmpnode") # "torchdiffeq" 
-num_timesteps_list=(32 64 128 )
 
-# Default args (everything except --data and --num_timesteps)
-# CORRECT: an array, so each flag and value is its own element
-# Note: removed --train_dir and --results_dir as they are automatically handled by setup_experiment()
-default_args=(
-  --niters 2000
-  --test_freq 20
-  --num_samples 1024
-  --num_samples_val 1024
-  --width 128
-  --hidden_dim 32
-  --scaler dynamicscaler
-)
+# Per-dataset arguments - simplified for comparison tests
+declare -A dataset_args
+dataset_args[pinwheel]="--niters 2000 --hidden_dim 32 --num_samples 1024 --lr 0.01 --num_timesteps 128 --test_freq 20"
+dataset_args[2spirals]="--niters 2000 --hidden_dim 32 --num_samples 1024 --lr 0.01 --num_timesteps 128 --test_freq 20"
 
+# Seed
 seed=42
+
+# Make log directory
 mkdir -p slurm_logs
 
-for data in "${datasets[@]}"; do
-  for precision in "${precisions[@]}"; do
-    for method in "${methods[@]}"; do
-      for odeint in "${odeints[@]}"; do
-        for num_timesteps in "${num_timesteps_list[@]}"; do
-          fixed_args=(
-            --viz
-            --precision "$precision"
-            --data "$data"
-            --method "$method"
-            --odeint "$odeint"
-            --num_timesteps "$num_timesteps"
-            --seed "$seed"
-          )
-          echo "↪ Running: --data=$data --precision=$precision --method=$method --odeint=$odeint --num_timesteps=$num_timesteps"
-          sbatch --account=mathg3 job_cnf.sbatch "${fixed_args[@]}" "${default_args[@]}"
-          sleep 2
-        done
-      done
+echo "Running CNF Experiments with Gradient Scaling Comparison"
+echo "======================================================="
+
+# Test 1: torchdiffeq and torchmpnode with no scaling in various precisions
+echo "Test 1: No scaling comparison - float32, tfloat32, bfloat16"
+for dataset in "${datasets[@]}"; do
+  for precision in "float32" "tfloat32" "bfloat16"; do
+    for odeint in "torchdiffeq" "torchmpnode"; do
+      fixed_args=(
+        --precision "$precision"
+        --data "$dataset"
+        --method "rk4"
+        --odeint "$odeint"
+        --seed "$seed"
+        --no_grad_scaler
+        --no_dynamic_scaler
+        --viz
+      )
+      extra_args=${dataset_args[$dataset]}
+      echo "Submitting: $odeint $precision no-scaling - ${fixed_args[*]} $extra_args"
+      python cnf.py "${fixed_args[@]}" $extra_args &
     done
   done
 done
+
+wait  # Wait for all background jobs to complete
+
+# Test 2: torchdiffeq in fp16 with and without grad scaling
+echo "Test 2: torchdiffeq fp16 scaling comparison"
+for dataset in "${datasets[@]}"; do
+  # torchdiffeq fp16 without grad scaling
+  fixed_args=(
+    --precision "float16"
+    --data "$dataset"
+    --method "rk4"
+    --odeint "torchdiffeq"
+    --seed "$seed"
+    --no_grad_scaler
+    --viz
+  )
+  extra_args=${dataset_args[$dataset]}
+  echo "Submitting: torchdiffeq float16 no-grad-scaler - ${fixed_args[*]} $extra_args"
+  python cnf.py "${fixed_args[@]}" $extra_args &
+  
+  # torchdiffeq fp16 with grad scaling
+  fixed_args=(
+    --precision "float16"
+    --data "$dataset"
+    --method "rk4"
+    --odeint "torchdiffeq"
+    --seed "$seed"
+    --viz
+  )
+  extra_args=${dataset_args[$dataset]}
+  echo "Submitting: torchdiffeq float16 with-grad-scaler - ${fixed_args[*]} $extra_args"
+  python cnf.py "${fixed_args[@]}" $extra_args &
+done
+
+wait  # Wait for all background jobs to complete
+
+# Test 3: torchmpnode in fp16 with different scaling options
+echo "Test 3: torchmpnode fp16 scaling comparison"
+for dataset in "${datasets[@]}"; do
+  # torchmpnode fp16 with no scaling
+  fixed_args=(
+    --precision "float16"
+    --data "$dataset"
+    --method "rk4"
+    --odeint "torchmpnode"
+    --seed "$seed"
+    --no_grad_scaler
+    --no_dynamic_scaler
+    --viz
+  )
+  extra_args=${dataset_args[$dataset]}
+  echo "Submitting: torchmpnode float16 no-scaling - ${fixed_args[*]} $extra_args"
+  python cnf.py "${fixed_args[@]}" $extra_args &
+  
+  # torchmpnode fp16 with only grad scaling
+  fixed_args=(
+    --precision "float16"
+    --data "$dataset"
+    --method "rk4"
+    --odeint "torchmpnode"
+    --seed "$seed"
+    --no_dynamic_scaler
+    --viz
+  )
+  extra_args=${dataset_args[$dataset]}
+  echo "Submitting: torchmpnode float16 only-grad-scaler - ${fixed_args[*]} $extra_args"
+  python cnf.py "${fixed_args[@]}" $extra_args &
+  
+  # torchmpnode fp16 with only dynamic scaling (default)
+  fixed_args=(
+    --precision "float16"
+    --data "$dataset"
+    --method "rk4"
+    --odeint "torchmpnode"
+    --seed "$seed"
+    --no_grad_scaler
+    --viz
+  )
+  extra_args=${dataset_args[$dataset]}
+  echo "Submitting: torchmpnode float16 only-dynamic-scaler - ${fixed_args[*]} $extra_args"
+  python cnf.py "${fixed_args[@]}" $extra_args &
+done
+
+wait  # Wait for all background jobs to complete
+echo "All experiments submitted!"
