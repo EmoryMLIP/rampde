@@ -1,5 +1,6 @@
 #!/bin/bash
 #SBATCH --job-name=otflow
+#SBATCH --account=mathg3
 #SBATCH --output=slurm_logs/otflow_%j.out
 #SBATCH --error=slurm_logs/otflow_%j.err
 #SBATCH --time=02:00:00

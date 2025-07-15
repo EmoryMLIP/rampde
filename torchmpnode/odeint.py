@@ -37,7 +37,10 @@ def odeint(func, y0, t, *, method='rk4', atol=None, rtol=None, loss_scaler = Non
         # We can choose to pass None (and let the backward create one) or create a new scaler here.
         # For simplicity, let’s create a new instance here.
         dtype_low = torch.get_autocast_dtype('cuda') if torch.is_autocast_enabled() else torch.float32
-        loss_scaler = DynamicScaler(dtype_low=dtype_low)
+        if dtype_low == torch.float16:
+            loss_scaler = DynamicScaler(dtype_low=dtype_low)
+        else:
+            loss_scaler = NoScaler(dtype_low)
     
     solver = SOLVERS[method]()
     params = func.parameters()

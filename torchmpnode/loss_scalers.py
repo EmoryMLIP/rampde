@@ -39,8 +39,8 @@ class NoScaler:
         return False
     
     def update_on_overflow(self):
-        # throw an error
-        raise RuntimeError("Overflow detected, but NoScaler does not handle scaling.")
+        # NoScaler cannot handle overflow - raise OverflowError
+        raise OverflowError("NoScaler cannot handle gradient overflow")
     
     def update_on_small_grad(self):
         pass
@@ -81,8 +81,7 @@ class DynamicScaler(NoScaler):
     def update_on_overflow(self):
         """
         Update the scaling factor on overflow (multiply S by decrease_factor) and
-        scale each of the provided arguments by decrease_factor. Returns a tuple of
-        scaled inputs in the same order. Optionally apply scaling in place.
+        scale each of the provided arguments by decrease_factor.
         """
         self.S *= self.decrease_factor
 

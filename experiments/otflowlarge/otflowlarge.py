@@ -4,10 +4,8 @@ job_id = os.environ.get("SLURM_JOB_ID", "")
 import argparse
 import time
 import random
-import glob
 import csv
 import shutil
-from PIL import Image
 import numpy as np
 import matplotlib
 matplotlib.use('agg')
@@ -46,6 +44,10 @@ def create_parser():
     parser.add_argument('--lr_decay', type=float, default=.5)
     parser.add_argument('--lr_decay_steps', type=int, default=20)
     parser.add_argument('--weight_decay', type=float, default=0.0)
+    parser.add_argument('--early_stopping', type=int, default=20,
+                        help='Stop after this many validation checks without improvement')
+    parser.add_argument('--no_early_stopping', action='store_true',
+                        help='Disable early stopping (run for full niters)')
     
     # Data arguments
     parser.add_argument('--data', type=str, default='miniboone',
@@ -77,16 +79,16 @@ def create_parser():
 
 def setup_environment(args):
     """Setup the environment and imports based on args."""
-    # Set up path for utils import
-    base_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), '..'))
-    sys.path.insert(0, base_dir)
-    sys.path.insert(0, os.path.join(base_dir, "src"))  # for mmd import
-    sys.path.insert(0, os.path.join(base_dir, "examples"))  # for datasets, Phi, utils
+    # Set up paths for both solvers
+    base_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), '../..'))
+    sys.path.insert(0, os.path.join(base_dir, "examples"))  # for datasets, utils
+    sys.path.insert(0, base_dir)  # Add root directory for torchmpnode import
     
     if args.odeint == 'torchmpnode':
         print("Using torchmpnode")
-        from torchmpnode import odeint, DynamicScaler
-        return odeint, DynamicScaler
+        from torchmpnode import odeint
+        from torchmpnode.loss_scalers import DynamicScaler, NoScaler
+        return odeint, DynamicScaler, NoScaler
     else:    
         print("using torchdiffeq")
         if args.adjoint:
@@ -94,7 +96,7 @@ def setup_environment(args):
             print("Warning: Using torchdiffeq with adjoint method, which is not recommended for low precision training.")                
         else:
             from torchdiffeq import odeint
-        return odeint, None
+        return odeint, None, None
 
 def get_precision_dtype(precision_str):
     """Convert precision string to torch dtype."""
@@ -117,31 +119,33 @@ def setup_precision(precision_str):
         torch.backends.cudnn.allow_tf32 = True
         print("Using TF32 precision")
 
-def determine_scaler(args, DynamicScaler, precision):
-    """Determine which scaler to use and return (scaler_instance, scaler_name)."""
+def determine_scaler(args, DynamicScaler, NoScaler, precision):
+    """Determine which scaler to use and return (scaler_instance, scaler_name, loss_scaler_for_odeint)."""
     if args.odeint == 'torchdiffeq' and args.precision == 'float16' and args.grad_scaler:
         from torch.amp import GradScaler
         scaler = GradScaler('cuda')
         scaler_name = 'grad'
         print(f"Using PyTorch GradScaler for float16 precision with torchdiffeq (initial scale: {scaler.get_scale()})")
-        return scaler, scaler_name
+        return scaler, scaler_name, None
     elif args.odeint == 'torchmpnode' and args.precision == 'float16' and not args.dynamic_scaler and args.grad_scaler:
         # Special case: torchmpnode with dynamic scaler disabled but grad scaler enabled
         from torch.amp import GradScaler
         scaler = GradScaler('cuda')
         scaler_name = 'grad'
+        # Provide NoScaler for torchmpnode to avoid DynamicScaler initialization
+        loss_scaler_for_odeint = NoScaler(precision)
         print(f"Using PyTorch GradScaler for float16 precision with torchmpnode (DynamicScaler disabled) (initial scale: {scaler.get_scale()})")
-        return scaler, scaler_name
+        return scaler, scaler_name, loss_scaler_for_odeint
     elif args.odeint == 'torchmpnode' and args.precision == 'float16' and args.dynamic_scaler:
         # Initialize DynamicScaler once for reuse during training
         scaler = DynamicScaler(precision)
         scaler_name = 'dynamic'
         print("Using DynamicScaler for float16 precision with torchmpnode")
-        return scaler, scaler_name
+        return scaler, scaler_name, scaler
     else:
-        return None, None
+        return None, None, None
 
-def setup_experiment(args, base_dir, DynamicScaler=None, precision=None):
+def setup_experiment(args, base_dir, DynamicScaler=None, NoScaler=None, precision=None):
     """Setup experiment directories, logging, and environment."""
     job_id = os.environ.get("SLURM_JOB_ID", "")
     
@@ -153,7 +157,7 @@ def setup_experiment(args, base_dir, DynamicScaler=None, precision=None):
     args.dynamic_scaler = not args.no_dynamic_scaler
     
     # Determine scaler type and create folder name with scaler info
-    loss_scaler, scaler_name = determine_scaler(args, DynamicScaler, precision)
+    loss_scaler, scaler_name, loss_scaler_for_odeint = determine_scaler(args, DynamicScaler, NoScaler, precision)
     
     timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
     # Build folder name with scaler type
@@ -161,7 +165,7 @@ def setup_experiment(args, base_dir, DynamicScaler=None, precision=None):
     if scaler_name:
         precision_scaler = f"{args.precision}_{scaler_name}"
     
-    folder_name = f"{precision_scaler}_{args.odeint}_{args.method}_{seed_str}_{timestamp}"
+    folder_name = f"{args.data}_{precision_scaler}_{args.odeint}_{args.method}_{seed_str}_{timestamp}"
     result_dir = os.path.join(base_dir, "results", "otflowlarge", folder_name)
     ckpt_path = os.path.join(result_dir, 'ckpt.pth')
     os.makedirs(result_dir, exist_ok=True)
@@ -210,7 +214,7 @@ def setup_experiment(args, base_dir, DynamicScaler=None, precision=None):
     print("SLURM job id", job_id)
     print("Model checkpoint path:", ckpt_path)
     
-    return result_dir, ckpt_path, folder_name, device, log_file, loss_scaler
+    return result_dir, ckpt_path, folder_name, device, log_file, loss_scaler, loss_scaler_for_odeint
 
 
 def get_minibatch(X, num_samples):
@@ -221,12 +225,14 @@ def get_minibatch(X, num_samples):
     return x, z.clone(), z.clone(), z.clone()
 
 class OTFlow(nn.Module):
-    def __init__(self, in_out_dim, hidden_dim, alpha=[1.0]*2):
+    def __init__(self, in_out_dim, hidden_dim, alpha=[1.0]*2, Phi_class=None):
         super().__init__()
         self.in_out_dim = in_out_dim
         self.hidden_dim = hidden_dim
         self.alpha = alpha
-        self.Phi = Phi(2, hidden_dim, in_out_dim, alph=alpha)
+        if Phi_class is None:
+            raise ValueError("Phi_class must be provided")
+        self.Phi = Phi_class(2, hidden_dim, in_out_dim, alph=alpha)
 
     def forward(self, t, states):
         x = states[0]
@@ -241,17 +247,18 @@ class OTFlow(nn.Module):
         cost_HJB_dt = torch.abs(-dPhi_dt + self.alpha[0]*cost_L_dt)
         return dz_dt, dlogp_dt, cost_L_dt, cost_HJB_dt
 
-def load_data(name):
+def load_data(name, datasets_module):
+    """Load dataset using the datasets module passed from main()."""
     if name == 'bsds300':
-        return datasets.BSDS300()
+        return datasets_module.BSDS300()
     elif name == 'power':
-        return datasets.POWER()
+        return datasets_module.POWER()
     elif name == 'gas':
-        return datasets.GAS()
+        return datasets_module.GAS()
     elif name == 'hepmass':
-        return datasets.HEPMASS()
+        return datasets_module.HEPMASS()
     elif name == 'miniboone':
-        return datasets.MINIBOONE()
+        return datasets_module.MINIBOONE()
     else:
         raise ValueError('Unknown dataset')
         
@@ -284,26 +291,26 @@ def main():
         print("No seed specified, using random initialization")
     
     # Setup environment and imports
-    odeint_func, DynamicScaler = setup_environment(args)
+    odeint_func, DynamicScaler, NoScaler = setup_environment(args)
     
-    # Import utilities after setting up the path
+    # Import utilities after setting up the path  
+    from utils import RunningAverageMeter, RunningMaximumMeter
     from mmd import mmd
     import datasets
     from Phi import Phi
-    from utils import RunningAverageMeter, RunningMaximumMeter
     
     # Get precision settings
     precision = get_precision_dtype(args.precision)
     
-    # Get base directory
-    base_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), '..'))
+    # Get base directory (torchmpnode root)
+    base_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), '../..'))
     
     # Setup experiment directories and logging
-    result_dir, ckpt_path, folder_name, device, log_file, loss_scaler = setup_experiment(args, base_dir, DynamicScaler, precision)
+    result_dir, ckpt_path, folder_name, device, log_file, loss_scaler, loss_scaler_for_odeint = setup_experiment(args, base_dir, DynamicScaler, NoScaler, precision)
     
     try:
         # load data
-        data = load_data(args.data)
+        data = load_data(args.data, datasets)
         train_x = torch.from_numpy(data.trn.x).float().to(device)
         val_x   = torch.from_numpy(data.val.x).float().to(device)
         d       = train_x.size(1)
@@ -312,7 +319,7 @@ def main():
         # setup model, optimizer, meters
         t0, t1 = 0.0, 1.0
         alpha  = args.alpha
-        func   = OTFlow(in_out_dim=d, hidden_dim=args.hidden_dim, alpha=alpha).to(device)
+        func   = OTFlow(in_out_dim=d, hidden_dim=args.hidden_dim, alpha=alpha, Phi_class=Phi).to(device)
         optimizer = optim.Adam(func.parameters(), lr=args.lr, weight_decay=args.weight_decay)
         cov = torch.eye(d, device=device) * 0.1
         p_z0 = torch.distributions.MultivariateNormal(
@@ -341,37 +348,41 @@ def main():
         ])
 
         # Check if a saved model exists and load it
-        ckpts = glob.glob(os.path.join(result_dir, "model_iter_*.pt"))
-        if ckpts:
-            latest_ckpt = max(ckpts, key=os.path.getctime)
-            cp = torch.load(latest_ckpt, map_location=device)
+        if os.path.exists(ckpt_path):
+            cp = torch.load(ckpt_path, map_location=device)
             func.load_state_dict(cp['model_state_dict'])
             optimizer.load_state_dict(cp['optimizer_state_dict'])
-            print(f"Loaded checkpoint {latest_ckpt}")
+            print(f"Loaded checkpoint {ckpt_path}")
         else:
             clampMax, clampMin = 5, -5
-            for itr in range(1, args.niters+1):
+            
+            # Early stopping variables
+            best_val_loss = float('inf')
+            n_vals_wo_improve = 0
+            lr_reductions = 0
+            
+            itr = 1
+            while itr <= args.niters:
                 optimizer.zero_grad()
                 z0, logp0, cL0, cH0 = get_minibatch(train_x, args.num_samples)
                 torch.cuda.synchronize()
                 torch.cuda.reset_peak_memory_stats(device)
                 start = time.perf_counter()
 
-                # clamp & grad clip
+                # clamp parameters
                 for p in func.parameters():
                     p.data = torch.clamp(p.data, clampMin, clampMax)
-                torch.nn.utils.clip_grad_norm_(func.parameters(), max_norm=2.0)
 
                 with autocast(device_type='cuda', dtype=precision):
                     ts = torch.linspace(t0, t1, args.num_timesteps, device=device)
-                    if args.odeint == 'torchmpnode' and args.precision == 'float16' and args.dynamic_scaler:
-                        # Use pre-initialized DynamicScaler
+                    if loss_scaler_for_odeint is not None:
+                        # Use the specific loss scaler for odeint (DynamicScaler or NoScaler)
                         z_t, logp_t, cL_t, cH_t = odeint_func(
                             func,
                             (z0, logp0, cL0, cH0),
                             ts,
                             method=args.method,
-                            loss_scaler=loss_scaler
+                            loss_scaler=loss_scaler_for_odeint
                         )
                     else:
                         z_t, logp_t, cL_t, cH_t = odeint_func(
@@ -393,6 +404,24 @@ def main():
                     
                     # Use gradient scaling for torchdiffeq with float16
                     loss_scaler.scale(loss).backward()
+                    
+                    # Debug: Print gradient dtypes and check for inf/nan
+                    if itr <= 5:  # Only for first few iterations
+                        print(f"\n=== Iteration {itr} Gradient Debug ===")
+                        print(f"{'Parameter':<25} {'Dtype':<10} {'Shape':<20} {'HasGrad':<8} {'IsFinite':<8} {'Min':<12} {'Max':<12}")
+                        print("-" * 100)
+                        for name, param in func.named_parameters():
+                            if param.grad is not None:
+                                is_finite = torch.isfinite(param.grad).all().item()
+                                grad_min = param.grad.min().item() if is_finite else float('inf')
+                                grad_max = param.grad.max().item() if is_finite else float('inf')
+                                print(f"{name:<25} {str(param.grad.dtype):<10} {str(param.grad.shape):<20} {'Yes':<8} {str(is_finite):<8} {grad_min:<12.4e} {grad_max:<12.4e}")
+                            else:
+                                print(f"{name:<25} {'N/A':<10} {str(param.shape):<20} {'No':<8} {'N/A':<8} {'N/A':<12} {'N/A':<12}")
+                        print("=" * 100)
+                    
+                    # Gradient clipping after backward pass
+                    torch.nn.utils.clip_grad_norm_(func.parameters(), max_norm=2.0)
                     loss_scaler.step(optimizer)
                     loss_scaler.update()
                     
@@ -405,6 +434,8 @@ def main():
                 else:
                     # Standard backward pass (for DynamicScaler or no scaler)
                     loss.backward()
+                    # Gradient clipping after backward pass
+                    torch.nn.utils.clip_grad_norm_(func.parameters(), max_norm=2.0)
                     optimizer.step()
                 torch.cuda.synchronize()
                 elapsed = time.perf_counter() - start
@@ -472,6 +503,37 @@ def main():
                     print(f"[Iter {itr:5d}] train loss {loss_meter.avg:.4f}, "
                           f"val loss {loss_val:.4f}, time {time_meter.avg:.3f}s, "
                           f"mem {mem_meter.max:.0f}MB")
+                    
+                    # Early stopping logic (only if not disabled)
+                    if not args.no_early_stopping:
+                        if loss_val.item() < best_val_loss:
+                            best_val_loss = loss_val.item()
+                            n_vals_wo_improve = 0
+                            print(f"New best validation loss: {best_val_loss:.6f}")
+                            # Save best model
+                            torch.save({
+                                'iteration': itr,
+                                'model_state_dict': func.state_dict(),
+                                'optimizer_state_dict': optimizer.state_dict(),
+                                'loss': loss_meter.avg,
+                                'val_loss': best_val_loss,
+                            }, ckpt_path)
+                            print(f"Best model saved at {ckpt_path}")
+                        else:
+                            n_vals_wo_improve += 1
+                            print(f"No improvement for {n_vals_wo_improve} validation checks")
+                            
+                            if n_vals_wo_improve >= args.early_stopping:
+                                if lr_reductions >= 2:
+                                    print(f"Early stopping engaged after {lr_reductions+1} LR reductions")
+                                    break
+                                else:
+                                    # Reduce learning rate
+                                    for g in optimizer.param_groups:
+                                        g['lr'] *= args.lr_decay
+                                    lr_reductions += 1
+                                    n_vals_wo_improve = 0  # Reset counter after LR reduction
+                                    print(f"Reduced LR to {optimizer.param_groups[0]['lr']:.2e} (reduction #{lr_reductions})")
 
                     # write one row to CSV
                     csv_writer.writerow([
@@ -490,20 +552,24 @@ def main():
                     ])
                     csv_file.flush()
 
-                    # save checkpoint
-                    model_ckpt_path = os.path.join(result_dir, f"model_iter_{itr}.pt")
-                    torch.save({
-                        'iteration': itr,
-                        'model_state_dict': func.state_dict(),
-                        'optimizer_state_dict': optimizer.state_dict(),
-                        'loss': loss_meter.avg,
-                    }, model_ckpt_path)
-                    print(f"Model checkpoint saved at {model_ckpt_path}")
-
-                if itr == args.lr_decay_steps:
+                # Original LR decay schedule (only if early stopping disabled or not yet triggered)
+                if args.no_early_stopping and itr == args.lr_decay_steps:
                     for g in optimizer.param_groups:
                         g['lr'] *= args.lr_decay
-                    print(f"Decayed LR to {optimizer.param_groups[0]['lr']}")
+                    print(f"Scheduled LR decay to {optimizer.param_groups[0]['lr']}")
+                
+                # Increment iteration counter for while loop
+                itr += 1
+
+        # Save final model
+        final_model_path = ckpt_path.replace('.pth', '_final.pth')
+        torch.save({
+            'iteration': itr-1,
+            'model_state_dict': func.state_dict(),
+            'optimizer_state_dict': optimizer.state_dict(),
+            'loss': loss_meter.avg,
+        }, final_model_path)
+        print(f"Final model saved at {final_model_path}")
 
     except KeyboardInterrupt:
         print("Interrupted. Exiting training loop.")

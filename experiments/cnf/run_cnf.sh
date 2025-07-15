@@ -2,11 +2,12 @@
 # run_cnf.sh - CNF gradient scaling comparison experiments
 # Usage: chmod +x run_cnf.sh ; ./run_cnf.sh
 
-datasets=("pinwheel" "2spirals")
+datasets=("checkerboard" "8gaussians" "2spirals")
 
 # Per-dataset arguments - simplified for comparison tests
 declare -A dataset_args
-dataset_args[pinwheel]="--niters 2000 --hidden_dim 32 --num_samples 1024 --lr 0.01 --num_timesteps 128 --test_freq 20"
+dataset_args[checkerboard]="--niters 2000 --hidden_dim 32 --num_samples 1024 --lr 0.01 --num_timesteps 128 --test_freq 20"
+dataset_args[8gaussians]="--niters 2000 --hidden_dim 32 --num_samples 1024 --lr 0.01 --num_timesteps 128 --test_freq 20"
 dataset_args[2spirals]="--niters 2000 --hidden_dim 32 --num_samples 1024 --lr 0.01 --num_timesteps 128 --test_freq 20"
 
 # Seed
@@ -35,7 +36,7 @@ for dataset in "${datasets[@]}"; do
       )
       extra_args=${dataset_args[$dataset]}
       echo "Submitting: $odeint $precision no-scaling - ${fixed_args[*]} $extra_args"
-      sbatch job_cnf.sbatch "${fixed_args[@]}" $extra_args
+      sbatch --account=mathg3 job_cnf.sbatch "${fixed_args[@]}" $extra_args
     done
   done
 done
@@ -57,7 +58,7 @@ for dataset in "${datasets[@]}"; do
   )
   extra_args=${dataset_args[$dataset]}
   echo "Submitting: torchdiffeq float16 no-grad-scaler - ${fixed_args[*]} $extra_args"
-  sbatch job_cnf.sbatch "${fixed_args[@]}" $extra_args
+  sbatch --account=mathg3 job_cnf.sbatch "${fixed_args[@]}" $extra_args
   
   # torchdiffeq fp16 with grad scaling
   fixed_args=(
@@ -70,7 +71,7 @@ for dataset in "${datasets[@]}"; do
   )
   extra_args=${dataset_args[$dataset]}
   echo "Submitting: torchdiffeq float16 with-grad-scaler - ${fixed_args[*]} $extra_args"
-  sbatch job_cnf.sbatch "${fixed_args[@]}" $extra_args
+  sbatch --account=mathg3 job_cnf.sbatch "${fixed_args[@]}" $extra_args
 done
 
 # Remove wait commands since we're using sbatch instead of background jobs
@@ -91,7 +92,7 @@ for dataset in "${datasets[@]}"; do
   )
   extra_args=${dataset_args[$dataset]}
   echo "Submitting: torchmpnode float16 no-scaling - ${fixed_args[*]} $extra_args"
-  sbatch job_cnf.sbatch "${fixed_args[@]}" $extra_args
+  sbatch --account=mathg3 job_cnf.sbatch "${fixed_args[@]}" $extra_args
   
   # torchmpnode fp16 with only grad scaling
   fixed_args=(
@@ -105,7 +106,7 @@ for dataset in "${datasets[@]}"; do
   )
   extra_args=${dataset_args[$dataset]}
   echo "Submitting: torchmpnode float16 only-grad-scaler - ${fixed_args[*]} $extra_args"
-  sbatch job_cnf.sbatch "${fixed_args[@]}" $extra_args
+  sbatch --account=mathg3 job_cnf.sbatch "${fixed_args[@]}" $extra_args
   
   # torchmpnode fp16 with only dynamic scaling (default)
   fixed_args=(
@@ -119,7 +120,7 @@ for dataset in "${datasets[@]}"; do
   )
   extra_args=${dataset_args[$dataset]}
   echo "Submitting: torchmpnode float16 only-dynamic-scaler - ${fixed_args[*]} $extra_args"
-  sbatch job_cnf.sbatch "${fixed_args[@]}" $extra_args
+  sbatch --account=mathg3 job_cnf.sbatch "${fixed_args[@]}" $extra_args
 done
 
 # Remove wait commands since we're using sbatch instead of background jobs

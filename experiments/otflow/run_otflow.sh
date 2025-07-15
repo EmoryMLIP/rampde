@@ -53,7 +53,7 @@ for dataset in "${datasets[@]}"; do
         fixed_args=(--viz --precision "$precision" --data "$dataset" --method "$method" --odeint "$odeint" --seed "$seed")
         extra_args=${dataset_args[$dataset]}
         echo "Submitting job: ${fixed_args[*]} $extra_args"
-        sbatch job_otflow.sbatch "${fixed_args[@]}" $extra_args
+        sbatch --account=mathg3 job_otflow.sbatch "${fixed_args[@]}" $extra_args
       done
     done
   done
