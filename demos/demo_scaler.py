@@ -5,12 +5,44 @@
 
 import torch
 import torch.nn as nn
-from torch.amp import autocast
+from torch.amp import autocast, GradScaler
 import os
 import sys
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
-from torchmpnode import odeint, NoScaler, DynamicScaler
+
 import math
+import argparse
+
+parser = argparse.ArgumentParser()
+parser.add_argument('--odeint', type=str, choices=['torchdiffeq', 'torchmpnode'], default='torchdiffeq')
+parser.add_argument('--scaler', type=str, choices=['noscaler', 'dynamicscaler'], default='dynamicscaler')
+parser.add_argument('--precision', type=str, choices=['float32', 'float16', 'bfloat16'], default='float16')
+args = parser.parse_args()
+
+precision_map = {
+    'float32': torch.float32,
+    'float16': torch.float16,
+    'bfloat16': torch.bfloat16
+}
+args.precision = precision_map[args.precision]
+
+if args.odeint == 'torchmpnode':
+    print("Using torchmpnode")
+    import sys
+    sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '../..')))
+    from torchmpnode import odeint
+    from torchmpnode import NoScaler, DynamicScaler
+    scaler_map = {
+        'noscaler': NoScaler(dtype_low=args.precision),
+        'dynamicscaler': DynamicScaler(dtype_low=args.precision)
+    }
+    scaler = scaler_map[args.scaler]
+    solver_kwargs = {'loss_scaler': scaler}
+else:
+    print("Using torchdiffeq")
+    from torchdiffeq import odeint
+    solver_kwargs = {}
+    args.scaler = 'autocast_gradscaler'
 
 device = torch.device("cuda")
 
@@ -19,8 +51,8 @@ dim = 3
 A_true = torch.tensor([[-1.0, 0.0, 0.0],
                        [0.0, -5.0, 0.0],
                        [0.0, 0.0, -30.0]], device=device)
-Aincrease = 10
-LossDecrease = 1 #1e-2
+Aincrease = 1
+LossDecrease = 1e-2
 
 
 t = torch.linspace(0.0, 1, 100, device=device)
@@ -38,23 +70,31 @@ class LinearODE(nn.Module):
     def forward(self, t, y):
         return self.A @ y
 
-def train(use_dynamic_scaler):
+def train():
     model = LinearODE(dim).to(device)
     opt = torch.optim.RMSprop(model.parameters(), lr=1e-3)
-    scaler_cls = DynamicScaler if use_dynamic_scaler else NoScaler
     y0_train = y0.clone().requires_grad_(True)
-    print(f"Training with {'DynamicScaler' if use_dynamic_scaler else 'NoScaler'}")
+    gscaler = GradScaler()
     for step in range(1, 21):
         opt.zero_grad()
         with autocast(device_type='cuda', dtype=torch.float16):
-            scaler = scaler_cls(torch.float16)
             # solve ODE from t=0 to t=1
-            yT_pred = odeint(model, y0_train, t, method='rk4', loss_scaler=scaler)[-1]
+            yT_pred = odeint(model, y0_train, t, method='rk4', **solver_kwargs)[-1]
+            # yT_pred = odeint(model, y0_train, t, method='rk4')[-1]  
             loss = torch.nn.functional.mse_loss(yT_pred, yT_true)*LossDecrease
             print(f"  [ step {step:02d} ] Loss={loss:.4e}")
-            loss.backward()
 
-        opt.step()
+            if args.odeint == 'torchmpnode':
+                loss.backward()
+                opt.step()
+            else:
+                
+                gscaler.scale(loss).backward()
+                gscaler.step(opt)
+                gscaler.update()
+                # scheduler.step()
+
+        
         loss_val = loss.detach().item()
         if step % 1 == 0:
             print(f"step {step:02d} Loss={loss_val:.4e}")
@@ -69,19 +109,17 @@ def train(use_dynamic_scaler):
 
             rel_err_A = torch.linalg.norm(grad_A_num - grad_A_ana.float()) \
                         / torch.linalg.norm(grad_A_ana.float())
-            print(f"rel_errdLdA with {scaler_cls.__name__}: {rel_err_A:.3e}")
+            print(f"rel_errdLdA {args.odeint}{args.precision}{args.scaler}: {rel_err_A:.3e}") #
 
             grad_y0_num = y0_train.grad.detach().float() 
             grad_y0_ana = grad_y0_ana.float()
             rel_err_y0 = torch.linalg.norm(grad_y0_num - grad_y0_ana) \
                         / torch.linalg.norm(grad_y0_ana)
-            print(f"rel_errdLdy0 with {scaler_cls.__name__}: {rel_err_y0:.3e}")
+            print(f"rel_errdLdy0 with {args.odeint}{args.precision}{args.scaler}: {rel_err_y0:.3e}") #
 
     return True
 
 if __name__ == "__main__":
 
-    train(use_dynamic_scaler=True)
-
-    train(use_dynamic_scaler=False)
+    train()
 
