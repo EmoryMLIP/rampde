@@ -27,7 +27,8 @@ def create_parser():
     # ODE solver arguments
     parser.add_argument('--method', type=str, choices=['rk4', 'euler'], default='rk4')
     parser.add_argument('--precision', type=str, 
-                        choices=['tfloat32', 'float32', 'float16','bfloat16'], default='float16')
+                        choices=['tfloat32', 'float32', 'float16','bfloat16'], default='float32',
+                        help='Precision mode (float32 corresponds to --prec single in OT-Flow)')
     parser.add_argument('--odeint', type=str,
                         choices=['torchdiffeq', 'torchmpnode'], default='torchmpnode')
     parser.add_argument('--adjoint', action='store_true')
@@ -41,31 +42,40 @@ def create_parser():
     # Training arguments
     parser.add_argument('--niters', type=int, default=15000)
     parser.add_argument('--lr', type=float, default=1e-2)
-    parser.add_argument('--lr_decay', type=float, default=.5)
-    parser.add_argument('--lr_decay_steps', type=int, default=20)
+    parser.add_argument('--lr_drop', type=float, default=10.0,
+                        help='Factor to divide learning rate by (OT-Flow compatible)')
+    parser.add_argument('--drop_freq', type=int, default=0,
+                        help='Drop learning rate every N iterations (0=drop based on validation)')
     parser.add_argument('--weight_decay', type=float, default=0.0)
     parser.add_argument('--early_stopping', type=int, default=20,
                         help='Stop after this many validation checks without improvement')
     parser.add_argument('--no_early_stopping', action='store_true',
                         help='Disable early stopping (run for full niters)')
     
-    # Data arguments
+    # Data arguments with OT-Flow aliases
     parser.add_argument('--data', type=str, default='miniboone',
                         choices=['miniboone', 'bsds300', 'power', 'gas', 'hepmass'],
                         help="Dataset to use")
-    parser.add_argument('--num_samples', type=int, default=512)
-    parser.add_argument('--num_samples_val', type=int, default=1024)
+    parser.add_argument('--batch_size', '--num_samples', type=int, default=512,
+                        help='Training batch size')
+    parser.add_argument('--test_batch_size', '--num_samples_val', type=int, default=1024,
+                        help='Validation/test batch size')
     
-    # Model arguments
-    parser.add_argument('--hidden_dim', type=int, default=256)
-    parser.add_argument('--num_timesteps', type=int, default=8)
-    parser.add_argument('--num_timesteps_val', type=int, default=None,
-                        help='Number of timesteps for validation (if None, uses num_timesteps)')
-    parser.add_argument('--alpha', type=str, default='1.0,100.0,15.0',
+    # Model arguments with OT-Flow aliases
+    parser.add_argument('--m', '--hidden_dim', type=int, default=256,
+                        help='Hidden dimension of the model')
+    parser.add_argument('--nt', '--num_timesteps', type=int, default=8,
+                        help='Number of ODE solver timesteps for training')
+    parser.add_argument('--nt_val', '--num_timesteps_val', type=int, default=None,
+                        help='Number of ODE solver timesteps for validation (if None, uses nt)')
+    parser.add_argument('--alph', '--alpha', type=str, default='1.0,100.0,15.0',
                         help='Alpha hyperparameters as comma-separated values (e.g., 1.0,100.0,15.0)')
     
-    # Experiment arguments
-    parser.add_argument('--test_freq', type=int, default=100)
+    # Experiment arguments with OT-Flow aliases
+    parser.add_argument('--val_freq', '--test_freq', type=int, default=100,
+                        help='Validation frequency')
+    parser.add_argument('--viz_freq', type=int, default=500,
+                        help='Visualization frequency (not used in current implementation)')
     parser.add_argument('--results_dir', type=str, default="./results/otflowlarge")
     parser.add_argument('--seed', type=int, default=0)
     parser.add_argument('--debug', action='store_true')
@@ -271,12 +281,29 @@ def main():
     args.grad_scaler = not args.no_grad_scaler
     args.dynamic_scaler = not args.no_dynamic_scaler
     
-    # Parse alpha hyperparameters
-    args.alpha = [float(a) for a in args.alpha.split(',')]
+    # Handle OT-Flow argument aliases
+    # Use the primary names internally (batch_size, m, nt, nt_val, alph, val_freq)
+    if hasattr(args, 'num_samples'):
+        args.batch_size = args.num_samples
+    if hasattr(args, 'num_samples_val'):
+        args.test_batch_size = args.num_samples_val
+    if hasattr(args, 'hidden_dim'):
+        args.m = args.hidden_dim
+    if hasattr(args, 'num_timesteps'):
+        args.nt = args.num_timesteps
+    if hasattr(args, 'num_timesteps_val'):
+        args.nt_val = args.num_timesteps_val
+    if hasattr(args, 'alpha'):
+        args.alph = args.alpha
+    if hasattr(args, 'test_freq'):
+        args.val_freq = args.test_freq
     
-    # Set default for num_timesteps_val if not provided
-    if args.num_timesteps_val is None:
-        args.num_timesteps_val = args.num_timesteps
+    # Parse alpha hyperparameters
+    args.alpha = [float(a) for a in args.alph.split(',')]
+    
+    # Set default for nt_val if not provided
+    if args.nt_val is None:
+        args.nt_val = args.nt
     
     # Set random seeds for reproducibility
     if args.seed is not None:
@@ -319,7 +346,7 @@ def main():
         # setup model, optimizer, meters
         t0, t1 = 0.0, 1.0
         alpha  = args.alpha
-        func   = OTFlow(in_out_dim=d, hidden_dim=args.hidden_dim, alpha=alpha, Phi_class=Phi).to(device)
+        func   = OTFlow(in_out_dim=d, hidden_dim=args.m, alpha=alpha, Phi_class=Phi).to(device)
         optimizer = optim.Adam(func.parameters(), lr=args.lr, weight_decay=args.weight_decay)
         cov = torch.eye(d, device=device) * 0.1
         p_z0 = torch.distributions.MultivariateNormal(
@@ -354,17 +381,17 @@ def main():
             optimizer.load_state_dict(cp['optimizer_state_dict'])
             print(f"Loaded checkpoint {ckpt_path}")
         else:
-            clampMax, clampMin = 5, -5
+            clampMax, clampMin = 1.5, -1.5  # OT-Flow compatible clamping
             
-            # Early stopping variables
+            # Early stopping variables (OT-Flow style)
             best_val_loss = float('inf')
             n_vals_wo_improve = 0
-            lr_reductions = 0
+            ndecs = 0  # Number of learning rate decreases (OT-Flow compatible)
             
             itr = 1
             while itr <= args.niters:
                 optimizer.zero_grad()
-                z0, logp0, cL0, cH0 = get_minibatch(train_x, args.num_samples)
+                z0, logp0, cL0, cH0 = get_minibatch(train_x, args.batch_size)
                 torch.cuda.synchronize()
                 torch.cuda.reset_peak_memory_stats(device)
                 start = time.perf_counter()
@@ -374,7 +401,7 @@ def main():
                     p.data = torch.clamp(p.data, clampMin, clampMax)
 
                 with autocast(device_type='cuda', dtype=precision):
-                    ts = torch.linspace(t0, t1, args.num_timesteps, device=device)
+                    ts = torch.linspace(t0, t1, args.nt, device=device)
                     if loss_scaler_for_odeint is not None:
                         # Use the specific loss scaler for odeint (DynamicScaler or NoScaler)
                         z_t, logp_t, cL_t, cH_t = odeint_func(
@@ -483,15 +510,15 @@ def main():
                 cost_HJB_meter.update(cH1.mean().item())
 
                 # validation & CSV logging
-                if itr % args.test_freq == 0:
+                if itr % args.val_freq == 0:
                     with torch.no_grad():
-                        vz0, vpl0, vL0, vH0 = get_minibatch(val_x, args.num_samples_val)
+                        vz0, vpl0, vL0, vH0 = get_minibatch(val_x, args.test_batch_size)
                         with autocast(device_type='cuda', dtype=precision):
                             # Validation: no scaler needed
                             vz_t, vpl_t, vL_t, vH_t = odeint_func(
                                 func,
                                 (vz0, vpl0, vL0, vH0),
-                                torch.linspace(t0, t1, args.num_timesteps_val, device=device),
+                                torch.linspace(t0, t1, args.nt_val, device=device),
                                 method=args.method
                             )
                             vz1, vpl1, vL1, vH1 = vz_t[-1], vpl_t[-1], vL_t[-1], vH_t[-1]
@@ -524,16 +551,22 @@ def main():
                             print(f"No improvement for {n_vals_wo_improve} validation checks")
                             
                             if n_vals_wo_improve >= args.early_stopping:
-                                if lr_reductions >= 2:
-                                    print(f"Early stopping engaged after {lr_reductions+1} LR reductions")
+                                if ndecs >= 2:
+                                    print(f"Early stopping engaged after {ndecs} LR reductions")
                                     break
                                 else:
-                                    # Reduce learning rate
+                                    # Reduce learning rate (OT-Flow style: divide by lr_drop)
+                                    if ndecs == 0:
+                                        new_lr = args.lr / args.lr_drop
+                                    elif ndecs == 1:
+                                        new_lr = args.lr / (args.lr_drop ** 2)
+                                    else:
+                                        new_lr = args.lr / (args.lr_drop ** (ndecs + 1))
+                                    
                                     for g in optimizer.param_groups:
-                                        g['lr'] *= args.lr_decay
-                                    lr_reductions += 1
-                                    n_vals_wo_improve = 0  # Reset counter after LR reduction
-                                    print(f"Reduced LR to {optimizer.param_groups[0]['lr']:.2e} (reduction #{lr_reductions})")
+                                        g['lr'] = new_lr
+                                    ndecs += 1
+                                    print(f"Reduced LR to {optimizer.param_groups[0]['lr']:.2e} (reduction #{ndecs}, lr/{args.lr_drop}^{ndecs})")
 
                     # write one row to CSV
                     csv_writer.writerow([
@@ -552,11 +585,13 @@ def main():
                     ])
                     csv_file.flush()
 
-                # Original LR decay schedule (only if early stopping disabled or not yet triggered)
-                if args.no_early_stopping and itr == args.lr_decay_steps:
+                # Periodic LR decay based on drop_freq (OT-Flow style)
+                if args.drop_freq > 0 and itr % args.drop_freq == 0:
+                    ndecs += 1
+                    new_lr = args.lr / (args.lr_drop ** ndecs)
                     for g in optimizer.param_groups:
-                        g['lr'] *= args.lr_decay
-                    print(f"Scheduled LR decay to {optimizer.param_groups[0]['lr']}")
+                        g['lr'] = new_lr
+                    print(f"Periodic LR drop at iteration {itr}: new LR = {new_lr:.2e} (lr/{args.lr_drop}^{ndecs})")
                 
                 # Increment iteration counter for while loop
                 itr += 1
@@ -648,14 +683,14 @@ def main():
             print("Generating 2D‐slice visualizations…")
 
             val_np = val_x.cpu().numpy()
-            N      = min(val_np.shape[0], args.num_samples_val)
+            N      = min(val_np.shape[0], args.test_batch_size)
             testData = val_np[:N]
 
             #forward map f(x)
             with torch.no_grad():
                 # x_batch = torch.from_numpy(testData).to(device)
                 vz0, vpl0, vL0, vH0 = get_minibatch(val_x, args.num_samples_val)
-                t_grid = torch.linspace(t0, t1, args.num_timesteps_val, device=device)
+                t_grid = torch.linspace(t0, t1, args.nt_val, device=device)
                 # Visualization: no scaler needed
                 z_t, logp_t, cL_t, cH_t   = odeint_func(
                     func,
@@ -673,7 +708,7 @@ def main():
             cL0   = torch.zeros_like(logp0)
             cH0   = torch.zeros_like(logp0)
             # for backward, reverse the time grid
-            t_grid_inv = torch.linspace(t1, t0, args.num_timesteps_val, device=device)
+            t_grid_inv = torch.linspace(t1, t0, args.nt_val, device=device)
             with torch.no_grad():
                 # Visualization: no scaler needed
                 z_inv_t, _, _, _ = odeint_func(

@@ -4,13 +4,13 @@
 
 datasets=("bsds300") #"power" "gas" "hepmass" "miniboone" "bsds300"
 # datasets=( "hepmass" "miniboone") # Uncomment to run all datasets
-# Per-dataset arguments from OT-Flow detailedSetup.md
+# Per-dataset arguments from OT-Flow reference implementation
 declare -A dataset_args
-dataset_args[power]="--niters 36000 --hidden_dim 128 --num_samples 10000 --num_samples_val 120000 --lr 0.03 --num_timesteps 10 --num_timesteps_val 22 --test_freq 30 --weight_decay 0.0 --alpha 1.0,500.0,5.0"
-dataset_args[gas]="--niters 60000 --hidden_dim 350 --num_samples 2048 --num_samples_val 55000 --lr 0.01 --num_timesteps 10 --num_timesteps_val 28 --test_freq 50 --weight_decay 0.0 --alpha 1.0,1200.0,40.0"
-dataset_args[hepmass]="--niters 40000 --hidden_dim 256 --num_samples 2048 --num_samples_val 20000 --lr 0.02 --num_timesteps 12 --num_timesteps_val 24 --test_freq 50 --weight_decay 0.0 --alpha 1.0,500.0,40.0"
-dataset_args[miniboone]="--niters 8000 --hidden_dim 256 --num_samples 2048 --lr 0.02 --num_timesteps 6 --num_timesteps_val 10 --test_freq 20 --weight_decay 0.0 --alpha 1.0,100.0,15.0"
-dataset_args[bsds300]="--niters 120000 --hidden_dim 512 --num_samples 256 --lr 0.001 --num_timesteps 14 --num_timesteps_val 30 --test_freq 50 --alpha 1.0,2000.0,800.0 --num_samples_val 1024  --early_stopping 15"
+dataset_args[power]="--niters 36000 --m 128 --batch_size 10000 --test_batch_size 120000 --lr 0.03 --nt 10 --nt_val 22 --val_freq 30 --weight_decay 0.0 --alph 1.0,500.0,5.0 --drop_freq 0"
+dataset_args[gas]="--niters 60000 --m 512 --batch_size 2048 --test_batch_size 55000 --lr 0.01 --nt 10 --nt_val 28 --val_freq 50 --weight_decay 0.0 --alph 1.0,1200.0,40.0 --drop_freq 0 --early_stopping 20"
+dataset_args[hepmass]="--niters 40000 --m 256 --batch_size 2048 --test_batch_size 20000 --lr 0.02 --nt 12 --nt_val 24 --val_freq 50 --weight_decay 0.0 --alph 1.0,500.0,40.0 --drop_freq 0 --early_stopping 15"
+dataset_args[miniboone]="--niters 8000 --m 256 --batch_size 2048 --test_batch_size 5000 --lr 0.02 --nt 6 --nt_val 10 --val_freq 20 --weight_decay 0.0 --alph 1.0,100.0,15.0 --drop_freq 0 --early_stopping 15"
+dataset_args[bsds300]="--niters 120000 --m 512 --batch_size 256 --test_batch_size 1000 --lr 0.001 --nt 14 --nt_val 30 --val_freq 100 --alph 1.0,2000.0,800.0 --drop_freq 0 --lr_drop 3.3 --early_stopping 15"
 
 # Seed
 seed=42
@@ -20,6 +20,8 @@ mkdir -p slurm_logs
 
 echo "Running OTFlow Large Experiments with Gradient Scaling Comparison"
 echo "================================================================"
+echo "Note: --precision float32 corresponds to --prec single in original OT-Flow"
+echo ""
 
 # Test 1: torchdiffeq and torchmpnode with no scaling in various precisions
 echo "Test 1: No scaling comparison - float32, tfloat32, bfloat16"
