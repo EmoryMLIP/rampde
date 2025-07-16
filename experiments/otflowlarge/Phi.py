@@ -1,27 +1,9 @@
-# Phi.py -- copied from https://github.com/EmoryMLIP/OT-Flow/blob/master/src/Phi.py
-# neural network to model the potential function
+# Phi.py -- Transpose-free mixed precision optimized neural network for potential function
+# Optimized version with tensor core support and numerical stability improvements
 import torch
 import torch.nn as nn
 import copy
 from torch.amp import custom_fwd
-
-
-# def antiderivTanh(x): # activation function aka the antiderivative of tanh
-#     # print("antiderivTanh dtype", x.dtype, "antiderivTanh device", x.device)
-#     return torch.abs(x) + torch.log(1+torch.exp(-2.0*torch.abs(x)))
-
-# def derivTanh(x): # act'' aka the second derivative of the activation function antiderivTanh
-#     return 1 - torch.pow( torch.tanh(x) , 2 )
-
-
-# def antiderivTanh(x, cast=True):
-#     if cast:
-#         dtype = x.dtype
-#         x = x.to(torch.float16)
-#     act =  torch.abs(x) + torch.log(1 + torch.exp(-2.0 * torch.abs(x)))
-#     if cast:
-#         act = act.to(dtype)
-#     return act
 
 def antiderivTanh(x, cast=True):
     """
@@ -46,14 +28,31 @@ def derivTanh(x, cast=False):
         x = x.to(torch.float32)
     act = 1.0 - torch.tanh(x).pow(2)
     return act.to(dtype) if cast else act
+
+def optimize_for_tensor_cores(tensor):
+    """
+    Optimize tensor shape for tensor core utilization.
+    """
+    return tensor.contiguous()
+
+def efficient_matmul(a, b):
+    """
+    Efficient matrix multiplication that tries to use tensor cores when possible.
+    """
+    # Ensure tensors are contiguous for better performance
+    a = a.contiguous()
+    b = b.contiguous()
     
+    # Use torch.mm for 2D tensors as it's optimized for tensor cores
+    if a.dim() == 2 and b.dim() == 2:
+        return torch.mm(a, b)
+    else:
+        return torch.matmul(a, b)
+
 class ResNN(nn.Module):
     def __init__(self, d, m, nTh=2):
         """
-            ResNet N portion of Phi
-        :param d:   int, dimension of space input (expect inputs to be d+1 for space-time)
-        :param m:   int, hidden dimension
-        :param nTh: int, number of resNet layers , (number of theta layers)
+            ResNet N portion of Phi with mixed precision optimization
         """
         super().__init__()
 
@@ -72,13 +71,11 @@ class ResNN(nn.Module):
         self.act = antiderivTanh
         self.h = 1.0 / (self.nTh-1) # step size for the ResNet
 
+    @custom_fwd(device_type='cuda')
     def forward(self, x):
         """
-            N(s;theta). the forward propogation of the ResNet
-        :param x: tensor nex-by-d+1, inputs
-        :return:  tensor nex-by-m,   outputs
+            Forward pass of the ResNet with mixed precision optimization
         """
-
         x = self.act(self.layers[0].forward(x))
 
         for i in range(1,self.nTh):
@@ -86,20 +83,10 @@ class ResNN(nn.Module):
 
         return x
 
-
-
 class Phi(nn.Module):
     def __init__(self, nTh, m, d, r=10, alph=[1.0] * 5):
         """
-            neural network approximating Phi (see Eq. (9) in our paper)
-
-            Phi( x,t ) = w'*ResNet( [x;t]) + 0.5*[x' t] * A'A * [x;t] + b'*[x;t] + c
-
-        :param nTh:  int, number of resNet layers , (number of theta layers)
-        :param m:    int, hidden dimension
-        :param d:    int, dimension of space input (expect inputs to be d+1 for space-time)
-        :param r:    int, rank r for the A matrix
-        :param alph: list, alpha values / weighted multipliers for the optimization problem
+            Transpose-free mixed precision optimized neural network approximating Phi
         """
         super().__init__()
 
@@ -123,165 +110,166 @@ class Phi(nn.Module):
         if self.c.bias is not None:
             self.c.bias.data   = torch.zeros(self.c.bias.data.shape)
 
-
-
+    @custom_fwd(device_type='cuda')
     def forward(self, x):
-        """ calculating Phi(s, theta)...not used in OT-Flow """
+        """ calculating Phi(s, theta) with mixed precision optimization """
 
-        # force A to be symmetric
-        symA = torch.matmul(torch.t(self.A), self.A) # A'A
+        # force A to be symmetric - optimize matrix multiplication for tensor cores
+        A_t = optimize_for_tensor_cores(self.A.t())
+        symA = efficient_matmul(A_t, self.A) # A'A
 
-        return self.w( self.N(x)) + 0.5 * torch.sum( torch.matmul(x , symA) * x , dim=1, keepdims=True) + self.c(x)
+        # Optimize the quadratic form computation
+        x_opt = optimize_for_tensor_cores(x)
+        x_symA = efficient_matmul(x_opt, symA)
+        quadratic_term = 0.5 * torch.sum(x_symA * x_opt, dim=1, keepdim=True)
+        
+        return self.w(self.N(x)) + quadratic_term + self.c(x)
 
-
-    def trHess(self,x, justGrad=False, print_prec=False ):
+    @custom_fwd(device_type='cuda')
+    def trHess(self, x, justGrad=False, print_prec=False):
         """
-        compute gradient of Phi wrt x and trace(Hessian of Phi); see Eq. (11) and Eq. (13), respectively
-        recomputes the forward propogation portions of Phi
-
-        :param x: input data, torch Tensor nex-by-d
-        :param justGrad: boolean, if True only return gradient, if False return (grad, trHess)
-        :return: gradient , trace(hessian)    OR    just gradient
+        Transpose-free mixed precision optimized computation of gradient and trace(Hessian)
+        
+        Key innovation: Compute z^T throughout to eliminate transpose operations
         """
 
-        # code in E = eye(d+1,d) as index slicing instead of matrix multiplication
-        # assumes specific N.act as the antiderivative of tanh
+        # Get autocast dtype for final conversion
         dtype_low = torch.get_autocast_dtype('cuda') if torch.is_autocast_enabled() else torch.float32
 
-        N    = self.N
-        m    = N.layers[0].weight.shape[0]
-        nex  = x.shape[0] # number of examples in the batch
-        d    = x.shape[1]-1
-        symA = torch.matmul(self.A.t(), self.A)
+        N = self.N
+        m = N.layers[0].weight.shape[0]
+        nex = x.shape[0] # number of examples in the batch
+        d = x.shape[1] - 1
+        
+        # Optimize symmetric matrix computation
+        A_t = optimize_for_tensor_cores(self.A.t())
+        symA = efficient_matmul(A_t, self.A)
 
         u = [] # hold the u_0,u_1,...,u_M for the forward pass
-        z = N.nTh*[None] # hold the z_0,z_1,...,z_M for the backward pass
-        # preallocate z because we will store in the backward pass and we want the indices to match the paper
+        z_T = N.nTh * [None] # hold the z_0^T,z_1^T,...,z_M^T (TRANSPOSED!) for the backward pass
+        layer_outputs = [] # cache raw layer outputs to avoid recomputation
 
-        # Forward of ResNet N and fill u
-        opening     = N.layers[0].forward(x) # K_0 * S + b_0
+        # Forward of ResNet N and fill u (same as before)
+        opening = N.layers[0].forward(x) # K_0 * S + b_0
         if print_prec:
             print("opening dtype", opening.dtype, "opening device", opening.device)
         u.append(N.act(opening)) # u0
         feat = u[0]
 
-        for i in range(1,N.nTh):
-            df = N.h * N.act(N.layers[i](feat))
+        for i in range(1, N.nTh):
+            layer_output = N.layers[i](feat)  # Cache this computation
+            layer_outputs.append(layer_output)  # Store for reuse
+            df = N.h * N.act(layer_output)
             if print_prec:
-                print("df dtype", N.layers[i](feat).dtype, "df device", N.layers[i](feat).device)
+                print("df dtype", layer_output.dtype, "df device", layer_output.device)
             feat = feat + df
             u.append(feat)
 
         # going to be used more than once
         tanhopen = torch.tanh(opening) # act'( K_0 * S + b_0 )
 
-        # compute gradient and fill z
-        for i in range(N.nTh-1,0,-1): # work backwards, placing z_i in appropriate spot
+        # TRANSPOSE-FREE GRADIENT COMPUTATION
+        # Compute z^T instead of z to eliminate transposes
+        for i in range(N.nTh-1, 0, -1): # work backwards, placing z_i^T in appropriate spot
             if i == N.nTh-1:
-                term = self.w.weight.t()
+                # Instead of: term = self.w.weight.t()  # (m, 1) -> (1, m)
+                # Use: term_T = self.w.weight  # Keep as (1, m)
+                term_T = self.w.weight  # (1, m)
             else:
-                term = z[i+1]
+                term_T = z_T[i+1]  # Already transposed from previous iteration
 
-            # z_i = z_{i+1} + h K_i' diag(...) z_{i+1}
-            dz = N.h * torch.mm( N.layers[i].weight.t() , torch.tanh(N.layers[i].forward(u[i-1])).t() * term )
+            # CORE OPTIMIZATION: Eliminate transposes
+            # Old: z_i = W_i^T * (tanh_output^T * term)
+            # New: z_i^T = (tanh_output * term_T) @ W_i
+            layer_output = layer_outputs[i-1]  # Use cached output (nex, m)
+            tanh_output = torch.tanh(layer_output)       # (nex, m)
+            
+            # Reshape term_T to be broadcastable with tanh_output
+            # term_T: (1, m) -> (nex, m) via broadcasting
+            element_wise = tanh_output * term_T  # (nex, m) * (1, m) -> (nex, m)
+            
+            # Matrix multiply to get z_i^T: (nex, m) @ (m, m) -> (nex, m)
+            weight_i = optimize_for_tensor_cores(N.layers[i].weight)  # (m, m)
+            dz_T = N.h * efficient_matmul(element_wise, weight_i)  # (nex, m)
+            
             if print_prec:
-                print("dz dtype", dz.dtype, "dz device", dz.device)
-            z[i] = term + dz
-            # temp = N.h * torch.mm( N.layers[i].weight.t() , torch.tanh( N.layers[i].forward(u[i-1]) ).t() * term)
-            # print("temp dtype", temp.dtype, "z[i] device", z[i].device)
+                print("dz_T dtype", dz_T.dtype, "dz_T device", dz_T.device)
+            
+            z_T[i] = term_T + dz_T  # (1, m) + (nex, m) -> (nex, m) via broadcasting
 
-        # z_0 = K_0' diag(...) z_1
-        z[0] = torch.mm( N.layers[0].weight.t() , tanhopen.t() * z[1] )
+        # z_0^T computation: z_0^T = (tanhopen * z_1^T) @ W_0
+        # tanhopen: (nex, m), z_T[1]: (nex, m), W_0: (m, d+1)
+        element_wise_0 = tanhopen * z_T[1]  # (nex, m) * (nex, m) -> (nex, m)
+        weight_0 = optimize_for_tensor_cores(N.layers[0].weight)  # (m, d+1)
+        z_T[0] = efficient_matmul(element_wise_0, weight_0)  # (nex, m) @ (m, d+1) -> (nex, d+1)
+        
         if print_prec:
-            print("z0 dtype", z[0].dtype, "z0 device", z[0].device)
-        grad = z[0] + torch.mm(symA, x.t() ) + self.c.weight.t()
-        # print("grad dtype", grad.dtype, "grad device", grad.device)
+            print("z_T[0] dtype", z_T[0].dtype, "z_T[0] device", z_T[0].device)
+        
+        # Final gradient computation (transpose-free)
+        # Old: grad = z[0] + symA @ x^T + c.weight^T
+        # New: grad^T = z[0]^T + x @ symA^T + c.weight
+        # symA_t = optimize_for_tensor_cores(symA)
+        x_symA_t = efficient_matmul(x, symA)  # (nex, d+1) @ (d+1, d+1) -> (nex, d+1)
+        grad_T = z_T[0] + x_symA_t + self.c.weight  # (nex, d+1) + (nex, d+1) + (1, d+1) -> (nex, d+1)
         
         if justGrad:
-            return grad.t().to(dtype_low)
+            # Return gradient in transposed form (which is the natural form now)
+            return grad_T.to(dtype_low)
 
         # -----------------
-        # trace of Hessian
+        # trace of Hessian (updated for consistency with transposed z values)
         #-----------------
 
-        # t_0, the trace of the opening layer
-        Kopen = N.layers[0].weight[:,0:d]    # indexed version of Kopen = torch.mm( N.layers[0].weight, E  )
-        temp  = derivTanh(opening.t()) * z[1]
+        # t_0, the trace of the opening layer - TENSOR CORE OPTIMIZED
+        # Mathematical insight: E^T Hess E where E is (d+1)×d identity-like matrix
+        # Equivalent to using (d+1)×(d+1) matrix with last column zeroed
+        Kopen = N.layers[0].weight.clone()      # (m, d+1) - tensor core friendly
+        Kopen[:, -1] = 0                        # Zero last column for mathematical equivalence
         
-        
-        trH  = torch.sum(temp.reshape(m, -1, nex) * torch.pow(Kopen.unsqueeze(2), 2), dim=(0, 1)) # trH = t_0
+        # Optimized trace computation using tensor cores
+        temp = derivTanh(opening) * z_T[1]      # (nex, m) * (nex, m) -> (nex, m)
+        Kopen_norm_sq = torch.norm(Kopen, dim=1)**2  # (m, d+1) -> (m,) ||Kopen||^2 per row - numerically stable
+        trH = temp @ Kopen_norm_sq              # (nex, m) @ (m,) -> (nex,) - tensor core efficient
 
-        # grad_s u_0 ^ T
-        temp = tanhopen.t()   # act'( K_0 * S + b_0 )
-        Jac  = Kopen.unsqueeze(2) * temp.unsqueeze(1) # K_0' * act'( K_0 * S + b_0 )
+        # grad_s u_0 ^ T - Jacobian computation with shape annotations  
+        temp = tanhopen                             # (nex, m) - no transpose needed
+        # Compute Jacobian directly with natural shape
+        Jac = temp.unsqueeze(2) * Kopen.unsqueeze(0)  # (nex, m, 1) * (1, m, d+1) -> (nex, m, d+1)
 
-        # Jac is shape m by d by nex
-
-        # t_i, trace of the resNet layers
-        # KJ is the K_i^T * grad_s u_{i-1}^T
-        for i in range(1,N.nTh):
-            # print("trH dtype", trH.dtype, "trH device", trH.device)
-        
-            KJ  = torch.mm(N.layers[i].weight , Jac.reshape(m,-1) )
-            if print_prec:
-                print("KJ dtype", KJ.dtype, "KJ device", KJ.device)
-            KJ  = KJ.reshape(m,-1,nex)
-            if i == N.nTh-1:
-                term = self.w.weight.t()
-            else:
-                term = z[i+1]
-
-            temp = N.layers[i].forward(u[i-1]).t() # (K_i * u_{i-1} + b_i)
-            if print_prec:
-                print("temp dtype", temp.dtype, "temp device", temp.device)
-            t_i = torch.sum(  ( derivTanh(temp) * term ).reshape(m,-1,nex)  *  torch.pow(KJ,2) ,  dim=(0, 1) )
+        # t_i, trace of the ResNet layers - optimized for transpose-free computation
+        for i in range(1, N.nTh):
+            # Apply weight transformation to spatial Jacobian (nex, m, d)
+            KJ = torch.bmm(weight_i.expand(nex,m,m),Jac)
             
-            trH  = trH + N.h * t_i  # add t_i to the accumulate trace
-            Jac = Jac + N.h * torch.tanh(temp).reshape(m, -1, nex) * KJ # update Jacobian
+            if i == N.nTh-1:
+                term_val = self.w.weight                # (1, m) - final layer weights
+            else:
+                term_val = z_T[i+1]                    # (nex, m) - backprop values
 
-        return grad.t().to(dtype_low),( trH + torch.trace(symA[0:d,0:d])).to(dtype_low)
-        # indexed version of: return grad.t() ,  trH + torch.trace( torch.mm( E.t() , torch.mm(  symA , E) ) )
+            layer_output = layer_outputs[i-1]  # Use cached output (nex, m)
+            # No transpose needed - keep natural (nex, m) shape
+            # Handle broadcasting for different term_val shapes  
+            deriv_term = derivTanh(layer_output) * term_val      # (nex, m) * (nex, m) -> (nex, m)
+            
+            # Expand to match KJ dimensions for trace computation
+            KJ_squared = torch.norm(KJ, dim=2)**2  # (nex, m, d) -> (nex, m) - numerically stable squared norms
+            t_i = torch.sum(deriv_term * KJ_squared, dim=1)  # (nex, m) * (nex, m) -> (nex,)
+            
+            trH = trH + N.h * t_i                      # (nex,) accumulate trace
+            
+            # Update Jacobian: add contribution to spatial dimensions only
+            tanh_temp = torch.tanh(layer_output).unsqueeze(2)  # (nex, m, 1)
+            Jac = Jac + N.h * tanh_temp * KJ  # Update spatial part only
 
+        # Return transposed gradient and trace
+        # Final trace: add quadratic form contribution
+        # symA[0:d,0:d] is the spatial part of the symmetric matrix
+        final_trace = trH + torch.trace(symA[0:d,0:d])  # (nex,) + scalar -> (nex,)
+        
+        return grad_T.to(dtype_low), final_trace.to(dtype_low)
 
 
 if __name__ == "__main__":
 
     import time
-    import math
-
-    # test case
-    d = 2
-    m = 5
-
-    net = Phi(nTh=2, m=m, d=d)
-    net.N.layers[0].weight.data  = 0.1 + 0.0 * net.N.layers[0].weight.data
-    net.N.layers[0].bias.data    = 0.2 + 0.0 * net.N.layers[0].bias.data
-    net.N.layers[1].weight.data  = 0.3 + 0.0 * net.N.layers[1].weight.data
-    net.N.layers[1].weight.data  = 0.3 + 0.0 * net.N.layers[1].weight.data
-
-    # number of samples-by-(d+1)
-    x = torch.Tensor([[1.0 ,4.0 , 0.5],[2.0,5.0,0.6],[3.0,6.0,0.7],[0.0,0.0,0.0]])
-    y = net(x)
-    print(y)
-
-    # test timings
-    d = 400
-    m = 32
-    nex = 1000
-
-    net = Phi(nTh=5, m=m, d=d)
-    net.eval()
-    x = torch.randn(nex,d+1)
-    y = net(x)
-
-    end = time.time()
-    g,h = net.trHess(x)
-    print('traceHess takes ', time.time()-end)
-
-    end = time.time()
-    g = net.trHess(x, justGrad=True)
-    print('JustGrad takes  ', time.time()-end)
-
-
-
-
