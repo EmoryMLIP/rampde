@@ -295,7 +295,8 @@ def main():
 
         # Setup meters for tracking progress
         loss_meter = RunningAverageMeter()
-        time_meter = RunningAverageMeter()
+        fwd_time_meter = RunningAverageMeter()
+        bwd_time_meter = RunningAverageMeter()
         mem_meter = RunningMaximumMeter()
 
         # Setup solver kwargs for training (DynamicScaler for torchmpnode)
@@ -309,8 +310,8 @@ def main():
         csv_file = open(csv_path, 'w', newline='')
         writer = csv.writer(csv_file)
         writer.writerow([
-            'iter', 'lr', 'running_NLL', 'val_NLL', 'val_NLL_mp', 
-            'val_mmd', 'train_mmd', 'time_avg', 'max_memory'
+            'iter', 'lr', 'running_loss', 'val_loss', 
+            'val_mmd', 'train_mmd', 'time_fwd', 'time_bwd', 'max_memory_mb'
         ])
 
         # Check for existing checkpoints
@@ -331,10 +332,12 @@ def main():
             # Get training batch
             x, logp_diff_t1 = get_batch(args.num_samples, args.data, device)
             
-            # Start timing with synchronization
-            torch.cuda.synchronize()
+            # Reset peak memory stats
             torch.cuda.reset_peak_memory_stats(device)
-            start_time = time.perf_counter()
+            
+            # Time forward pass
+            torch.cuda.synchronize()
+            fwd_start = time.perf_counter()
 
             with autocast(device_type='cuda', dtype=precision):
                 ts = torch.linspace(t1, t0, args.num_timesteps, device=device)
@@ -348,7 +351,14 @@ def main():
                 z_t0, logp_diff_t0 = z_t[-1], logp_diff_t[-1]
                 logp_x = p_z0.log_prob(z_t0) - logp_diff_t0.view(-1)
                 loss = -logp_x.mean(0)
+            
+            torch.cuda.synchronize()
+            fwd_time = time.perf_counter() - fwd_start
 
+            # Time backward pass
+            torch.cuda.synchronize()
+            bwd_start = time.perf_counter()
+            
             # Handle backward pass with or without loss scaling
             if loss_scaler is not None and hasattr(loss_scaler, 'scale'):
                 # Track loss scale before step (for GradScaler only)
@@ -372,13 +382,14 @@ def main():
             
             scheduler.step()
 
-            # End timing with synchronization
             torch.cuda.synchronize()
-            elapsed_time = time.perf_counter() - start_time
+            bwd_time = time.perf_counter() - bwd_start
+            
             peak_memory = torch.cuda.max_memory_allocated(device) / (1024 * 1024)
             
             # Update meters
-            time_meter.update(elapsed_time)
+            fwd_time_meter.update(fwd_time)
+            bwd_time_meter.update(bwd_time)
             mem_meter.update(peak_memory)
             loss_meter.update(loss.item())
 
@@ -429,15 +440,6 @@ def main():
                     logp_val = p_z0.log_prob(z0_v) - lp0_v.view(-1)
                     loss_val = -logp_val.mean()
 
-                    # Validation loss (mixed precision) - no scaler needed
-                    with autocast(device_type='cuda', dtype=precision):
-                        lpv1_mp = torch.zeros_like(lpv1)
-                        z_v_mp, lp_v_mp = odeint_func(func, (x_val, lpv1_mp), ts_val,
-                                                    method=args.method)
-                        z0_mp, lp0_mp = z_v_mp[-1], lp_v_mp[-1]
-                        logp_val_mp = p_z0.log_prob(z0_mp) - lp0_mp.view(-1)
-                        loss_val_mp = -logp_val_mp.mean()
-
                     # Compute MMD metrics
                     # Generate target samples for comparison
                     target_samples, _ = get_batch(args.num_samples_val, args.data, device)
@@ -465,26 +467,25 @@ def main():
                     train_mmd = compute_mmd_loss(train_target, target_samples)
 
                 print(
-                    f"Iter {itr:4d} | "
-                    f"Train NLL: {loss_meter.avg:.4f} | "
-                    f"Val NLL: {loss_val.item():.4f} | "
-                    f"Val NLL (mp): {loss_val_mp.item():.4f} | "
+                    f"Iter {itr:4d} | LR: {optimizer.param_groups[0]['lr']:.4f} | "
+                    f"Train Loss: {loss_meter.avg:.4f} | "
+                    f"Val Loss: {loss_val.item():.4f} | "
                     f"Val MMD: {val_mmd:.4f} | "
                     f"Train MMD: {train_mmd:.4f} | "
-                    f"Time avg: {time_meter.avg:.4f}s | "
-                    f"Mem peak: {mem_meter.val:.2f}MB"
+                    f"Fwd: {fwd_time_meter.avg:.3f}s | Bwd: {bwd_time_meter.avg:.3f}s | "
+                    f"Mem: {mem_meter.val:.1f}MB"
                 )
 
                 # Write to CSV
                 writer.writerow([
                     itr,
                     optimizer.param_groups[0]['lr'],
-                    loss_meter.avg,                 # running_NLL (loss is -logp)
-                    loss_val.item(),                # val_NLL
-                    loss_val_mp.item(),             # val_NLL_mp
+                    loss_meter.avg,                 # running_loss (loss is -logp)
+                    loss_val.item(),                # val_loss
                     val_mmd,
                     train_mmd,
-                    time_meter.avg,
+                    fwd_time_meter.avg,
+                    bwd_time_meter.avg,
                     mem_meter.val
                 ])
                 csv_file.flush()
@@ -522,13 +523,12 @@ def create_optimization_plots(csv_path, result_dir):
     
     fig, axs = plt.subplots(2, 2, figsize=(12, 8))
 
-    # 1) NLL subplot
-    axs[0, 0].plot(df['iter'], df['running_NLL'], label="running NLL")
-    axs[0, 0].plot(df['iter'], df['val_NLL'], label="val NLL")
-    axs[0, 0].plot(df['iter'], df['val_NLL_mp'], "--", label="val NLL (mp)")
-    axs[0, 0].set_title("Negative Log-Likelihood")
+    # 1) Loss subplot
+    axs[0, 0].plot(df['iter'], df['running_loss'], label="running loss")
+    axs[0, 0].plot(df['iter'], df['val_loss'], label="val loss")
+    axs[0, 0].set_title("Loss (Negative Log-Likelihood)")
     axs[0, 0].set_xlabel("Iteration")
-    axs[0, 0].set_ylabel("NLL")
+    axs[0, 0].set_ylabel("Loss")
     axs[0, 0].legend()
 
     # 2) MMD subplot
@@ -546,11 +546,12 @@ def create_optimization_plots(csv_path, result_dir):
     axs[1, 0].set_ylabel("LR")
     axs[1, 0].legend()
 
-    # 4) Max Memory subplot
-    axs[1, 1].plot(df['iter'], df['max_memory'], label="max memory (MB)")
-    axs[1, 1].set_title("Max Memory")
+    # 4) Timing subplot
+    axs[1, 1].plot(df['iter'], df['time_fwd'], label="forward time")
+    axs[1, 1].plot(df['iter'], df['time_bwd'], label="backward time")
+    axs[1, 1].set_title("Forward/Backward Pass Time")
     axs[1, 1].set_xlabel("Iteration")
-    axs[1, 1].set_ylabel("Memory (MB)")
+    axs[1, 1].set_ylabel("Time (s)")
     axs[1, 1].legend()
 
     plt.tight_layout()

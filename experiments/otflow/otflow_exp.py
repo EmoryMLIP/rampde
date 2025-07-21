@@ -126,7 +126,7 @@ print("Model checkpoint path:", ckpt_path)
 csv_path = os.path.join(result_dir, folder_name + ".csv")
 csv_file = open(csv_path, "w", newline="", buffering=1)
 csv_writer = csv.writer(csv_file)
-csv_writer.writerow(["iteration", "learning rate","running loss","val loss", "val loss (mp)","running L", "val L", "val L(mp)", "running NLL", "val NLL", "val NLL (mp)", "running HJB", "val HJB", "val HJB (mp)",  "time fwd","time bwd", "max memory (MB)","nfe fwd", "nfe bwd"])
+csv_writer.writerow(["iter", "lr","running_loss","val_loss", "running_L", "val_L", "running_NLL", "val_NLL", "running_HJB", "val_HJB", "time_fwd","time_bwd", "max_memory_mb"])
 
 # ------------------------------
 # Set device and seeds
@@ -209,11 +209,9 @@ if __name__ == '__main__':
     NLL_meter = RunningAverageMeter()
     cost_L_meter = RunningAverageMeter()
     cost_HJB_meter = RunningAverageMeter()
-    time_fwd = RunningAverageMeter()
-    time_bwd = RunningAverageMeter()
+    fwd_time_meter = RunningAverageMeter()
+    bwd_time_meter = RunningAverageMeter()
     mem_meter = RunningMaximumMeter()
-    nfe_fwd = 0
-    nfe_bwd = 0
     z_val_t0, logp_diff_val_t0, cost_L_val_t0, cost_HJB_val_t0 = get_batch(args.num_samples_val)
                     
     ckpt_path = os.path.join(result_dir, 'ckpt.pth')
@@ -227,10 +225,12 @@ if __name__ == '__main__':
                 z_t0, logp_diff_t0,cost_L_t0, cost_HJB_t0 = get_batch(args.num_samples)
             
             torch.cuda.reset_peak_memory_stats(device)
+            
+            # Time forward pass
+            torch.cuda.synchronize()
+            fwd_start = time.perf_counter()
 
             with autocast(device_type='cuda', dtype=args.precision):
-                start_time = time.perf_counter()
-                func.nfe = 0
                 z_t, logp_diff_t, cost_L_t, cost_HJB_t = odeint(
                     func,
                     (z_t0, logp_diff_t0, cost_L_t0, cost_HJB_t0),
@@ -241,23 +241,26 @@ if __name__ == '__main__':
 
                 logp_x = p_z0.log_prob(z_t1).view(-1,1) + logp_diff_t1
                 loss =  alpha[0]* cost_L_t1.mean(0) - alpha[1]* logp_x.mean(0) + alpha[2] * cost_HJB_t1.mean(0)
-                time_fwd.update(time.perf_counter() - start_time)
-                nfe_fwd += func.nfe
-                func.nfe = 0
-
-                start_time = time.perf_counter()
-                loss.backward()
-                time_bwd.update(time.perf_counter() - start_time)
-                nfe_bwd += func.nfe
-                # print name and norm of every parameter 
-                # for name, param in func.named_parameters():
-                    # print(name, param.grad.norm())
+            
+            torch.cuda.synchronize()
+            fwd_time = time.perf_counter() - fwd_start
+            
+            # Time backward pass
+            torch.cuda.synchronize()
+            bwd_start = time.perf_counter()
+            
+            loss.backward()
+            
+            torch.cuda.synchronize()
+            bwd_time = time.perf_counter() - bwd_start
                 
             optimizer.step()
 
             
             peak_memory = torch.cuda.max_memory_allocated(device) / (1024 * 1024)  # Convert to MB
 
+            fwd_time_meter.update(fwd_time)
+            bwd_time_meter.update(bwd_time)
             mem_meter.update(peak_memory)
             loss_meter.update(loss.item())
             NLL_meter.update(-logp_x.mean(0).item())
@@ -276,32 +279,16 @@ if __name__ == '__main__':
                     logp_x_val = p_z0.log_prob(z_val_t1).to(device) + logp_diff_val_t1.view(-1)
                     loss_val =  alpha[0]* cost_L_val_t1.mean(0) - alpha[1]*logp_x_val.mean(0) + alpha[2] * cost_HJB_val_t1.mean(0)
 
-                    with autocast(device_type='cuda', dtype=args.precision):
-                        logp_diff_val_mp_t0 = torch.zeros_like(logp_diff_val_t0)
-                        cost_L_val_mp_t0 = torch.zeros_like(cost_L_val_t0)
-                        cost_HJB_val_mp_t0 = torch.zeros_like(cost_HJB_val_t0)
-                        
-                        z_val_mp_t, logp_diff_val_mp_t, cost_L_val_mp_t, cost_HJB_val_mp_t = odeint(
-                            func,
-                            (z_val_t0, logp_diff_val_mp_t0, cost_L_val_mp_t0, cost_HJB_val_mp_t0),
-                            torch.linspace(t0, t1, args.num_timesteps_val).to(device),
-                            method=args.method
-                        )
-                        z_val_mp_t1, logp_diff_val_mp_t1, cost_L_val_mp_t1, cost_HJB_val_mp_t1 = z_val_mp_t[-1], logp_diff_val_mp_t[-1], cost_L_val_mp_t[-1], cost_HJB_val_mp_t[-1]
-                        logp_x_val_mp = p_z0.log_prob(z_val_mp_t1).to(device) + logp_diff_val_mp_t1.view(-1)
-                        loss_val_mp = alpha[0]* cost_L_val_mp_t1.mean(0) - alpha[1]*logp_x_val_mp.mean(0) +  alpha[2] * cost_HJB_val_mp_t1.mean(0)
 
-
-                print('Iter: {}, lr {:.3e} running loss: {:.3e}, val loss {:.3e}, val loss (mp) {:.3e}'.format(itr, lr, loss_meter.avg, loss_val.item(), loss_val_mp.item()),
-                      'running L: {:.3e}, val L: {:.3e}, val L (mp): {:.3e}'.format(cost_L_meter.avg, cost_L_val_t1.mean(0).item(), cost_L_val_mp_t1.mean(0).item()), 
-                      'running NLL: {:.3e}, val NLL: {:.3e}, val NLL (mp): {:.3e}'.format(NLL_meter.avg, -logp_x_val.mean(0).item(), -logp_x_val_mp.mean(0).item()), 
-                      'running HJB: {:.3e}, val HJB: {:.3e}, val HJB (mp): {:.3e}'.format(cost_HJB_meter.avg, cost_HJB_val_t1.mean(0).item(), cost_HJB_val_mp_t1.mean(0).item()), 
-                      'time (fwd): {:.4f}s'.format(time_fwd.avg),'time (bwd): {:.4f}s'.format(time_bwd.avg), 'max memory: {:.0f}MB'.format(peak_memory),
-                      'nfe (fwd) : {}, nfe (bwd): {}'.format(nfe_fwd, nfe_bwd))
+                print('Iter: {}, lr {:.3e} | running loss: {:.3e}, val loss {:.3e}'.format(itr, lr, loss_meter.avg, loss_val.item()),
+                      '| running L: {:.3e}, val L: {:.3e}'.format(cost_L_meter.avg, cost_L_val_t1.mean(0).item()), 
+                      '| running NLL: {:.3e}, val NLL: {:.3e}'.format(NLL_meter.avg, -logp_x_val.mean(0).item()), 
+                      '| running HJB: {:.3e}, val HJB: {:.3e}'.format(cost_HJB_meter.avg, cost_HJB_val_t1.mean(0).item()), 
+                      '| fwd: {:.4f}s, bwd: {:.4f}s'.format(fwd_time_meter.avg, bwd_time_meter.avg), 
+                      '| max memory: {:.0f}MB'.format(peak_memory))
                 sys.stdout.flush()
-                csv_writer.writerow([itr, lr, loss_meter.avg, loss_val.item(), loss_val_mp.item(), cost_L_meter.avg, cost_L_val_t1.mean(0).item(), cost_L_val_mp_t1.mean(0).item(), NLL_meter.avg, -logp_x_val.mean(0).item(), -logp_x_val_mp.mean(0).item(), cost_HJB_meter.avg, cost_HJB_val_t1.mean(0).item(), cost_HJB_val_mp_t1.mean(0).item(), time_fwd.avg, time_bwd.avg, peak_memory,nfe_fwd,nfe_bwd])
+                csv_writer.writerow([itr, lr, loss_meter.avg, loss_val.item(), cost_L_meter.avg, cost_L_val_t1.mean(0).item(), NLL_meter.avg, -logp_x_val.mean(0).item(), cost_HJB_meter.avg, cost_HJB_val_t1.mean(0).item(), fwd_time_meter.avg, bwd_time_meter.avg, peak_memory])
                 csv_file.flush()
-                nfe_fwd = nfe_bwd = 0
                 
             
             if itr % args.lr_decay_steps == 0:
@@ -420,24 +407,21 @@ if __name__ == '__main__':
         lr_vals = data[:, 1]
         running_loss = data[:, 2]
         val_loss = data[:, 3]
-        val_loss_mp = data[:, 4]
-        running_L = data[:, 5]
-        val_L = data[:, 6]
-        val_L_mp = data[:, 7]
-        running_NLL = data[:, 8]
-        val_NLL = data[:, 9]
-        val_NLL_mp = data[:, 10]
-        running_HJB = data[:, 11]
-        val_HJB = data[:, 12]
-        val_HJB_mp = data[:, 13]
-        max_memory = data[:, 15]
+        running_L = data[:, 4]
+        val_L = data[:, 5]
+        running_NLL = data[:, 6]
+        val_NLL = data[:, 7]
+        running_HJB = data[:, 8]
+        val_HJB = data[:, 9]
+        fwd_time = data[:, 10]
+        bwd_time = data[:, 11]
+        max_memory = data[:, 12]
 
         fig, axs = plt.subplots(2, 3, figsize=(15, 8))
 
         # 1) Loss function subplot
         axs[0, 0].plot(iters, running_loss, label="running loss")
         axs[0, 0].plot(iters, val_loss, label="val loss")
-        axs[0, 0].plot(iters, val_loss_mp,"--", label="val loss (mp)")
         axs[0, 0].set_title("Loss Function")
         axs[0, 0].set_xlabel("Iteration")
         axs[0, 0].set_ylabel("Loss")
@@ -446,7 +430,6 @@ if __name__ == '__main__':
         # 2) Transport costs subplot
         axs[0, 1].plot(iters, running_L, label="running L")
         axs[0, 1].plot(iters, val_L, label="val L")
-        axs[0, 1].plot(iters, val_L_mp,"--", label="val L (mp)")
         axs[0, 1].set_title("Transport Costs")
         axs[0, 1].set_xlabel("Iteration")
         axs[0, 1].set_ylabel("Cost")
@@ -455,7 +438,6 @@ if __name__ == '__main__':
         # 3) NLL subplot
         axs[0, 2].plot(iters, running_NLL, label="running NLL")
         axs[0, 2].plot(iters, val_NLL, label="val NLL")
-        axs[0, 2].plot(iters, val_NLL_mp,"--", label="val NLL (mp)")
         axs[0, 2].set_title("NLL")
         axs[0, 2].set_xlabel("Iteration")
         axs[0, 2].set_ylabel("NLL")
@@ -464,7 +446,6 @@ if __name__ == '__main__':
         # 4) HJB Penalty subplot
         axs[1, 0].plot(iters, running_HJB, label="running HJB")
         axs[1, 0].plot(iters, val_HJB, label="val HJB")
-        axs[1, 0].plot(iters, val_HJB_mp,"--", label="val HJB (mp)")
         axs[1, 0].set_title("HJB Penalty")
         axs[1, 0].set_xlabel("Iteration")
         axs[1, 0].set_ylabel("HJB")
@@ -477,11 +458,12 @@ if __name__ == '__main__':
         axs[1, 1].set_ylabel("Learning Rate")
         axs[1, 1].legend()
 
-        # 6) Max memory subplot
-        axs[1, 2].plot(iters, max_memory, label="max memory (MB)")
-        axs[1, 2].set_title("Max Memory")
+        # 6) Timing subplot
+        axs[1, 2].plot(iters, fwd_time, label="forward time")
+        axs[1, 2].plot(iters, bwd_time, label="backward time")
+        axs[1, 2].set_title("Forward/Backward Pass Time")
         axs[1, 2].set_xlabel("Iteration")
-        axs[1, 2].set_ylabel("Memory (MB)")
+        axs[1, 2].set_ylabel("Time (s)")
         axs[1, 2].legend()
 
         plt.tight_layout()

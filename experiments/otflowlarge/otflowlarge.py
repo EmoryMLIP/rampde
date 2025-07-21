@@ -257,7 +257,8 @@ def main():
         NLL_meter      = RunningAverageMeter()
         cost_L_meter   = RunningAverageMeter()
         cost_HJB_meter = RunningAverageMeter()
-        time_meter     = RunningAverageMeter()
+        fwd_time_meter = RunningAverageMeter()
+        bwd_time_meter = RunningAverageMeter()
         mem_meter      = RunningMaximumMeter()
         
         # CSV setup
@@ -270,7 +271,7 @@ def main():
             "running_L",   "val_L",
             "running_NLL", "val_NLL",
             "running_HJB", "val_HJB",
-            "time", "max_memory"
+            "time_fwd", "time_bwd", "max_memory_mb"
         ])
 
         # Check if a saved model exists and load it
@@ -291,13 +292,15 @@ def main():
             while itr <= args.niters:
                 optimizer.zero_grad()
                 z0, logp0, cL0, cH0 = get_minibatch(train_x, args.batch_size)
-                torch.cuda.synchronize()
                 torch.cuda.reset_peak_memory_stats(device)
-                start = time.perf_counter()
-
+                
                 # clamp parameters
                 for p in func.parameters():
                     p.data = torch.clamp(p.data, clampMin, clampMax)
+                
+                # Time forward pass
+                torch.cuda.synchronize()
+                fwd_start = time.perf_counter()
 
                 with autocast(device_type='cuda', dtype=precision):
                     ts = torch.linspace(t0, t1, args.nt, device=device)
@@ -319,6 +322,13 @@ def main():
                     loss   = (-alpha[2]*logp_x.mean()
                               + alpha[0]*cL1.mean()
                               + alpha[1]*cH1.mean())
+                
+                torch.cuda.synchronize()
+                fwd_time = time.perf_counter() - fwd_start
+                
+                # Time backward pass
+                torch.cuda.synchronize()
+                bwd_start = time.perf_counter()
                 
                 # Handle backward pass with or without loss scaling
                 if loss_scaler is not None and hasattr(loss_scaler, 'scale'):
@@ -360,8 +370,10 @@ def main():
                     # Gradient clipping after backward pass
                     torch.nn.utils.clip_grad_norm_(func.parameters(), max_norm=2.0)
                     optimizer.step()
+                
                 torch.cuda.synchronize()
-                elapsed = time.perf_counter() - start
+                bwd_time = time.perf_counter() - bwd_start
+                
                 peak_m  = torch.cuda.max_memory_allocated(device) / (1024**2)
                 
                 # Check for NaN or infinite loss
@@ -398,7 +410,8 @@ def main():
                         return  # Exit the training function
 
                 # update meters
-                time_meter.update(elapsed)
+                fwd_time_meter.update(fwd_time)
+                bwd_time_meter.update(bwd_time)
                 mem_meter.update(peak_m)
                 loss_meter.update(loss.item())
                 NLL_meter.update((-logp_x.mean()).item())
@@ -423,8 +436,8 @@ def main():
                                         + alpha[0]*vL1.mean()
                                         + alpha[1]*vH1.mean())
 
-                    print(f"[Iter {itr:5d}] train loss {loss_meter.avg:.4f}, "
-                          f"val loss {loss_val:.4f}, time {time_meter.avg:.3f}s, "
+                    print(f"[Iter {itr:5d}] LR {optimizer.param_groups[0]['lr']:.2e} | train loss {loss_meter.avg:.4f}, "
+                          f"val loss {loss_val:.4f} | fwd {fwd_time_meter.avg:.3f}s, bwd {bwd_time_meter.avg:.3f}s | "
                           f"mem {mem_meter.max:.0f}MB")
                     
                     # Early stopping logic (only if not disabled)
@@ -476,7 +489,8 @@ def main():
                         (-logp_val.mean()).item(),
                         cost_HJB_meter.avg,
                         vH1.mean().item(),
-                        time_meter.avg,
+                        fwd_time_meter.avg,
+                        bwd_time_meter.avg,
                         mem_meter.max
                     ])
                     csv_file.flush()
@@ -531,7 +545,9 @@ def main():
                     val_NLL     = data[:, 7]
                     run_HJB     = data[:, 8]
                     val_HJB     = data[:, 9]
-                    max_mem     = data[:, 11]
+                    fwd_time    = data[:, 10]
+                    bwd_time    = data[:, 11]
+                    max_mem     = data[:, 12]
 
                     fig, axs = plt.subplots(2, 3, figsize=(15, 8))
 
@@ -569,10 +585,12 @@ def main():
                     axs[1, 1].set_xlabel("Iteration")
                     axs[1, 1].legend()
 
-                    # 6) Max memory
-                    axs[1, 2].plot(iters, max_mem, label="max memory (MB)")
-                    axs[1, 2].set_title("Max Memory")
+                    # 6) Timing
+                    axs[1, 2].plot(iters, fwd_time, label="forward time")
+                    axs[1, 2].plot(iters, bwd_time, label="backward time")
+                    axs[1, 2].set_title("Forward/Backward Pass Time")
                     axs[1, 2].set_xlabel("Iteration")
+                    axs[1, 2].set_ylabel("Time (s)")
                     axs[1, 2].legend()
 
                     plt.tight_layout()

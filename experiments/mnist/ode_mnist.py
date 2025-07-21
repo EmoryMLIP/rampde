@@ -382,10 +382,8 @@ def main():
         optimizer = torch.optim.SGD(model.parameters(), lr=args.lr, momentum=0.9)
 
         best_acc = 0
-        batch_time_meter = RunningAverageMeter()
-        f_nfe_meter = RunningAverageMeter()
-        b_nfe_meter = RunningAverageMeter()
-        time_meter = RunningAverageMeter()
+        fwd_time_meter = RunningAverageMeter()
+        bwd_time_meter = RunningAverageMeter()
         mem_meter = RunningMaximumMeter()
 
         end = time.time()
@@ -395,10 +393,10 @@ def main():
         csv_file = open(csv_path, 'w', newline='')
         writer = csv.writer(csv_file)
         writer.writerow([
-            'step', 'epoch',
-            'train_acc', 'test_acc',
-            'f_nfe', 'b_nfe',
-            'batch_time', 'step_time', 'max_memory'
+            'iter', 'epoch', 'lr',
+            'train_acc', 'val_acc',
+            'time_fwd', 'time_bwd',
+            'max_memory_mb'
         ])
 
         for itr in range(args.nepochs * batches_per_epoch):
@@ -410,17 +408,23 @@ def main():
             x, y = data_gen.__next__()
             x = x.to(device)
             y = y.to(device)
-            start_time = time.perf_counter()
             torch.cuda.reset_peak_memory_stats(device)
 
+            # Time forward pass
+            torch.cuda.synchronize()
+            fwd_start = time.perf_counter()
+            
             with autocast(device_type='cuda', dtype=precision):
                 logits = model(x)
                 loss = criterion(logits, y)
+            
+            torch.cuda.synchronize()
+            fwd_time = time.perf_counter() - fwd_start
 
-                if is_odenet:
-                    nfe_forward = feature_layers[0].nfe
-                    feature_layers[0].nfe = 0
-
+            # Time backward pass
+            torch.cuda.synchronize()
+            bwd_start = time.perf_counter()
+            
             # Handle backward pass with or without loss scaling
             if loss_scaler is not None and hasattr(loss_scaler, 'scale'):
                 # Track loss scale before step (for GradScaler only)
@@ -442,21 +446,16 @@ def main():
                 loss.backward()
                 optimizer.step()
 
-            if is_odenet:
-                nfe_backward = feature_layers[0].nfe
-                feature_layers[0].nfe = 0
-                f_nfe_meter.update(nfe_forward)
-                b_nfe_meter.update(nfe_backward)
+            torch.cuda.synchronize()
+            bwd_time = time.perf_counter() - bwd_start
 
-            batch_time_meter.update(time.time() - end)
-            torch.cuda.synchronize(device)
-            end = time.time()
-
-            elapsed_time = time.perf_counter() - start_time
             peak_memory = torch.cuda.max_memory_allocated(device) / (1024 * 1024)
 
-            time_meter.update(elapsed_time)
+            fwd_time_meter.update(fwd_time)
+            bwd_time_meter.update(bwd_time)
             mem_meter.update(peak_memory)
+            
+            end = time.time()
 
             # Check for NaN or infinite loss
             if not torch.isfinite(loss).all():
@@ -503,11 +502,11 @@ def main():
                         best_acc = test_acc
 
                     print(
-                        "Step {:06d} | Epoch {:04d} | Time {:.3f} ({:.3f}) | "
-                        "NFE-F {:.1f} | NFE-B {:.1f} | Train Acc {:.4f} | "
-                        "Test Acc {:.4f} | Max Mem {:.1f}MB".format(
-                            itr, epoch, batch_time_meter.val, batch_time_meter.avg,
-                            f_nfe_meter.avg, b_nfe_meter.avg,
+                        "Iter {:06d} | Epoch {:04d} | LR {:.4f} | "
+                        "Fwd {:.3f}s | Bwd {:.3f}s | "
+                        "Train Acc {:.4f} | Val Acc {:.4f} | Max Mem {:.1f}MB".format(
+                            itr, epoch, optimizer.param_groups[0]['lr'],
+                            fwd_time_meter.avg, bwd_time_meter.avg,
                             train_acc, test_acc, mem_meter.max
                         )
                     )
@@ -516,12 +515,11 @@ def main():
                 writer.writerow([
                     itr,
                     epoch,
+                    optimizer.param_groups[0]['lr'],
                     train_acc,
                     test_acc,
-                    f_nfe_meter.avg,
-                    b_nfe_meter.avg,
-                    batch_time_meter.avg,
-                    time_meter.avg,
+                    fwd_time_meter.avg,
+                    bwd_time_meter.avg,
                     mem_meter.max
                 ])
                 csv_file.flush()
@@ -534,7 +532,7 @@ def main():
         # 1) accuracy plot
         plt.figure(figsize=(6, 4))
         plt.plot(df['epoch'], df['train_acc'], label='Train Acc')
-        plt.plot(df['epoch'], df['test_acc'], label='Test Acc')
+        plt.plot(df['epoch'], df['val_acc'], label='Val Acc')
         plt.xlabel('Epoch')
         plt.ylabel('Accuracy')
         plt.legend()

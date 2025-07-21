@@ -439,12 +439,6 @@ def main():
         extra_params=extra_params
     )
     
-    # Save original args to CSV as well (for compatibility)
-    args_csv_path = os.path.join(result_dir, "original_args.csv")
-    args_dict = vars(args)
-    args_df = pd.DataFrame([args_dict])
-    args_df.to_csv(args_csv_path, index=False)
-    
     # Copy the script to results directory
     script_path = os.path.abspath(__file__)
     shutil.copy(script_path, os.path.join(result_dir, os.path.basename(script_path)))
@@ -471,20 +465,19 @@ def main():
         # scheduler that does nothing
 
         best_acc = 0
-        batch_time_meter = RunningAverageMeter()
         train_loss_meter = RunningAverageMeter()
-        f_nfe_meter = RunningAverageMeter()
-        b_nfe_meter = RunningAverageMeter()
-        time_meter = RunningAverageMeter()
+        fwd_time_meter = RunningAverageMeter()
+        bwd_time_meter = RunningAverageMeter()
         mem_meter = RunningMaximumMeter()
 
         csv_path = os.path.join(result_dir, folder_name + ".csv")
         csv_file = open(csv_path, 'w', newline='')
         writer = csv.writer(csv_file)
         writer.writerow([
-            'step', 'epoch', 'batch_time_val', 'batch_time_avg',
-            'running_loss', 'train_loss', 'test_loss',
-            'f_nfe', 'b_nfe', 'train_acc', 'test_acc', 'max_memory'
+            'iter', 'epoch', 'lr',
+            'running_loss', 'train_loss', 'val_loss',
+            'time_fwd', 'time_bwd',
+            'train_acc', 'val_acc', 'max_memory_mb'
         ])
 
         for itr in range(args.nepochs * batches_per_epoch):
@@ -493,15 +486,23 @@ def main():
             x, y = data_gen.__next__()
             x = x.to(device)
             y = y.to(device)
-            torch.cuda.synchronize() 
             torch.cuda.reset_peak_memory_stats(device)
-            start_time = time.perf_counter()
+            
+            # Time forward pass
+            torch.cuda.synchronize()
+            fwd_start = time.perf_counter()
             
             with autocast(device_type='cuda', dtype=precision):
                 logits = model(x)
                 loss = criterion(logits.float(), y)
-                nfe_forward = -1
+            
+            torch.cuda.synchronize()
+            fwd_time = time.perf_counter() - fwd_start
                 
+            # Time backward pass
+            torch.cuda.synchronize()
+            bwd_start = time.perf_counter()
+            
             # Handle backward pass with or without loss scaling
             if loss_scaler is not None:
                 # Track loss scale before step
@@ -532,10 +533,11 @@ def main():
             
             for param in model.parameters():
                 param.data = param.data.clamp_(-1, 1)
-            torch.cuda.synchronize() 
-            elapsed_time = time.perf_counter() - start_time
-            peak_memory = torch.cuda.max_memory_allocated(device) / (1024 * 1024)        
-            nfe_backward = -1
+            
+            torch.cuda.synchronize()
+            bwd_time = time.perf_counter() - bwd_start
+            
+            peak_memory = torch.cuda.max_memory_allocated(device) / (1024 * 1024)
 
             # Check for NaN or infinite loss (outside timed zone)
             if not torch.isfinite(loss).all():
@@ -585,11 +587,9 @@ def main():
                 if not has_nan_grad and (itr < 5 or itr % 50 == 0):
                     print(f"Iteration {itr}: All gradients are finite")
 
-            batch_time_meter.update(elapsed_time)
-            f_nfe_meter.update(nfe_forward)
-            b_nfe_meter.update(nfe_backward)
-            train_loss_meter.update(loss.item())        
-            time_meter.update(elapsed_time)
+            fwd_time_meter.update(fwd_time)
+            bwd_time_meter.update(bwd_time)
+            train_loss_meter.update(loss.item())
             mem_meter.update(peak_memory)
 
             # evaluate / log every test_freq steps
@@ -605,14 +605,15 @@ def main():
                                 {'state_dict': model.state_dict(), 'args': args}, ckpt_path)
                             best_acc = val_acc
 
+                    current_lr = optimizer.param_groups[0]['lr']
                     print(
-                        "Step {:06d} | Epoch {:04d} | Time {:.3f} ({:.3f}) | "
+                        "Iter {:06d} | Epoch {:04d} | LR {:.4f} | "
                         "Running Loss {:.4f} | Train Loss {:.4f} | Val Loss {:.4f} | "
-                        "NFE-F {:.1f} | NFE-B {:.1f} | Train Acc {:.4f} | "
-                        "Val Acc {:.4f} | Max Mem {:.1f}MB".format(
-                            itr, epoch, batch_time_meter.val, batch_time_meter.avg,
+                        "Fwd {:.3f}s | Bwd {:.3f}s | "
+                        "Train Acc {:.4f} | Val Acc {:.4f} | Max Mem {:.1f}MB".format(
+                            itr, epoch, current_lr,
                             train_loss_meter.val, train_loss, val_loss,
-                            f_nfe_meter.avg, b_nfe_meter.avg,
+                            fwd_time_meter.avg, bwd_time_meter.avg,
                             train_acc, val_acc, mem_meter.max
                         )
                     )
@@ -621,13 +622,12 @@ def main():
                 writer.writerow([
                     itr,
                     epoch,
-                    batch_time_meter.val,
-                    batch_time_meter.avg,
+                    current_lr,
                     train_loss_meter.val,
                     train_loss,
                     val_loss,
-                    f_nfe_meter.avg,
-                    b_nfe_meter.avg,
+                    fwd_time_meter.avg,
+                    bwd_time_meter.avg,
                     train_acc,
                     val_acc,
                     mem_meter.max
