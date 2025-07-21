@@ -97,8 +97,8 @@ def setup_environment(args):
     if args.odeint == 'torchmpnode':
         print("Using torchmpnode")
         from torchmpnode import odeint
-        from torchmpnode.loss_scalers import DynamicScaler, NoScaler
-        return odeint, DynamicScaler, NoScaler
+        from torchmpnode.loss_scalers import DynamicScaler
+        return odeint, DynamicScaler
     else:    
         print("using torchdiffeq")
         if args.adjoint:
@@ -106,7 +106,7 @@ def setup_environment(args):
             print("Warning: Using torchdiffeq with adjoint method, which is not recommended for low precision training.")                
         else:
             from torchdiffeq import odeint
-        return odeint, None, None
+        return odeint, None
 
 def get_precision_dtype(precision_str):
     """Convert precision string to torch dtype."""
@@ -129,33 +129,33 @@ def setup_precision(precision_str):
         torch.backends.cudnn.allow_tf32 = True
         print("Using TF32 precision")
 
-def determine_scaler(args, DynamicScaler, NoScaler, precision):
+def determine_scaler(args, DynamicScaler, precision):
     """Determine which scaler to use and return (scaler_instance, scaler_name, loss_scaler_for_odeint)."""
     if args.odeint == 'torchdiffeq' and args.precision == 'float16' and args.grad_scaler:
+        # torchdiffeq + float16 + GradScaler
         from torch.amp import GradScaler
         scaler = GradScaler('cuda')
         scaler_name = 'grad'
         print(f"Using PyTorch GradScaler for float16 precision with torchdiffeq (initial scale: {scaler.get_scale()})")
         return scaler, scaler_name, None
-    elif args.odeint == 'torchmpnode' and args.precision == 'float16' and not args.dynamic_scaler and args.grad_scaler:
-        # Special case: torchmpnode with dynamic scaler disabled but grad scaler enabled
-        from torch.amp import GradScaler
-        scaler = GradScaler('cuda')
-        scaler_name = 'grad'
-        # Provide NoScaler for torchmpnode to avoid DynamicScaler initialization
-        loss_scaler_for_odeint = NoScaler(precision)
-        print(f"Using PyTorch GradScaler for float16 precision with torchmpnode (DynamicScaler disabled) (initial scale: {scaler.get_scale()})")
-        return scaler, scaler_name, loss_scaler_for_odeint
     elif args.odeint == 'torchmpnode' and args.precision == 'float16' and args.dynamic_scaler:
-        # Initialize DynamicScaler once for reuse during training
+        # torchmpnode + float16 + DynamicScaler
         scaler = DynamicScaler(precision)
         scaler_name = 'dynamic'
         print("Using DynamicScaler for float16 precision with torchmpnode")
         return scaler, scaler_name, scaler
+    elif args.odeint == 'torchmpnode' and args.precision == 'float16' and args.grad_scaler and not args.dynamic_scaler:
+        # torchmpnode + float16 + GradScaler + safe mode (dynamic scaler off)
+        from torch.amp import GradScaler
+        scaler = GradScaler('cuda')
+        scaler_name = 'grad'
+        print(f"Using PyTorch GradScaler for float16 precision with torchmpnode (safe mode, DynamicScaler disabled) (initial scale: {scaler.get_scale()})")
+        return scaler, scaler_name, None
     else:
+        # All other cases: no scaling
         return None, None, None
 
-def setup_experiment(args, base_dir, DynamicScaler=None, NoScaler=None, precision=None):
+def setup_experiment(args, base_dir, DynamicScaler=None, precision=None):
     """Setup experiment directories, logging, and environment."""
     job_id = os.environ.get("SLURM_JOB_ID", "")
     
@@ -167,7 +167,7 @@ def setup_experiment(args, base_dir, DynamicScaler=None, NoScaler=None, precisio
     args.dynamic_scaler = not args.no_dynamic_scaler
     
     # Determine scaler type and create folder name with scaler info
-    loss_scaler, scaler_name, loss_scaler_for_odeint = determine_scaler(args, DynamicScaler, NoScaler, precision)
+    loss_scaler, scaler_name, loss_scaler_for_odeint = determine_scaler(args, DynamicScaler, precision)
     
     timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
     # Build folder name with scaler type
@@ -318,7 +318,7 @@ def main():
         print("No seed specified, using random initialization")
     
     # Setup environment and imports
-    odeint_func, DynamicScaler, NoScaler = setup_environment(args)
+    odeint_func, DynamicScaler = setup_environment(args)
     
     # Import utilities after setting up the path  
     from utils import RunningAverageMeter, RunningMaximumMeter
@@ -333,7 +333,7 @@ def main():
     base_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), '../..'))
     
     # Setup experiment directories and logging
-    result_dir, ckpt_path, folder_name, device, log_file, loss_scaler, loss_scaler_for_odeint = setup_experiment(args, base_dir, DynamicScaler, NoScaler, precision)
+    result_dir, ckpt_path, folder_name, device, log_file, loss_scaler, loss_scaler_for_odeint = setup_experiment(args, base_dir, DynamicScaler, precision)
     
     try:
         # load data
@@ -402,22 +402,19 @@ def main():
 
                 with autocast(device_type='cuda', dtype=precision):
                     ts = torch.linspace(t0, t1, args.nt, device=device)
-                    if loss_scaler_for_odeint is not None:
-                        # Use the specific loss scaler for odeint (DynamicScaler or NoScaler)
-                        z_t, logp_t, cL_t, cH_t = odeint_func(
-                            func,
-                            (z0, logp0, cL0, cH0),
-                            ts,
-                            method=args.method,
-                            loss_scaler=loss_scaler_for_odeint
-                        )
-                    else:
-                        z_t, logp_t, cL_t, cH_t = odeint_func(
-                            func,
-                            (z0, logp0, cL0, cH0),
-                            ts,
-                            method=args.method
-                        )
+                    
+                    # Prepare odeint arguments
+                    odeint_kwargs = {'method': args.method}
+                    if args.odeint == 'torchmpnode' and loss_scaler_for_odeint is not None:
+                        odeint_kwargs['loss_scaler'] = loss_scaler_for_odeint
+                    
+                    # Single odeint call
+                    z_t, logp_t, cL_t, cH_t = odeint_func(
+                        func,
+                        (z0, logp0, cL0, cH0),
+                        ts,
+                        **odeint_kwargs
+                    )
                     z1, logp1, cL1, cH1 = z_t[-1], logp_t[-1], cL_t[-1], cH_t[-1]
                     logp_x = p_z0.log_prob(z1).view(-1,1) + logp1
                     loss   = (-alpha[2]*logp_x.mean()
@@ -608,172 +605,178 @@ def main():
 
     except KeyboardInterrupt:
         print("Interrupted. Exiting training loop.")
-
-        csv_file.close()
+            
+    finally:
+        # Close CSV file if it was opened
+        if 'csv_file' in locals() and csv_file:
+            csv_file.close()
 
         # ------------------------------
         # Create optimization stats plots
         # ------------------------------
-        with open(csv_path, "r") as f:
-            reader = csv.reader(f)
-            next(reader)
-            data = np.array(list(reader), dtype=np.float32)
+        if 'csv_path' in locals() and os.path.exists(csv_path):
+            try:
+                with open(csv_path, "r") as f:
+                    reader = csv.reader(f)
+                    next(reader)
+                    data = np.array(list(reader), dtype=np.float32)
 
-        iters       = data[:, 0]
-        lr_vals     = data[:, 1]
-        run_loss    = data[:, 2]
-        val_loss    = data[:, 3]
-        run_L       = data[:, 4]
-        val_L       = data[:, 5]
-        run_NLL     = data[:, 6]
-        val_NLL     = data[:, 7]
-        run_HJB     = data[:, 8]
-        val_HJB     = data[:, 9]
-        max_mem     = data[:, 11]
+                if len(data) > 0:  # Only plot if we have data
+                    iters       = data[:, 0]
+                    lr_vals     = data[:, 1]
+                    run_loss    = data[:, 2]
+                    val_loss    = data[:, 3]
+                    run_L       = data[:, 4]
+                    val_L       = data[:, 5]
+                    run_NLL     = data[:, 6]
+                    val_NLL     = data[:, 7]
+                    run_HJB     = data[:, 8]
+                    val_HJB     = data[:, 9]
+                    max_mem     = data[:, 11]
 
-        fig, axs = plt.subplots(2, 3, figsize=(15, 8))
+                    fig, axs = plt.subplots(2, 3, figsize=(15, 8))
 
-        # 1) Loss
-        axs[0, 0].plot(iters, run_loss,    label="running loss")
-        axs[0, 0].plot(iters, val_loss,    label="val loss")
-        axs[0, 0].set_title("Loss Function")
-        axs[0, 0].set_xlabel("Iteration")
-        axs[0, 0].legend()
+                    # 1) Loss
+                    axs[0, 0].plot(iters, run_loss,    label="running loss")
+                    axs[0, 0].plot(iters, val_loss,    label="val loss")
+                    axs[0, 0].set_title("Loss Function")
+                    axs[0, 0].set_xlabel("Iteration")
+                    axs[0, 0].legend()
 
-        # 2) Transport cost L
-        axs[0, 1].plot(iters, run_L,    label="running L")
-        axs[0, 1].plot(iters, val_L,    label="val L")
-        axs[0, 1].set_title("Transport Cost L")
-        axs[0, 1].set_xlabel("Iteration")
-        axs[0, 1].legend()
+                    # 2) Transport cost L
+                    axs[0, 1].plot(iters, run_L,    label="running L")
+                    axs[0, 1].plot(iters, val_L,    label="val L")
+                    axs[0, 1].set_title("Transport Cost L")
+                    axs[0, 1].set_xlabel("Iteration")
+                    axs[0, 1].legend()
 
-        # 3) NLL
-        axs[0, 2].plot(iters, run_NLL,  label="running NLL")
-        axs[0, 2].plot(iters, val_NLL,  label="val NLL")
-        axs[0, 2].set_title("Negative Log‐Likelihood")
-        axs[0, 2].set_xlabel("Iteration")
-        axs[0, 2].legend()
+                    # 3) NLL
+                    axs[0, 2].plot(iters, run_NLL,  label="running NLL")
+                    axs[0, 2].plot(iters, val_NLL,  label="val NLL")
+                    axs[0, 2].set_title("Negative Log‐Likelihood")
+                    axs[0, 2].set_xlabel("Iteration")
+                    axs[0, 2].legend()
 
-        # 4) HJB penalty
-        axs[1, 0].plot(iters, run_HJB,  label="running HJB")
-        axs[1, 0].plot(iters, val_HJB,  label="val HJB")
-        axs[1, 0].set_title("HJB Penalty")
-        axs[1, 0].set_xlabel("Iteration")
-        axs[1, 0].legend()
+                    # 4) HJB penalty
+                    axs[1, 0].plot(iters, run_HJB,  label="running HJB")
+                    axs[1, 0].plot(iters, val_HJB,  label="val HJB")
+                    axs[1, 0].set_title("HJB Penalty")
+                    axs[1, 0].set_xlabel("Iteration")
+                    axs[1, 0].legend()
 
-        # 5) Learning Rate
-        axs[1, 1].semilogy(iters, lr_vals, label="learning rate")
-        axs[1, 1].set_title("Learning Rate")
-        axs[1, 1].set_xlabel("Iteration")
-        axs[1, 1].legend()
+                    # 5) Learning Rate
+                    axs[1, 1].semilogy(iters, lr_vals, label="learning rate")
+                    axs[1, 1].set_title("Learning Rate")
+                    axs[1, 1].set_xlabel("Iteration")
+                    axs[1, 1].legend()
 
-        # 6) Max memory
-        axs[1, 2].plot(iters, max_mem, label="max memory (MB)")
-        axs[1, 2].set_title("Max Memory")
-        axs[1, 2].set_xlabel("Iteration")
-        axs[1, 2].legend()
+                    # 6) Max memory
+                    axs[1, 2].plot(iters, max_mem, label="max memory (MB)")
+                    axs[1, 2].set_title("Max Memory")
+                    axs[1, 2].set_xlabel("Iteration")
+                    axs[1, 2].legend()
 
-        plt.tight_layout()
-        stats_fig = os.path.join(result_dir, "optimization_stats.png")
-        plt.savefig(stats_fig, bbox_inches='tight')
-        plt.close()
-        print(f"Saved optimization stats plot at {stats_fig}")
+                    plt.tight_layout()
+                    stats_fig = os.path.join(result_dir, "optimization_stats.png")
+                    plt.savefig(stats_fig, bbox_inches='tight')
+                    plt.close()
+                    print(f"Saved optimization stats plot at {stats_fig}")
 
-        if args.viz:
-            print("Generating 2D‐slice visualizations…")
+                    if args.viz and 'func' in locals() and 'val_x' in locals():
+                        print("Generating 2D‐slice visualizations…")
 
-            val_np = val_x.cpu().numpy()
-            N      = min(val_np.shape[0], args.test_batch_size)
-            testData = val_np[:N]
+                        val_np = val_x.cpu().numpy()
+                        N      = min(val_np.shape[0], args.test_batch_size)
+                        testData = val_np[:N]
 
-            #forward map f(x)
-            with torch.no_grad():
-                # x_batch = torch.from_numpy(testData).to(device)
-                vz0, vpl0, vL0, vH0 = get_minibatch(val_x, args.num_samples_val)
-                t_grid = torch.linspace(t0, t1, args.nt_val, device=device)
-                # Visualization: no scaler needed
-                z_t, logp_t, cL_t, cH_t   = odeint_func(
-                    func,
-                    (vz0, vpl0, vL0, vH0),
-                    t_grid,
-                    method=args.method
-                )
-            z_fwd = z_t[-1]
-            modelFx = z_fwd[:, :d].cpu().numpy()
+                        #forward map f(x)
+                        with torch.no_grad():
+                            # x_batch = torch.from_numpy(testData).to(device)
+                            vz0, vpl0, vL0, vH0 = get_minibatch(val_x, args.test_batch_size)
+                            t_grid = torch.linspace(t0, t1, args.nt_val, device=device)
+                            # Visualization: no scaler needed
+                            z_t, logp_t, cL_t, cH_t   = odeint_func(
+                                func,
+                                (vz0, vpl0, vL0, vH0),
+                                t_grid,
+                                method=args.method
+                            )
+                        z_fwd = z_t[-1]
+                        modelFx = z_fwd[:, :d].cpu().numpy()
 
-            #Gaussian samples & inverse map f⁻¹(y)
-            y = p_z0.sample([N]).to(device)
+                        #Gaussian samples & inverse map f⁻¹(y)
+                        y = p_z0.sample([N]).to(device)
 
-            logp0 = torch.zeros(N, 1, device=device)
-            cL0   = torch.zeros_like(logp0)
-            cH0   = torch.zeros_like(logp0)
-            # for backward, reverse the time grid
-            t_grid_inv = torch.linspace(t1, t0, args.nt_val, device=device)
-            with torch.no_grad():
-                # Visualization: no scaler needed
-                z_inv_t, _, _, _ = odeint_func(
-                    func,
-                    (y, logp0, cL0, cH0),
-                    t_grid_inv,
-                    method=args.method
-                )
-            z_inv = z_inv_t[-1]
-            modelGen    = z_inv[:, :d].cpu().numpy()
-            normSamples = y.cpu().numpy()
+                        logp0 = torch.zeros(N, 1, device=device)
+                        cL0   = torch.zeros_like(logp0)
+                        cH0   = torch.zeros_like(logp0)
+                        # for backward, reverse the time grid
+                        t_grid_inv = torch.linspace(t1, t0, args.nt_val, device=device)
+                        with torch.no_grad():
+                            # Visualization: no scaler needed
+                            z_inv_t, _, _, _ = odeint_func(
+                                func,
+                                (y, logp0, cL0, cH0),
+                                t_grid_inv,
+                                method=args.method
+                            )
+                        z_inv = z_inv_t[-1]
+                        modelGen    = z_inv[:, :d].cpu().numpy()
+                        normSamples = y.cpu().numpy()
 
-            nSamples = min(testData.shape[0], modelGen.shape[0])
-            testSamps  = testData[:nSamples, :]
-            modelSamps = modelGen[:nSamples, :]
+                        nSamples = min(testData.shape[0], modelGen.shape[0])
+                        testSamps  = testData[:nSamples, :]
+                        modelSamps = modelGen[:nSamples, :]
 
-            mmd_val = mmd(modelSamps, testSamps)
-            print(f"MMD( ourGen , ρ0 )  num(ourGen)={modelSamps.shape[0]}, "
-                  f"num(ρ0)={testSamps.shape[0]} : {mmd_val:.5e}")
+                        mmd_val = mmd(modelSamps, testSamps)
+                        print(f"MMD( ourGen , ρ0 )  num(ourGen)={modelSamps.shape[0]}, "
+                              f"num(ρ0)={testSamps.shape[0]} : {mmd_val:.5e}")
 
-            nBins = 33
-            LOW, HIGH = -4, 4
-            if hasattr(data, 'gas') and result_dir.lower().find('gas')>=0:
-                LOW, HIGH = -2, 2
-            LOWrho0, HIGHrho0 = LOW, HIGH
+                        nBins = 33
+                        LOW, HIGH = -4, 4
+                        if hasattr(data, 'gas') and result_dir.lower().find('gas')>=0:
+                            LOW, HIGH = -2, 2
+                        LOWrho0, HIGHrho0 = LOW, HIGH
 
-            bounds    = [[LOW, HIGH], [LOW, HIGH]]
-            boundsR0  = [[LOWrho0, HIGHrho0], [LOWrho0, HIGHrho0]]
+                        bounds    = [[LOW, HIGH], [LOW, HIGH]]
+                        boundsR0  = [[LOWrho0, HIGHrho0], [LOWrho0, HIGHrho0]]
 
-            for d1 in range(0, d-1, 2):
-                d2 = d1 + 1
-                fig, axs = plt.subplots(1, 2, figsize=(10, 5))
-                # fig.suptitle(f"Miniboone slices: dims {d1} vs {d2}", y=0.98, fontsize=18)
+                        for d1 in range(0, d-1, 2):
+                            d2 = d1 + 1
+                            fig, axs = plt.subplots(1, 2, figsize=(10, 5))
+                            # fig.suptitle(f"Miniboone slices: dims {d1} vs {d2}", y=0.98, fontsize=18)
 
-                im1 = axs[0].hist2d(testData[:,d1], testData[:,d2],
-                     bins=nBins, range=boundsR0)[3]
-                axs[0].set_title(r"$x\sim\rho_0(x)$", fontsize=16)
+                            im1 = axs[0].hist2d(testData[:,d1], testData[:,d2],
+                                 bins=nBins, range=boundsR0)[3]
+                            axs[0].set_title(r"$x\sim\rho_0(x)$", fontsize=16)
 
-                # im2 = axs[0,1].hist2d(modelFx[:,d1], modelFx[:,d2],
-                #      bins=nBins, range=bounds)[3]
-                # axs[0,1].set_title(r"$f(x)$", fontsize=16)
+                            # im2 = axs[0,1].hist2d(modelFx[:,d1], modelFx[:,d2],
+                            #      bins=nBins, range=bounds)[3]
+                            # axs[0,1].set_title(r"$f(x)$", fontsize=16)
 
-                # im3 = axs[1,0].hist2d(normSamples[:,d1], normSamples[:,d2],
-                #      bins=nBins, range=bounds)[3]
-                # axs[1,0].set_title(r"$y\sim\rho_1(y)$", fontsize=16)
+                            # im3 = axs[1,0].hist2d(normSamples[:,d1], normSamples[:,d2],
+                            #      bins=nBins, range=bounds)[3]
+                            # axs[1,0].set_title(r"$y\sim\rho_1(y)$", fontsize=16)
 
-                im2 = axs[1].hist2d(modelGen[:,d1], modelGen[:,d2],
-                     bins=nBins, range=boundsR0)[3]
-                axs[1].set_title(r"$f^{-1}(y)$", fontsize=16)
+                            im2 = axs[1].hist2d(modelGen[:,d1], modelGen[:,d2],
+                                 bins=nBins, range=boundsR0)[3]
+                            axs[1].set_title(r"$f^{-1}(y)$", fontsize=16)
 
-                for ax, im in zip(axs.flatten(), [im1, im2]): #im1,im2,im3,
-                    fig.colorbar(im, ax=ax, fraction=0.04, pad=0.02)
-                    ax.set_xticks([]); ax.set_yticks([]); ax.set_aspect('equal')
+                            for ax, im in zip(axs.flatten(), [im1, im2]): #im1,im2,im3,
+                                fig.colorbar(im, ax=ax, fraction=0.04, pad=0.02)
+                                ax.set_xticks([]); ax.set_yticks([]); ax.set_aspect('equal')
 
-                plt.tight_layout(rect=[0, 0, 1, 0.96])
-                out_file = os.path.join(result_dir,
-                    f"slice_{d1}v{d2}.pdf")
-                plt.savefig(out_file, dpi=400)
-                plt.close(fig)
+                            plt.tight_layout(rect=[0, 0, 1, 0.96])
+                            out_file = os.path.join(result_dir,
+                                f"slice_{d1}v{d2}.pdf")
+                            plt.savefig(out_file, dpi=400)
+                            plt.close(fig)
 
-            print(f"Saved visualizations in {result_dir}")
-        else:
-            print("Visualization skipped (use --viz).")
-            
-    finally:
+                        print(f"Saved visualizations in {result_dir}")
+                    else:
+                        print("Visualization skipped (use --viz).")
+            except Exception as e:
+                print(f"Error generating plots: {e}")
         # Close log file to restore stdout/stderr
         if 'log_file' in locals() and log_file:
             log_file.close()

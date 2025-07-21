@@ -63,12 +63,8 @@ def setup_environment(args):
         print("Using torchmpnode")
         sys.path.insert(0, base_dir)
         from torchmpnode import odeint
-        from torchmpnode.loss_scalers import DynamicScaler, NoScaler
-        # Return appropriate scaler based on args
-        if args.precision == 'float16' and args.dynamic_scaler:
-            return odeint, DynamicScaler
-        else:
-            return odeint, NoScaler
+        from torchmpnode.loss_scalers import DynamicScaler
+        return odeint, DynamicScaler
     else:    
         print("using torchdiffeq")
         from torchdiffeq import odeint
@@ -97,28 +93,41 @@ def setup_precision(precision_str):
 
 def determine_scaler(args, ScalerClass, precision):
     """Determine which scaler to use and return (scaler_instance, scaler_name)."""
-    if args.odeint == 'torchdiffeq' and args.precision == 'float16' and args.grad_scaler:
-        from torch.amp import GradScaler
-        scaler = GradScaler('cuda')
-        scaler_name = 'grad'
-        print(f"Using PyTorch GradScaler for float16 precision with torchdiffeq (initial scale: {scaler.get_scale()})")
-        return scaler, scaler_name
-    elif args.odeint == 'torchmpnode' and args.precision == 'float16' and not args.dynamic_scaler and args.grad_scaler:
-        # Special case: torchmpnode with dynamic scaler disabled but grad scaler enabled
-        from torch.amp import GradScaler
-        scaler = GradScaler('cuda')
-        scaler_name = 'grad'
-        print(f"Using PyTorch GradScaler for float16 precision with torchmpnode (DynamicScaler disabled) (initial scale: {scaler.get_scale()})")
-        return scaler, scaler_name
-    elif args.odeint == 'torchmpnode' and args.precision == 'float16' and args.dynamic_scaler:
-        # DynamicScaler is created per-call in training loop, but we track it for naming
-        scaler_name = 'dynamic'
-        print("Using DynamicScaler for float16 precision with torchmpnode")
-        return None, scaler_name  # None because DynamicScaler is created per-call
+    # For float16 precision, we need some form of scaling
+    if args.precision == 'float16':
+        if args.odeint == 'torchdiffeq':
+            # torchdiffeq only supports GradScaler
+            if args.grad_scaler:
+                from torch.amp import GradScaler
+                scaler = GradScaler('cuda')
+                scaler_name = 'grad'
+                print(f"Using PyTorch GradScaler for float16 precision with torchdiffeq (initial scale: {scaler.get_scale()})")
+                return scaler, scaler_name
+            else:
+                print("WARNING: Using float16 with torchdiffeq without GradScaler - may encounter NaN/overflow")
+                return None, None
+        else:  # torchmpnode
+            # torchmpnode supports both DynamicScaler (internal) and GradScaler (external)
+            if args.dynamic_scaler:
+                # DynamicScaler is created per-call in training loop, but we track it for naming
+                scaler_name = 'dynamic'
+                print("Using DynamicScaler for float16 precision with torchmpnode")
+                return None, scaler_name  # None because DynamicScaler is created per-call
+            elif args.grad_scaler:
+                # Use external GradScaler when DynamicScaler is disabled
+                from torch.amp import GradScaler
+                scaler = GradScaler('cuda')
+                scaler_name = 'grad'
+                print(f"Using PyTorch GradScaler for float16 precision with torchmpnode (DynamicScaler disabled) (initial scale: {scaler.get_scale()})")
+                return scaler, scaler_name
+            else:
+                print("WARNING: Using float16 with torchmpnode without any scaling - may encounter NaN/overflow")
+                return None, None
     else:
+        # No scaling needed for other precisions
         return None, None
 
-def setup_experiment(args, base_dir, ScalerClass=None, precision=None):
+def setup_experiment(args, base_dir, DynamicScaler=None, precision=None):
     """Setup experiment directories, logging, and environment."""
     job_id = os.environ.get("SLURM_JOB_ID", "")
     
@@ -127,7 +136,7 @@ def setup_experiment(args, base_dir, ScalerClass=None, precision=None):
     stable_str = "stable" if args.stable else "unstable"
     
     # Determine scaler type and create folder name with scaler info
-    loss_scaler, scaler_name = determine_scaler(args, ScalerClass, precision)
+    loss_scaler, scaler_name = determine_scaler(args, DynamicScaler, precision)
     
     timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
     # Build folder name with scaler type
@@ -309,8 +318,11 @@ class MPNODE_STL10(nn.Module):
         self.norm1 = nn.InstanceNorm2d(ch, affine=True)
 
         # 2) ODE block #1
-        if args.odeint == 'torchmpnode' and ScalerClass is not None:
+        if args.odeint == 'torchmpnode' and args.dynamic_scaler and ScalerClass is not None:
             S1 = ScalerClass(precision)
+        elif args.odeint == 'torchmpnode' and args.precision == 'float16' and not args.dynamic_scaler:
+            # Explicitly disable internal scaler when using external GradScaler
+            S1 = False
         else:
             S1 = None
         self.ode1 = ODEBlock(ODEFunc(ch, t_grid, is_stable=args.stable), t_grid, solver="rk4", steps=4, loss_scaler=S1, odeint_func=odeint_func)
@@ -322,8 +334,11 @@ class MPNODE_STL10(nn.Module):
         # self.norm3 = nn.InstanceNorm2d(ch)
 
         # 4) ODE block #2
-        if args.odeint == 'torchmpnode' and ScalerClass is not None:
+        if args.odeint == 'torchmpnode' and args.dynamic_scaler and ScalerClass is not None:
             S2 = ScalerClass(precision)
+        elif args.odeint == 'torchmpnode' and args.precision == 'float16' and not args.dynamic_scaler:
+            # Explicitly disable internal scaler when using external GradScaler
+            S2 = False
         else:
             S2 = None
         self.ode2 = ODEBlock(ODEFunc(2*ch, t_grid, is_stable=args.stable), t_grid, solver="rk4", steps=4, loss_scaler=S2, odeint_func=odeint_func)
@@ -331,8 +346,11 @@ class MPNODE_STL10(nn.Module):
         self.avg2 = nn.AvgPool2d(2, stride=2)
         self.norm4 = nn.InstanceNorm2d(4*ch, affine=True)
         
-        if args.odeint == 'torchmpnode' and ScalerClass is not None:
+        if args.odeint == 'torchmpnode' and args.dynamic_scaler and ScalerClass is not None:
             S3 = ScalerClass(precision)
+        elif args.odeint == 'torchmpnode' and args.precision == 'float16' and not args.dynamic_scaler:
+            # Explicitly disable internal scaler when using external GradScaler
+            S3 = False
         else:
             S3 = None
         self.ode3 = ODEBlock(ODEFunc(4*ch, t_grid, is_stable=args.stable), t_grid, solver="rk4", steps=4, loss_scaler=S3, odeint_func=odeint_func)
@@ -520,7 +538,7 @@ def main():
         print("No seed specified, using random initialization")
     
     # Setup environment and imports
-    odeint_func, ScalerClass = setup_environment(args)
+    odeint_func, DynamicScaler = setup_environment(args)
     
     # Import utilities after setting up the path
     from utils import RunningAverageMeter, RunningMaximumMeter
@@ -532,7 +550,7 @@ def main():
     base_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), '../..'))
     
     # Setup experiment directories and logging
-    result_dir, ckpt_path, folder_name, device, log_file, loss_scaler = setup_experiment(args, base_dir, ScalerClass, precision)
+    result_dir, ckpt_path, folder_name, device, log_file, loss_scaler = setup_experiment(args, base_dir, DynamicScaler, precision)
     
     try:
         # Create model

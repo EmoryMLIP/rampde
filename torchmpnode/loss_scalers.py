@@ -2,22 +2,22 @@ import torch
 import math
 
 
-class NoScaler:
-    """
-    A dummy class that does not perform any scaling.
-    This is useful for debugging or when scaling is not needed.
-    """
-    def __init__(self, dtype_low):
+
+class DynamicScaler:
+    def __init__(self, dtype_low, target_factor=None, increase_factor=2.0, decrease_factor=0.5,
+                  max_attempts=50, delta=0):
         self.dtype_low = dtype_low
-        self.is_initialized=True
-        self.max_attempts = 1
-        self.S = 1.0
-        self.__name__="NoScaler"
-
-    def init_scaling(self, a):
-        # No scaling needed, so we do nothing.
-        pass
-
+        # Set a target norm if not provided: 1/epsilon for low precision.
+        self.eps = torch.finfo(dtype_low).eps
+        self.target = target_factor if target_factor is not None else 1.0 / self.eps
+        self.increase_factor = increase_factor
+        self.decrease_factor = decrease_factor
+        self.max_attempts = max_attempts
+        self.delta = delta
+        self.is_initialized=False
+        self.S = None  # This will be initialized later
+        self.__name__=  "DynamicScaler"
+    
     def _is_any_infinite(self, x):
         """
         Recursively check if x (a tensor, list, or tuple of tensors) contains any non-finite values.
@@ -34,32 +34,6 @@ class NoScaler:
             return not torch.tensor(x).isfinite().all().item()
         except Exception:
             return False
-        
-    def check_for_increase(self,a):
-        return False
-    
-    def update_on_overflow(self):
-        # NoScaler cannot handle overflow - raise OverflowError
-        raise OverflowError("NoScaler cannot handle gradient overflow")
-    
-    def update_on_small_grad(self):
-        pass
-
-
-class DynamicScaler(NoScaler):
-    def __init__(self, dtype_low, target_factor=None, increase_factor=2.0, decrease_factor=0.5,
-                  max_attempts=50, delta=0):
-        super().__init__(dtype_low)
-        # Set a target norm if not provided: 1/epsilon for low precision.
-        self.eps = torch.finfo(dtype_low).eps
-        self.target = target_factor if target_factor is not None else 1.0 / self.eps
-        self.increase_factor = increase_factor
-        self.decrease_factor = decrease_factor
-        self.max_attempts = max_attempts
-        self.delta = delta
-        self.is_initialized=False
-        self.S = None  # This will be initialized later
-        self.__name__=  "DynamicScaler"
 
     def init_scaling(self, a):
         if not(a.isfinite().all()) or a.isnan().any():
