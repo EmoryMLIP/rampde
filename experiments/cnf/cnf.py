@@ -20,6 +20,15 @@ import matplotlib.pyplot as plt
 import pandas as pd
 import toy_data
 
+# Add parent directory to path for common imports
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+from common import (
+    setup_environment,
+    get_precision_dtype,
+    determine_scaler,
+    setup_experiment
+)
+
 def create_parser():
     """Create and return the argument parser."""
     parser = argparse.ArgumentParser()
@@ -64,152 +73,6 @@ def create_parser():
     
     return parser
 
-def setup_environment(args):
-    """Setup the environment and imports based on args."""
-    # Set up path for utils import
-    base_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), '../..'))
-    sys.path.insert(0, os.path.join(base_dir, "examples"))
-    
-    if args.odeint == 'torchmpnode':
-        print("Using torchmpnode")
-        sys.path.insert(0, base_dir)
-        from torchmpnode import odeint, DynamicScaler
-        return odeint, DynamicScaler
-    else:    
-        print("using torchdiffeq")
-        try:
-            if args.adjoint:
-                from torchdiffeq import odeint_adjoint as odeint
-                print("Warning: Using torchdiffeq with adjoint method, which is not recommended for low precision training.")
-                
-            else:
-                from torchdiffeq import odeint
-            return odeint, None
-        except ImportError:
-            print("torchdiffeq not available, falling back to torchmpnode")
-            sys.path.insert(0, base_dir)
-            from torchmpnode import odeint, DynamicScaler
-            return odeint, DynamicScaler
-
-def get_precision_dtype(precision_str):
-    """Convert precision string to torch dtype."""
-    precision_map = {
-        'float32': torch.float32,
-        'tfloat32': torch.float32,
-        'float16': torch.float16,
-        'bfloat16': torch.bfloat16
-    }
-    return precision_map[precision_str]
-
-def setup_precision(precision_str):
-    """Setup precision-related settings."""
-    if precision_str == 'float32':
-        torch.backends.cuda.matmul.allow_tf32 = False
-        torch.backends.cudnn.allow_tf32 = False
-        print("Using strict float32 precision")
-    elif precision_str == 'tfloat32':
-        torch.backends.cuda.matmul.allow_tf32 = True
-        torch.backends.cudnn.allow_tf32 = True
-        print("Using TF32 precision")
-
-def determine_scaler(args, DynamicScaler, precision):
-    """Determine which scaler to use and return (scaler_instance, scaler_name)."""
-    if args.odeint == 'torchdiffeq' and args.precision == 'float16' and args.grad_scaler:
-        from torch.amp import GradScaler
-        scaler = GradScaler('cuda')
-        scaler_name = 'grad'
-        print(f"Using PyTorch GradScaler for float16 precision with torchdiffeq (initial scale: {scaler.get_scale()})")
-        return scaler, scaler_name
-    elif args.odeint == 'torchmpnode' and args.precision == 'float16' and not args.dynamic_scaler and args.grad_scaler:
-        # Special case: torchmpnode with dynamic scaler disabled but grad scaler enabled
-        from torch.amp import GradScaler
-        scaler = GradScaler('cuda')
-        scaler_name = 'grad'
-        print(f"Using PyTorch GradScaler for float16 precision with torchmpnode (DynamicScaler disabled) (initial scale: {scaler.get_scale()})")
-        return scaler, scaler_name
-    elif args.odeint == 'torchmpnode' and args.precision == 'float16' and args.dynamic_scaler:
-        # Initialize DynamicScaler once for reuse during training
-        scaler = DynamicScaler(precision)
-        scaler_name = 'dynamic'
-        print("Using DynamicScaler for float16 precision with torchmpnode")
-        return scaler, scaler_name
-    else:
-        return None, None
-
-def setup_experiment(args, base_dir, DynamicScaler=None, precision=None):
-    """Setup experiment directories, logging, and environment."""
-    job_id = os.environ.get("SLURM_JOB_ID", "")
-    
-    os.makedirs(args.results_dir, exist_ok=True)
-    seed_str = f"seed{args.seed}" if args.seed is not None else "noseed"
-    
-    # Set derived boolean values based on flags
-    args.grad_scaler = not args.no_grad_scaler
-    args.dynamic_scaler = not args.no_dynamic_scaler
-    
-    # Determine scaler type and create folder name with scaler info
-    loss_scaler, scaler_name = determine_scaler(args, DynamicScaler, precision)
-    
-    timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
-    # Build folder name with scaler type
-    precision_scaler = args.precision
-    if scaler_name:
-        precision_scaler = f"{args.precision}_{scaler_name}"
-    
-    folder_name = f"{args.data}_{precision_scaler}_{args.odeint}_{args.method}_nt_{args.num_timesteps}_{seed_str}_{timestamp}"
-    result_dir = os.path.join(base_dir, "results", "cnf", folder_name)
-    ckpt_path = os.path.join(result_dir, 'ckpt.pth')
-    os.makedirs(result_dir, exist_ok=True)
-    
-    with open("result_dir.txt", "w") as f:
-        f.write(result_dir)
-    script_path = os.path.abspath(__file__)
-    shutil.copy(script_path, os.path.join(result_dir, os.path.basename(script_path)))
-
-    # Save arguments to CSV file for easy loading
-    args_csv_path = os.path.join(result_dir, "args.csv")
-    args_dict = vars(args)
-    args_df = pd.DataFrame([args_dict])
-    args_df.to_csv(args_csv_path, index=False)
-
-    # Redirect stdout and stderr to a log file.
-    log_path = os.path.join(result_dir, folder_name + ".txt")
-    log_file = open(log_path, "w", buffering=1)
-    sys.stdout = log_file
-    sys.stderr = log_file
-
-    device = torch.device('cuda:' + str(args.gpu) if torch.cuda.is_available() else 'cpu')
-
-    # Setup precision
-    setup_precision(args.precision)
-
-    try:
-        torch.backends.cudnn.verbose = True
-    except:
-        pass  # Some PyTorch versions don't have this attribute
-    torch.backends.cudnn.benchmark = True
-
-    # Print environment and hardware info for reproducibility and debugging
-    print("Environment Info:")
-    print(f"  Python version: {sys.version}")
-    print(f"  PyTorch version: {torch.__version__}")
-    print(f"  CUDA available: {torch.cuda.is_available()}")
-    try:
-        print(f"  CUDA version: {torch.version.cuda}")
-    except:
-        print(f"  CUDA version: N/A")
-    print(f"  cuDNN version: {torch.backends.cudnn.version()}")
-    print("   cuDNN enabled:", torch.backends.cudnn.enabled)
-    print(f"  GPU Device Name: {torch.cuda.get_device_name(device) if torch.cuda.is_available() else 'N/A'}")
-    print(f"  Current Device: {torch.cuda.current_device() if torch.cuda.is_available() else 'N/A'}")
-
-    print("Experiment started at", datetime.datetime.now())
-    print("Arguments:", vars(args))
-    print("Results will be saved in:", result_dir)
-    print("SLURM job id", job_id)
-    print("Model checkpoint path:", ckpt_path)
-    
-    return result_dir, ckpt_path, folder_name, device, log_file, loss_scaler
 
 
 def hyper_trace(W, B, U, x, target_dtype):
@@ -359,8 +222,19 @@ def main():
     else:
         print("No seed specified, using random initialization")
     
+    # Get base directory
+    base_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), '../..'))
+    
     # Setup environment and imports
-    odeint_func, DynamicScaler = setup_environment(args)
+    odeint_func, DynamicScaler = setup_environment(args.odeint, base_dir)
+    
+    # Handle adjoint method for torchdiffeq
+    if args.odeint == 'torchdiffeq' and args.adjoint:
+        try:
+            from torchdiffeq import odeint_adjoint as odeint_func
+            print("Warning: Using torchdiffeq with adjoint method, which is not recommended for low precision training.")
+        except ImportError:
+            print("torchdiffeq not available, continuing with torchmpnode")
     
     # Import utilities after setting up the path
     from utils import RunningAverageMeter, RunningMaximumMeter
@@ -368,11 +242,35 @@ def main():
     # Get precision settings
     precision = get_precision_dtype(args.precision)
     
-    # Get base directory
-    base_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), '../..'))
+    # Set derived boolean values based on flags
+    grad_scaler_enabled = not args.no_grad_scaler
+    dynamic_scaler_enabled = not args.no_dynamic_scaler
+    
+    # Determine scaler configuration
+    loss_scaler, scaler_name, loss_scaler_for_odeint = determine_scaler(
+        args.odeint, args.precision, grad_scaler_enabled, 
+        dynamic_scaler_enabled, DynamicScaler
+    )
     
     # Setup experiment directories and logging
-    result_dir, ckpt_path, folder_name, device, log_file, loss_scaler = setup_experiment(args, base_dir, DynamicScaler, precision)
+    extra_params = {
+        'lr': args.lr,
+        'niters': args.niters,
+        'num_samples': args.num_samples,
+        'hidden_dim': args.hidden_dim,
+        'width': args.width,
+        'num_timesteps': args.num_timesteps
+    }
+    
+    result_dir, ckpt_path, folder_name, device, log_file = setup_experiment(
+        args.results_dir, "cnf", args.data, args.precision,
+        args.odeint, args.method, args.seed, args.gpu, scaler_name,
+        extra_params=extra_params
+    )
+    
+    # Copy the script to results directory
+    script_path = os.path.abspath(__file__)
+    shutil.copy(script_path, os.path.join(result_dir, os.path.basename(script_path)))
     
     try:
         # Constants for the experiment
@@ -402,9 +300,9 @@ def main():
 
         # Setup solver kwargs for training (DynamicScaler for torchmpnode)
         solver_kwargs = {}
-        if loss_scaler is not None and hasattr(loss_scaler, 'precision'):
-            # This is a DynamicScaler instance
-            solver_kwargs = {'loss_scaler': loss_scaler}
+        if loss_scaler_for_odeint is not None:
+            # This is a DynamicScaler instance or False for safe mode
+            solver_kwargs = {'loss_scaler': loss_scaler_for_odeint}
 
         # Setup CSV logging
         csv_path = os.path.join(result_dir, folder_name + ".csv")

@@ -39,7 +39,7 @@ for precision in "${precisions[@]}"; do
 
       echo "↪ Running: precision=$precision method=$method odeint=$odeint"
 
-      sbatch job_ode_demo.sbatch "${fixed_args[@]}" $extra_args
+      sbatch --account=mathg3 job_ode_demo.sbatch "${fixed_args[@]}" $extra_args
 
     done
   done

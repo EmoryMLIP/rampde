@@ -22,6 +22,15 @@ import sys
 import pandas as pd
 import matplotlib.pyplot as plt
 
+# Add parent directory to path for common imports
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+from common import (
+    setup_environment,
+    get_precision_dtype,
+    determine_scaler,
+    setup_experiment
+)
+
 def create_parser():
     """Create and return the argument parser."""
     parser = argparse.ArgumentParser()
@@ -53,147 +62,6 @@ def create_parser():
                         help='Base channel width (default: 64)')
     return parser
 
-def setup_environment(args):
-    """Setup the environment and imports based on args."""
-    # Set up path for utils import
-    base_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), '../..'))
-    sys.path.insert(0, os.path.join(base_dir, "examples"))
-    
-    if args.odeint == 'torchmpnode':
-        print("Using torchmpnode")
-        sys.path.insert(0, base_dir)
-        from torchmpnode import odeint
-        from torchmpnode.loss_scalers import DynamicScaler
-        return odeint, DynamicScaler
-    else:    
-        print("using torchdiffeq")
-        from torchdiffeq import odeint
-        return odeint, None
-
-def get_precision_dtype(precision_str):
-    """Convert precision string to torch dtype."""
-    precision_map = {
-        'float32': torch.float32,
-        'tfloat32': torch.float32,
-        'float16': torch.float16,
-        'bfloat16': torch.bfloat16
-    }
-    return precision_map[precision_str]
-
-def setup_precision(precision_str):
-    """Setup precision-related settings."""
-    if precision_str == 'float32':
-        torch.backends.cuda.matmul.allow_tf32 = False
-        torch.backends.cudnn.allow_tf32 = False
-        print("Using strict float32 precision")
-    elif precision_str == 'tfloat32':
-        torch.backends.cuda.matmul.allow_tf32 = True
-        torch.backends.cudnn.allow_tf32 = True
-        print("Using TF32 precision")
-
-def determine_scaler(args, ScalerClass, precision):
-    """Determine which scaler to use and return (scaler_instance, scaler_name)."""
-    # For float16 precision, we need some form of scaling
-    if args.precision == 'float16':
-        if args.odeint == 'torchdiffeq':
-            # torchdiffeq only supports GradScaler
-            if args.grad_scaler:
-                from torch.amp import GradScaler
-                scaler = GradScaler('cuda')
-                scaler_name = 'grad'
-                print(f"Using PyTorch GradScaler for float16 precision with torchdiffeq (initial scale: {scaler.get_scale()})")
-                return scaler, scaler_name
-            else:
-                print("WARNING: Using float16 with torchdiffeq without GradScaler - may encounter NaN/overflow")
-                return None, None
-        else:  # torchmpnode
-            # torchmpnode supports both DynamicScaler (internal) and GradScaler (external)
-            if args.dynamic_scaler:
-                # DynamicScaler is created per-call in training loop, but we track it for naming
-                scaler_name = 'dynamic'
-                print("Using DynamicScaler for float16 precision with torchmpnode")
-                return None, scaler_name  # None because DynamicScaler is created per-call
-            elif args.grad_scaler:
-                # Use external GradScaler when DynamicScaler is disabled
-                from torch.amp import GradScaler
-                scaler = GradScaler('cuda')
-                scaler_name = 'grad'
-                print(f"Using PyTorch GradScaler for float16 precision with torchmpnode (DynamicScaler disabled) (initial scale: {scaler.get_scale()})")
-                return scaler, scaler_name
-            else:
-                print("WARNING: Using float16 with torchmpnode without any scaling - may encounter NaN/overflow")
-                return None, None
-    else:
-        # No scaling needed for other precisions
-        return None, None
-
-def setup_experiment(args, base_dir, DynamicScaler=None, precision=None):
-    """Setup experiment directories, logging, and environment."""
-    job_id = os.environ.get("SLURM_JOB_ID", "")
-    
-    os.makedirs(args.results_dir, exist_ok=True)
-    seed_str = f"seed{args.seed}" if args.seed is not None else "noseed"
-    stable_str = "stable" if args.stable else "unstable"
-    
-    # Determine scaler type and create folder name with scaler info
-    loss_scaler, scaler_name = determine_scaler(args, DynamicScaler, precision)
-    
-    timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
-    # Build folder name with scaler type
-    precision_scaler = args.precision
-    if scaler_name:
-        precision_scaler = f"{args.precision}_{scaler_name}"
-    
-    folder_name = f"{precision_scaler}_{args.odeint}_{args.method}_{stable_str}_{seed_str}_{timestamp}"
-    result_dir = os.path.join(base_dir, "results", "ode_stl10", folder_name)
-    ckpt_path = os.path.join(result_dir, 'ckpt.pth')
-    os.makedirs(result_dir, exist_ok=True)
-    
-    with open("result_dir.txt", "w") as f:
-        f.write(result_dir)
-    script_path = os.path.abspath(__file__)
-    shutil.copy(script_path, os.path.join(result_dir, os.path.basename(script_path)))
-
-    # Save arguments to CSV file for easy loading
-    args_csv_path = os.path.join(result_dir, "args.csv")
-    args_dict = vars(args)
-    args_df = pd.DataFrame([args_dict])
-    args_df.to_csv(args_csv_path, index=False)
-
-    # Redirect stdout and stderr to a log file.
-    log_path = os.path.join(result_dir, folder_name + ".txt")
-    log_file = open(log_path, "w", buffering=1)
-    sys.stdout = log_file
-    sys.stderr = log_file
-
-    device = torch.device('cuda:' + str(args.gpu) if torch.cuda.is_available() else 'cpu')
-
-    # Setup precision
-    setup_precision(args.precision)
-
-    torch.backends.cudnn.benchmark = True
-
-    # Print environment and hardware info for reproducibility and debugging
-    print("Environment Info:")
-    print(f"  Python version: {sys.version}")
-    print(f"  PyTorch version: {torch.__version__}")
-    print(f"  CUDA available: {torch.cuda.is_available()}")
-    try:
-        print(f"  CUDA version: {torch.version.cuda}")
-    except:
-        print(f"  CUDA version: N/A")
-    print(f"  cuDNN version: {torch.backends.cudnn.version()}")
-    print("   cuDNN enabled:", torch.backends.cudnn.enabled)
-    print(f"  GPU Device Name: {torch.cuda.get_device_name(device) if torch.cuda.is_available() else 'N/A'}")
-    print(f"  Current Device: {torch.cuda.current_device() if torch.cuda.is_available() else 'N/A'}")
-
-    print("Experiment started at", datetime.datetime.now())
-    print("Arguments:", vars(args))
-    print("Results will be saved in:", result_dir)
-    print("SLURM job id", job_id)
-    print("Model checkpoint path:", ckpt_path)
-    
-    return result_dir, ckpt_path, folder_name, device, log_file, loss_scaler
 
 
 class ODEFunc(nn.Module):
@@ -307,7 +175,7 @@ class ODEBlock(nn.Module):
         return out[-1]
 
 class MPNODE_STL10(nn.Module):
-    def __init__(self, width, args, precision, odeint_func, ScalerClass):
+    def __init__(self, width, args, precision, odeint_func, ScalerClass, dynamic_scaler_enabled=False, grad_scaler_enabled=False):
         super().__init__()
         ch = width
         # Create t_grid on the appropriate device
@@ -318,10 +186,10 @@ class MPNODE_STL10(nn.Module):
         self.norm1 = nn.InstanceNorm2d(ch, affine=True)
 
         # 2) ODE block #1
-        if args.odeint == 'torchmpnode' and args.dynamic_scaler and ScalerClass is not None:
+        if args.odeint == 'torchmpnode' and dynamic_scaler_enabled and ScalerClass is not None:
             S1 = ScalerClass(precision)
-        elif args.odeint == 'torchmpnode' and args.precision == 'float16' and not args.dynamic_scaler:
-            # Explicitly disable internal scaler when using external GradScaler
+        elif args.odeint == 'torchmpnode' and args.precision == 'float16' and not dynamic_scaler_enabled:
+            # Explicitly disable internal scaler when using external GradScaler  
             S1 = False
         else:
             S1 = None
@@ -334,9 +202,9 @@ class MPNODE_STL10(nn.Module):
         # self.norm3 = nn.InstanceNorm2d(ch)
 
         # 4) ODE block #2
-        if args.odeint == 'torchmpnode' and args.dynamic_scaler and ScalerClass is not None:
+        if args.odeint == 'torchmpnode' and dynamic_scaler_enabled and ScalerClass is not None:
             S2 = ScalerClass(precision)
-        elif args.odeint == 'torchmpnode' and args.precision == 'float16' and not args.dynamic_scaler:
+        elif args.odeint == 'torchmpnode' and args.precision == 'float16' and not dynamic_scaler_enabled:
             # Explicitly disable internal scaler when using external GradScaler
             S2 = False
         else:
@@ -346,9 +214,9 @@ class MPNODE_STL10(nn.Module):
         self.avg2 = nn.AvgPool2d(2, stride=2)
         self.norm4 = nn.InstanceNorm2d(4*ch, affine=True)
         
-        if args.odeint == 'torchmpnode' and args.dynamic_scaler and ScalerClass is not None:
+        if args.odeint == 'torchmpnode' and dynamic_scaler_enabled and ScalerClass is not None:
             S3 = ScalerClass(precision)
-        elif args.odeint == 'torchmpnode' and args.precision == 'float16' and not args.dynamic_scaler:
+        elif args.odeint == 'torchmpnode' and args.precision == 'float16' and not dynamic_scaler_enabled:
             # Explicitly disable internal scaler when using external GradScaler
             S3 = False
         else:
@@ -522,8 +390,8 @@ def main():
     
     # Set derived boolean values based on flags
     args.stable = not args.unstable  # stable is True unless --unstable is passed
-    args.grad_scaler = not args.no_grad_scaler  # grad_scaler is True unless --no_grad_scaler is passed
-    args.dynamic_scaler = not args.no_dynamic_scaler  # dynamic_scaler is True unless --no_dynamic_scaler is passed
+    grad_scaler_enabled = not args.no_grad_scaler  # grad_scaler is True unless --no_grad_scaler is passed
+    dynamic_scaler_enabled = not args.no_dynamic_scaler  # dynamic_scaler is True unless --no_dynamic_scaler is passed
     
     # Set random seeds for reproducibility
     if args.seed is not None:
@@ -537,8 +405,11 @@ def main():
     else:
         print("No seed specified, using random initialization")
     
+    # Get base directory
+    base_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), '../..'))
+    
     # Setup environment and imports
-    odeint_func, DynamicScaler = setup_environment(args)
+    odeint_func, DynamicScaler = setup_environment(args.odeint, base_dir)
     
     # Import utilities after setting up the path
     from utils import RunningAverageMeter, RunningMaximumMeter
@@ -546,15 +417,42 @@ def main():
     # Get precision settings
     precision = get_precision_dtype(args.precision)
     
-    # Get base directory
-    base_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), '../..'))
+    # Determine scaler configuration (need to get all 3 return values)
+    loss_scaler, scaler_name, loss_scaler_for_odeint = determine_scaler(
+        args.odeint, args.precision, grad_scaler_enabled, 
+        dynamic_scaler_enabled, DynamicScaler
+    )
     
     # Setup experiment directories and logging
-    result_dir, ckpt_path, folder_name, device, log_file, loss_scaler = setup_experiment(args, base_dir, DynamicScaler, precision)
+    stable_str = "stable" if args.stable else "unstable"
+    extra_params = {
+        'stable': stable_str,
+        'lr': args.lr,
+        'nepochs': args.nepochs,
+        'batch_size': args.batch_size,
+        'width': args.width
+    }
+    
+    result_dir, ckpt_path, folder_name, device, log_file = setup_experiment(
+        args.results_dir, "ode_stl10", "stl10", args.precision,
+        args.odeint, args.method, args.seed, args.gpu, scaler_name,
+        extra_params=extra_params
+    )
+    
+    # Save original args to CSV as well (for compatibility)
+    args_csv_path = os.path.join(result_dir, "original_args.csv")
+    args_dict = vars(args)
+    args_df = pd.DataFrame([args_dict])
+    args_df.to_csv(args_csv_path, index=False)
+    
+    # Copy the script to results directory
+    script_path = os.path.abspath(__file__)
+    shutil.copy(script_path, os.path.join(result_dir, os.path.basename(script_path)))
     
     try:
         # Create model
-        model = MPNODE_STL10(args.width, args, precision, odeint_func, ScalerClass).to(device)
+        model = MPNODE_STL10(args.width, args, precision, odeint_func, DynamicScaler, 
+                           dynamic_scaler_enabled, grad_scaler_enabled).to(device)
         print(model)
         print('Number of parameters: {}'.format(count_parameters(model)))
 

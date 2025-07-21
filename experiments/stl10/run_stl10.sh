@@ -5,7 +5,7 @@
 # Default training arguments
 default_args=(
   --batch_size  16 
-  --nepochs   80
+  --nepochs   2
   --lr 0.05
   --momentum 0.9
   --weight_decay 5e-4
@@ -13,7 +13,7 @@ default_args=(
 )
 
 # Seed
-seed=36
+seed=25
 
 # Make log directory
 mkdir -p slurm_logs

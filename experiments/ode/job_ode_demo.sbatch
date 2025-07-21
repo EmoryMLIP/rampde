@@ -1,5 +1,6 @@
 #!/bin/bash
 #SBATCH --job-name=ode_demo
+#SBATCH --account=mathg3
 #SBATCH --output=slurm_logs/ode_demo_%j.out
 #SBATCH --error=slurm_logs/ode_demo_%j.err
 #SBATCH --time=03:00:00

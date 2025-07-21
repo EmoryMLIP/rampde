@@ -3,6 +3,7 @@ job_id = os.environ.get("SLURM_JOB_ID", "")
 import argparse
 import logging
 import time
+import random
 import numpy as np
 import torch
 import torch.nn as nn
@@ -20,106 +21,43 @@ import sys
 import pandas as pd
 import matplotlib.pyplot as plt
 
-base_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), '../..'))
-sys.path.insert(0, os.path.join(base_dir, "examples"))
-from utils import RunningAverageMeter, RunningMaximumMeter
+# Add parent directory to path for common imports
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+from common import (
+    setup_environment,
+    get_precision_dtype,    
+    determine_scaler,
+    setup_experiment
+)
 
-parser = argparse.ArgumentParser()
-parser.add_argument('--network', type=str, choices=['resnet', 'odenet'], default='odenet')
-parser.add_argument('--tol', type=float, default=1e-3)
-parser.add_argument('--adjoint', type=eval, default=False, choices=[True, False])
-parser.add_argument('--downsampling-method', type=str, default='conv', choices=['conv', 'res'])
-parser.add_argument('--nepochs', type=int, default=160)
-parser.add_argument('--data_aug', type=eval, default=True, choices=[True, False])
-parser.add_argument('--lr', type=float, default=0.1)
-parser.add_argument('--batch_size', type=int, default=128)
-parser.add_argument('--test_batch_size', type=int, default=1000)
-# new arguments
-parser.add_argument('--method', type=str, choices=['rk4', 'dopri5'], default='rk4')
-parser.add_argument('--precision', type=str, choices=['tfloat32', 'float32', 'float16','bfloat16'], default='float16')
-parser.add_argument('--odeint', type=str, choices=['torchdiffeq', 'torchmpnode'], default='torchmpnode')
+def create_parser():
+    """Create and return the argument parser."""
+    parser = argparse.ArgumentParser()
+    parser.add_argument('--network', type=str, choices=['resnet', 'odenet'], default='odenet')
+    parser.add_argument('--tol', type=float, default=1e-3)
+    parser.add_argument('--adjoint', type=eval, default=False, choices=[True, False])
+    parser.add_argument('--downsampling-method', type=str, default='conv', choices=['conv', 'res'])
+    parser.add_argument('--nepochs', type=int, default=160)
+    parser.add_argument('--data_aug', type=eval, default=True, choices=[True, False])
+    parser.add_argument('--lr', type=float, default=0.1)
+    parser.add_argument('--batch_size', type=int, default=128)
+    parser.add_argument('--test_batch_size', type=int, default=1000)
+    # new arguments
+    parser.add_argument('--method', type=str, choices=['rk4', 'dopri5'], default='rk4')
+    parser.add_argument('--precision', type=str, choices=['tfloat32', 'float32', 'float16','bfloat16'], default='float16')
+    parser.add_argument('--odeint', type=str, choices=['torchdiffeq', 'torchmpnode'], default='torchmpnode')
+    parser.add_argument('--no_grad_scaler', action='store_true',
+                        help='Disable GradScaler for torchdiffeq with float16 (default: enabled)')
+    parser.add_argument('--no_dynamic_scaler', action='store_true',
+                        help='Disable DynamicScaler for torchmpnode with float16 (default: enabled)')
 
-parser.add_argument('--results_dir', type=str, default='./results')
-parser.add_argument('--seed', type=int, default=0)
-parser.add_argument('--debug', action='store_true')
-parser.add_argument('--gpu', type=int, default=0)
-parser.add_argument('--test_freq', type=int, default=50,
-                    help='evaluate / log every N training steps')
-args = parser.parse_args()
-
-
-if args.odeint == 'torchmpnode':
-    print("Using torchmpnode")
-    assert args.method == 'rk4' 
-    import sys
-    sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '../..')))
-    from torchmpnode import odeint
-else:    
-    print("using torchdiffeq")
-    if args.adjoint:
-        from torchdiffeq import odeint_adjoint as odeint
-    else:
-        from torchdiffeq import odeint
-precision_str = args.precision
-precision_map = {
-    'float32': torch.float32,
-    'tfloat32': torch.float32,
-    'float16': torch.float16,
-    'bfloat16': torch.bfloat16
-}
-args.precision = precision_map[args.precision]
-
-
-os.makedirs(args.results_dir, exist_ok=True)
-seed_str = f"seed{args.seed}" if args.seed is not None else "noseed"
-timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
-folder_name = f"{precision_str}_{args.odeint}_{args.method}_{seed_str}_{timestamp}"
-result_dir = os.path.join(base_dir, "results", "ode_mnist", folder_name)
-ckpt_path = os.path.join(result_dir, 'ckpt.pth')
-os.makedirs(result_dir, exist_ok=True)
-with open("result_dir.txt", "w") as f:
-    f.write(result_dir)
-script_path = os.path.abspath(__file__)
-shutil.copy(script_path, os.path.join(result_dir, os.path.basename(script_path)))
-
-# Redirect stdout and stderr to a log file.
-log_path = os.path.join(result_dir, folder_name + ".txt")
-log_file = open(log_path, "w", buffering=1)
-sys.stdout = log_file
-sys.stderr = log_file
-
-device = torch.device('cuda:' + str(args.gpu) if torch.cuda.is_available() else 'cpu')
-
-
-if precision_str == 'float32':
-    torch.backends.cuda.matmul.allow_tf32 = False
-    torch.backends.cudnn.allow_tf32 = False
-    print("Using strict float32 precision")
-elif precision_str == 'tfloat32':
-    torch.backends.cuda.matmul.allow_tf32 = True
-    torch.backends.cudnn.allow_tf32 = True
-    print("Using TF32 precision")
-
-torch.backends.cudnn.verbose = True
-torch.backends.cudnn.benchmark = True
-
-# Print environment and hardware info for reproducibility and debugging
-print("Environment Info:")
-print(f"  Python version: {sys.version}")
-print(f"  PyTorch version: {torch.__version__}")
-print(f"  CUDA available: {torch.cuda.is_available()}")
-print(f"  CUDA version: {torch.version.cuda}")
-print(f"  cuDNN version: {torch.backends.cudnn.version()}")
-print("   cuDNN enabled:", torch.backends.cudnn.enabled)
-print(f"  GPU Device Name: {torch.cuda.get_device_name(device) if torch.cuda.is_available() else 'N/A'}")
-print(f"  Current Device: {torch.cuda.current_device() if torch.cuda.is_available() else 'N/A'}")
-
-print("Experiment started at", datetime.datetime.now())
-print("Arguments:", vars(args))
-print("Results will be saved in:", result_dir)
-print("SLURM job id",job_id )
-print("Model checkpoint path:", ckpt_path)
-
+    parser.add_argument('--results_dir', type=str, default='./results')
+    parser.add_argument('--seed', type=int, default=0)
+    parser.add_argument('--debug', action='store_true')
+    parser.add_argument('--gpu', type=int, default=0)
+    parser.add_argument('--test_freq', type=int, default=50,
+                        help='evaluate / log every N training steps')
+    return parser
 
 
 def conv3x3(in_planes, out_planes, stride=1):
@@ -206,17 +144,21 @@ class ODEfunc(nn.Module):
 
 class ODEBlock(nn.Module):
 
-    def __init__(self, odefunc, method, tol, odeint):
+    def __init__(self, odefunc, method, tol, odeint, loss_scaler=None):
         super(ODEBlock, self).__init__()
         self.odefunc = odefunc
         self.method = method
         self.tol = tol
         self.odeint = odeint
+        self.loss_scaler = loss_scaler
         self.integration_time = torch.tensor(np.linspace(0, 1, 32))
 
     def forward(self, x):
         self.integration_time = self.integration_time.type_as(x)
-        out = self.odeint(self.odefunc, x, self.integration_time, rtol=self.tol, atol=self.tol,method=self.method)
+        if self.loss_scaler is not None:
+            out = self.odeint(self.odefunc, x, self.integration_time, rtol=self.tol, atol=self.tol, method=self.method, loss_scaler=self.loss_scaler)
+        else:
+            out = self.odeint(self.odefunc, x, self.integration_time, rtol=self.tol, atol=self.tol, method=self.method)
         return out[-1]
 
     @property
@@ -284,8 +226,8 @@ def inf_generator(iterable):
             iterator = iterable.__iter__()
 
 
-def learning_rate_with_decay(batch_size, batch_denom, batches_per_epoch, boundary_epochs, decay_rates):
-    initial_learning_rate = args.lr * batch_size / batch_denom
+def learning_rate_with_decay(batch_size, batch_denom, batches_per_epoch, boundary_epochs, decay_rates, lr):
+    initial_learning_rate = lr * batch_size / batch_denom
 
     boundaries = [int(batches_per_epoch * epoch) for epoch in boundary_epochs]
     vals = [initial_learning_rate * decay for decay in decay_rates]
@@ -302,7 +244,7 @@ def one_hot(x, K):
     return np.array(x[:, None] == np.arange(K)[None, :], dtype=int)
 
 
-def accuracy(model, dataset_loader):
+def accuracy(model, dataset_loader, device):
     total_correct = 0
     for x, y in dataset_loader:
         x = x.to(device)
@@ -321,205 +263,295 @@ def makedirs(dirname):
     if not os.path.exists(dirname):
         os.makedirs(dirname)
 
+def main():
+    # Create parser and parse arguments
+    parser = create_parser()
+    args = parser.parse_args()
+    
+    # Set derived boolean values based on flags
+    grad_scaler_enabled = not args.no_grad_scaler
+    dynamic_scaler_enabled = not args.no_dynamic_scaler
+    
+    # Set random seeds for reproducibility
+    if args.seed is not None:
+        print(f"Setting random seed to {args.seed}")
+        random.seed(args.seed)
+        np.random.seed(args.seed)
+        torch.manual_seed(args.seed)
+        if torch.cuda.is_available():
+            torch.cuda.manual_seed(args.seed)
+            torch.cuda.manual_seed_all(args.seed)  # for multi-GPU setups
+    else:
+        print("No seed specified, using random initialization")
+    
+    # Get base directory
+    base_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), '../..'))
+    
+    # Setup environment and imports
+    odeint_func, DynamicScaler = setup_environment(args.odeint, base_dir)
+    
+    # Handle adjoint method for torchdiffeq
+    if args.odeint == 'torchdiffeq' and args.adjoint:
+        try:
+            from torchdiffeq import odeint_adjoint as odeint_func
+            print("Warning: Using torchdiffeq with adjoint method, which is not recommended for low precision training.")
+        except ImportError:
+            print("torchdiffeq not available, continuing with torchmpnode")
+    
+    # Import utilities after setting up the path
+    from utils import RunningAverageMeter, RunningMaximumMeter
+    
+    # Get precision settings
+    precision = get_precision_dtype(args.precision)
+    
+    # Determine scaler configuration
+    loss_scaler, scaler_name, loss_scaler_for_odeint = determine_scaler(
+        args.odeint, args.precision, grad_scaler_enabled, 
+        dynamic_scaler_enabled, DynamicScaler
+    )
+    
+    # Setup experiment directories and logging
+    extra_params = {
+        'lr': args.lr,
+        'nepochs': args.nepochs,
+        'batch_size': args.batch_size,
+        'data_aug': args.data_aug,
+        'downsampling_method': args.downsampling_method
+    }
+    
+    result_dir, ckpt_path, folder_name, device, log_file = setup_experiment(
+        args.results_dir, "ode_mnist", "mnist", args.precision,
+        args.odeint, args.method, args.seed, args.gpu, scaler_name,
+        extra_params=extra_params
+    )
+    
+    # Save original args to CSV as well (for compatibility)
+    args_csv_path = os.path.join(result_dir, "original_args.csv")
+    args_dict = vars(args)
+    args_df = pd.DataFrame([args_dict])
+    args_df.to_csv(args_csv_path, index=False)
+    
+    # Copy the script to results directory
+    script_path = os.path.abspath(__file__)
+    shutil.copy(script_path, os.path.join(result_dir, os.path.basename(script_path)))
+    
+    try:
+        is_odenet = args.network == 'odenet'
 
-# def get_logger(logpath, filepath, package_files=[], displaying=True, saving=True, debug=False):
-#     logger = logging.getLogger()
-#     if debug:
-#         level = logging.DEBUG
-#     else:
-#         level = logging.INFO
-#     logger.setLevel(level)
-#     if saving:
-#         info_file_handler = logging.FileHandler(logpath, mode="a")
-#         info_file_handler.setLevel(level)
-#         logger.addHandler(info_file_handler)
-#     if displaying:
-#         console_handler = logging.StreamHandler()
-#         console_handler.setLevel(level)
-#         logger.addHandler(console_handler)
-#     print(filepath)
-#     with open(filepath, "r") as f:
-#         print(f.read())
+        if args.downsampling_method == 'conv':
+            downsampling_layers = [
+                nn.Conv2d(1, 64, 3, 1),
+                norm(64),
+                nn.ReLU(inplace=True),
+                nn.Conv2d(64, 64, 4, 2, 1),
+                norm(64),
+                nn.ReLU(inplace=True),
+                nn.Conv2d(64, 64, 4, 2, 1),
+            ]
+        else:  # res
+            downsampling_layers = [
+                nn.Conv2d(1, 64, 3, 1),
+                ResBlock(64, 64, stride=2, downsample=conv1x1(64, 64, 2)),
+                ResBlock(64, 64, stride=2, downsample=conv1x1(64, 64, 2)),
+            ]
 
-#     for f in package_files:
-#         print(f)
-#         with open(f, "r") as package_f:
-#             print(package_f.read())
+        feature_layers = [ODEBlock(ODEfunc(64), args.method, args.tol, odeint_func, loss_scaler_for_odeint)] if is_odenet \
+                         else [ResBlock(64, 64) for _ in range(6)]
+        fc_layers = [norm(64), nn.ReLU(inplace=True), nn.AdaptiveAvgPool2d((1, 1)), Flatten(), nn.Linear(64, 10)]
 
-#     return logger
+        model = nn.Sequential(*downsampling_layers, *feature_layers, *fc_layers).to(device)
+
+        print(model)
+        print('Number of parameters: {}'.format(count_parameters(model)))
+
+        criterion = nn.CrossEntropyLoss().to(device)
+
+        train_loader, test_loader, train_eval_loader = get_mnist_loaders(
+            args.data_aug, args.batch_size, args.test_batch_size
+        )
+        
+        data_gen = inf_generator(train_loader)
+        batches_per_epoch = len(train_loader)
+        
+        lr_fn = learning_rate_with_decay(
+            args.batch_size, batch_denom=128, batches_per_epoch=batches_per_epoch,
+            boundary_epochs=[60, 100, 140],
+            decay_rates=[1, 0.1, 0.01, 0.001], lr=args.lr
+        )
+
+        optimizer = torch.optim.SGD(model.parameters(), lr=args.lr, momentum=0.9)
+
+        best_acc = 0
+        batch_time_meter = RunningAverageMeter()
+        f_nfe_meter = RunningAverageMeter()
+        b_nfe_meter = RunningAverageMeter()
+        time_meter = RunningAverageMeter()
+        mem_meter = RunningMaximumMeter()
+
+        end = time.time()
+
+
+        csv_path = os.path.join(result_dir, folder_name + ".csv")
+        csv_file = open(csv_path, 'w', newline='')
+        writer = csv.writer(csv_file)
+        writer.writerow([
+            'step', 'epoch',
+            'train_acc', 'test_acc',
+            'f_nfe', 'b_nfe',
+            'batch_time', 'step_time', 'max_memory'
+        ])
+
+        for itr in range(args.nepochs * batches_per_epoch):
+
+            for param_group in optimizer.param_groups:
+                param_group['lr'] = lr_fn(itr)
+
+            optimizer.zero_grad()
+            x, y = data_gen.__next__()
+            x = x.to(device)
+            y = y.to(device)
+            start_time = time.perf_counter()
+            torch.cuda.reset_peak_memory_stats(device)
+
+            with autocast(device_type='cuda', dtype=precision):
+                logits = model(x)
+                loss = criterion(logits, y)
+
+                if is_odenet:
+                    nfe_forward = feature_layers[0].nfe
+                    feature_layers[0].nfe = 0
+
+            # Handle backward pass with or without loss scaling
+            if loss_scaler is not None and hasattr(loss_scaler, 'scale'):
+                # Track loss scale before step (for GradScaler only)
+                old_scale = loss_scaler.get_scale()
+                
+                # Use gradient scaling for torchdiffeq with float16
+                loss_scaler.scale(loss).backward()
+                loss_scaler.step(optimizer)
+                loss_scaler.update()
+                
+                # Track loss scale after step and log changes
+                new_scale = loss_scaler.get_scale()
+                if old_scale != new_scale:
+                    print(f"Iteration {itr}: Loss scale changed from {old_scale} to {new_scale} (gradient overflow detected)")
+                elif itr < 20 or itr % 100 == 0:  # Log scale periodically for first 20 iterations or every 100
+                    print(f"Iteration {itr}: Loss scale = {new_scale} (no overflow)")
+            else:
+                # Standard backward pass (for DynamicScaler or no scaler)
+                loss.backward()
+                optimizer.step()
+
+            if is_odenet:
+                nfe_backward = feature_layers[0].nfe
+                feature_layers[0].nfe = 0
+                f_nfe_meter.update(nfe_forward)
+                b_nfe_meter.update(nfe_backward)
+
+            batch_time_meter.update(time.time() - end)
+            torch.cuda.synchronize(device)
+            end = time.time()
+
+            elapsed_time = time.perf_counter() - start_time
+            peak_memory = torch.cuda.max_memory_allocated(device) / (1024 * 1024)
+
+            time_meter.update(elapsed_time)
+            mem_meter.update(peak_memory)
+
+            # Check for NaN or infinite loss
+            if not torch.isfinite(loss).all():
+                print(f"Training stopped at iteration {itr}: Loss is {'NaN' if torch.isnan(loss).any() else 'infinite'}")
+                print(f"Loss value: {loss.item()}")
+                print("Saving current model state before stopping...")
+                torch.save({
+                    'state_dict': model.state_dict(), 
+                    'args': args,
+                    'iteration': itr,
+                    'loss': loss.item()
+                }, ckpt_path.replace('.pth', '_emergency_stop.pth'))
+                break
+            
+            # Check for NaN gradients (only if not using gradient scaling)
+            if loss_scaler is None:
+                has_nan_grad = False
+                for name, param in model.named_parameters():
+                    if param.grad is not None and not torch.isfinite(param.grad).all():
+                        print(f"Training stopped at iteration {itr}: NaN/infinite gradient detected in parameter '{name}'")
+                        print(f"Gradient stats - min: {param.grad.min().item()}, max: {param.grad.max().item()}")
+                        has_nan_grad = True
+                        break
+                
+                if has_nan_grad:
+                    print("Saving current model state before stopping...")
+                    torch.save({
+                        'state_dict': model.state_dict(), 
+                        'args': args,
+                        'iteration': itr,
+                        'loss': loss.item()
+                    }, ckpt_path.replace('.pth', '_gradient_nan_stop.pth'))
+                    break
+
+            # evaluate / log every test_freq steps
+            if itr % args.test_freq == 0:
+                epoch = itr // batches_per_epoch
+                with torch.no_grad():
+                    train_acc = accuracy(model, train_eval_loader, device)
+                    test_acc = accuracy(model, test_loader, device)
+                    if test_acc > best_acc:
+                        torch.save(
+                            {'state_dict': model.state_dict(), 'args': args}, ckpt_path)
+                        best_acc = test_acc
+
+                    print(
+                        "Step {:06d} | Epoch {:04d} | Time {:.3f} ({:.3f}) | "
+                        "NFE-F {:.1f} | NFE-B {:.1f} | Train Acc {:.4f} | "
+                        "Test Acc {:.4f} | Max Mem {:.1f}MB".format(
+                            itr, epoch, batch_time_meter.val, batch_time_meter.avg,
+                            f_nfe_meter.avg, b_nfe_meter.avg,
+                            train_acc, test_acc, mem_meter.max
+                        )
+                    )
+
+                # write metrics row
+                writer.writerow([
+                    itr,
+                    epoch,
+                    train_acc,
+                    test_acc,
+                    f_nfe_meter.avg,
+                    b_nfe_meter.avg,
+                    batch_time_meter.avg,
+                    time_meter.avg,
+                    mem_meter.max
+                ])
+                csv_file.flush()
+
+
+        csv_file.close()
+
+        df = pd.read_csv(csv_path)
+
+        # 1) accuracy plot
+        plt.figure(figsize=(6, 4))
+        plt.plot(df['epoch'], df['train_acc'], label='Train Acc')
+        plt.plot(df['epoch'], df['test_acc'], label='Test Acc')
+        plt.xlabel('Epoch')
+        plt.ylabel('Accuracy')
+        plt.legend()
+        plt.tight_layout()
+        acc_plot = os.path.join(result_dir, 'accuracy.png')
+        plt.savefig(acc_plot, bbox_inches='tight')
+        plt.close()
+        print(f"Saved accuracy plot at {acc_plot}")
+
+    finally:
+        # Close log file to restore stdout/stderr
+        if 'log_file' in locals() and log_file:
+            log_file.close()
+            import sys
+            sys.stdout = sys.__stdout__
+            sys.stderr = sys.__stderr__
 
 
 if __name__ == '__main__':
-
-
-    
-    is_odenet = args.network == 'odenet'
-
-    if args.downsampling_method == 'conv':
-        downsampling_layers = [
-            nn.Conv2d(1, 64, 3, 1),
-            norm(64),
-            nn.ReLU(inplace=True),
-            nn.Conv2d(64, 64, 4, 2, 1),
-            norm(64),
-            nn.ReLU(inplace=True),
-            nn.Conv2d(64, 64, 4, 2, 1),
-        ]
-    else:  # res
-        downsampling_layers = [
-            nn.Conv2d(1, 64, 3, 1),
-            ResBlock(64, 64, stride=2, downsample=conv1x1(64, 64, 2)),
-            ResBlock(64, 64, stride=2, downsample=conv1x1(64, 64, 2)),
-        ]
-
-    feature_layers = [ODEBlock(ODEfunc(64), args.method, args.tol, odeint)] if is_odenet \
-                     else [ResBlock(64, 64) for _ in range(6)]
-    fc_layers = [norm(64), nn.ReLU(inplace=True), nn.AdaptiveAvgPool2d((1, 1)), Flatten(), nn.Linear(64, 10)]
-
-    model = nn.Sequential(*downsampling_layers, *feature_layers, *fc_layers).to(device)
-
-    print(model)
-    print('Number of parameters: {}'.format(count_parameters(model)))
-
-    criterion = nn.CrossEntropyLoss().to(device)
-
-    train_loader, test_loader, train_eval_loader = get_mnist_loaders(
-        args.data_aug, args.batch_size, args.test_batch_size
-    )
-
-    data_gen = inf_generator(train_loader)
-    batches_per_epoch = len(train_loader)
-
-    lr_fn = learning_rate_with_decay(
-        args.batch_size, batch_denom=128, batches_per_epoch=batches_per_epoch,
-        boundary_epochs=[60, 100, 140],
-        decay_rates=[1, 0.1, 0.01, 0.001]
-    )
-
-    optimizer = torch.optim.SGD(model.parameters(), lr=args.lr, momentum=0.9)
-
-    best_acc = 0
-    batch_time_meter = RunningAverageMeter()
-    f_nfe_meter = RunningAverageMeter()
-    b_nfe_meter = RunningAverageMeter()
-    time_meter = RunningAverageMeter()
-    mem_meter = RunningMaximumMeter()
-
-    end = time.time()
-
-
-    csv_path = os.path.join(result_dir, folder_name + ".csv")
-    csv_file = open(csv_path, 'w', newline='')
-    writer = csv.writer(csv_file)
-    writer.writerow([
-        'step', 'epoch',
-        'train_acc', 'test_acc',
-        'f_nfe', 'b_nfe',
-        'batch_time', 'step_time', 'max_memory'
-    ])
-
-    for itr in range(args.nepochs * batches_per_epoch):
-
-        for param_group in optimizer.param_groups:
-            param_group['lr'] = lr_fn(itr)
-
-        optimizer.zero_grad()
-        x, y = data_gen.__next__()
-        x = x.to(device)
-        y = y.to(device)
-        start_time = time.perf_counter()
-        torch.cuda.reset_peak_memory_stats(device)
-
-        with autocast(device_type='cuda', dtype=args.precision):
-            logits = model(x)
-            loss = criterion(logits, y)
-
-            if is_odenet:
-                nfe_forward = feature_layers[0].nfe
-                feature_layers[0].nfe = 0
-
-            loss.backward()
-        optimizer.step()
-
-        if is_odenet:
-            nfe_backward = feature_layers[0].nfe
-            feature_layers[0].nfe = 0
-
-        batch_time_meter.update(time.time() - end)
-        if is_odenet:
-            f_nfe_meter.update(nfe_forward)
-            b_nfe_meter.update(nfe_backward)
-        end = time.time()
-
-        elapsed_time = time.perf_counter() - start_time
-        peak_memory = torch.cuda.max_memory_allocated(device) / (1024 * 1024)
-
-        time_meter.update(elapsed_time)
-        mem_meter.update(peak_memory)
-
-        # evaluate / log every test_freq steps
-        if itr % args.test_freq == 0:
-            epoch = itr // batches_per_epoch
-            with torch.no_grad():
-                train_acc = accuracy(model, train_eval_loader)
-                val_acc = accuracy(model, test_loader)
-                if val_acc > best_acc:
-                    torch.save(
-                        {'state_dict': model.state_dict(), 'args': args}, ckpt_path)
-                    best_acc = val_acc
-
-                print(
-                    "Step {:06d} | Epoch {:04d} | Time {:.3f} ({:.3f}) | "
-                    "NFE-F {:.1f} | NFE-B {:.1f} | Train Acc {:.4f} | "
-                    "Test Acc {:.4f} | Max Mem {:.1f}MB".format(
-                        itr, epoch, batch_time_meter.val, batch_time_meter.avg,
-                        f_nfe_meter.avg, b_nfe_meter.avg,
-                        train_acc, val_acc, mem_meter.max
-                    )
-                )
-
-            # write metrics row
-            writer.writerow([
-                itr,
-                epoch,
-                train_acc,
-                val_acc,
-                f_nfe_meter.avg,
-                b_nfe_meter.avg,
-                batch_time_meter.avg,
-                time_meter.avg,
-                mem_meter.max
-            ])
-            csv_file.flush()
-
-
-    csv_file.close()
-
-
-    df = pd.read_csv(csv_path)
-
-    # 1) accuracy plot
-    plt.figure(figsize=(6, 4))
-    plt.plot(df['epoch'], df['train_acc'], label='Train Acc')
-    plt.plot(df['epoch'], df['test_acc'], label='Test Acc')
-    plt.xlabel('Epoch')
-    plt.ylabel('Accuracy')
-    plt.legend()
-    plt.tight_layout()
-    acc_plot = os.path.join(result_dir, 'accuracy.png')
-    plt.savefig(acc_plot, bbox_inches='tight')
-    plt.close()
-    print(f"Saved accuracy plot at {acc_plot}")
-
-    # # 2) NFE plot
-    # plt.figure(figsize=(6, 4))
-    # plt.plot(df['epoch'], df['f_nfe'], label='Forward NFE')
-    # plt.plot(df['epoch'], df['b_nfe'], label='Backward NFE')
-    # plt.xlabel('Epoch')
-    # plt.ylabel('Number of Function Evaluations')
-    # plt.legend()
-    # plt.tight_layout()
-    # nfe_plot = os.path.join(result_dir, 'nfe.png')
-    # plt.savefig(nfe_plot, bbox_inches='tight')
-    # plt.close()
-    # print(f"Saved NFE plot at {nfe_plot}")
+    main()

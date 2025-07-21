@@ -1,5 +1,6 @@
 #!/bin/bash
 #SBATCH --job-name=ode_mnist
+#SBATCH --account=mathg3
 #SBATCH --output=slurm_logs/ode_mnist_%j.out
 #SBATCH --error=slurm_logs/ode_mnist_%j.err
 #SBATCH --time=03:00:00
