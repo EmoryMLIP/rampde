@@ -255,9 +255,6 @@ def accuracy(model, dataset_loader, device):
     return total_correct / len(dataset_loader.dataset)
 
 
-def count_parameters(model):
-    return sum(p.numel() for p in model.parameters() if p.requires_grad)
-
 
 def makedirs(dirname):
     if not os.path.exists(dirname):
@@ -299,7 +296,7 @@ def main():
             print("torchdiffeq not available, continuing with torchmpnode")
     
     # Import utilities after setting up the path
-    from utils import RunningAverageMeter, RunningMaximumMeter
+    from common import RunningAverageMeter, RunningMaximumMeter, AverageMeter, count_parameters
     
     # Get precision settings
     precision = get_precision_dtype(args.precision)
@@ -382,8 +379,8 @@ def main():
         optimizer = torch.optim.SGD(model.parameters(), lr=args.lr, momentum=0.9)
 
         best_acc = 0
-        fwd_time_meter = RunningAverageMeter()
-        bwd_time_meter = RunningAverageMeter()
+        fwd_time_meter = AverageMeter()
+        bwd_time_meter = AverageMeter()
         mem_meter = RunningMaximumMeter()
 
         end = time.time()
@@ -395,7 +392,7 @@ def main():
         writer.writerow([
             'iter', 'epoch', 'lr',
             'train_acc', 'val_acc',
-            'time_fwd', 'time_bwd',
+            'time_fwd', 'time_bwd', 'time_fwd_sum', 'time_bwd_sum',
             'max_memory_mb'
         ])
 
@@ -520,6 +517,8 @@ def main():
                     test_acc,
                     fwd_time_meter.avg,
                     bwd_time_meter.avg,
+                    fwd_time_meter.sum,
+                    bwd_time_meter.sum,
                     mem_meter.max
                 ])
                 csv_file.flush()

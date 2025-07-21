@@ -200,7 +200,7 @@ def main():
         print("Warning: Using torchdiffeq with adjoint method, which is not recommended for low precision training.")
     
     # Import utilities after setting up the path  
-    from utils import RunningAverageMeter, RunningMaximumMeter
+    from common import RunningAverageMeter, RunningMaximumMeter, AverageMeter
     from mmd import mmd
     import datasets
     from Phi import Phi
@@ -257,8 +257,8 @@ def main():
         NLL_meter      = RunningAverageMeter()
         cost_L_meter   = RunningAverageMeter()
         cost_HJB_meter = RunningAverageMeter()
-        fwd_time_meter = RunningAverageMeter()
-        bwd_time_meter = RunningAverageMeter()
+        fwd_time_meter = AverageMeter()
+        bwd_time_meter = AverageMeter()
         mem_meter      = RunningMaximumMeter()
         
         # CSV setup
@@ -271,7 +271,7 @@ def main():
             "running_L",   "val_L",
             "running_NLL", "val_NLL",
             "running_HJB", "val_HJB",
-            "time_fwd", "time_bwd", "max_memory_mb"
+            "time_fwd", "time_bwd", "time_fwd_sum", "time_bwd_sum", "max_memory_mb"
         ])
 
         # Check if a saved model exists and load it
@@ -491,6 +491,8 @@ def main():
                         vH1.mean().item(),
                         fwd_time_meter.avg,
                         bwd_time_meter.avg,
+                        fwd_time_meter.sum,
+                        bwd_time_meter.sum,
                         mem_meter.max
                     ])
                     csv_file.flush()

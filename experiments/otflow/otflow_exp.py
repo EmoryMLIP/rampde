@@ -126,7 +126,7 @@ print("Model checkpoint path:", ckpt_path)
 csv_path = os.path.join(result_dir, folder_name + ".csv")
 csv_file = open(csv_path, "w", newline="", buffering=1)
 csv_writer = csv.writer(csv_file)
-csv_writer.writerow(["iter", "lr","running_loss","val_loss", "running_L", "val_L", "running_NLL", "val_NLL", "running_HJB", "val_HJB", "time_fwd","time_bwd", "max_memory_mb"])
+csv_writer.writerow(["iter", "lr","running_loss","val_loss", "running_L", "val_L", "running_NLL", "val_NLL", "running_HJB", "val_HJB", "time_fwd","time_bwd", "time_fwd_sum", "time_bwd_sum", "max_memory_mb"])
 
 # ------------------------------
 # Set device and seeds
@@ -140,7 +140,7 @@ else:
 
 sys.path.insert(0, base_dir)
 sys.path.insert(0, os.path.join(base_dir, "examples"))
-from utils import RunningAverageMeter, RunningMaximumMeter
+from common import RunningAverageMeter, RunningMaximumMeter, AverageMeter
 if args.odeint == 'torchmpnode':
     print("Using torchmpnode")
     from torchmpnode import odeint
@@ -209,8 +209,8 @@ if __name__ == '__main__':
     NLL_meter = RunningAverageMeter()
     cost_L_meter = RunningAverageMeter()
     cost_HJB_meter = RunningAverageMeter()
-    fwd_time_meter = RunningAverageMeter()
-    bwd_time_meter = RunningAverageMeter()
+    fwd_time_meter = AverageMeter()
+    bwd_time_meter = AverageMeter()
     mem_meter = RunningMaximumMeter()
     z_val_t0, logp_diff_val_t0, cost_L_val_t0, cost_HJB_val_t0 = get_batch(args.num_samples_val)
                     
@@ -287,7 +287,7 @@ if __name__ == '__main__':
                       '| fwd: {:.4f}s, bwd: {:.4f}s'.format(fwd_time_meter.avg, bwd_time_meter.avg), 
                       '| max memory: {:.0f}MB'.format(peak_memory))
                 sys.stdout.flush()
-                csv_writer.writerow([itr, lr, loss_meter.avg, loss_val.item(), cost_L_meter.avg, cost_L_val_t1.mean(0).item(), NLL_meter.avg, -logp_x_val.mean(0).item(), cost_HJB_meter.avg, cost_HJB_val_t1.mean(0).item(), fwd_time_meter.avg, bwd_time_meter.avg, peak_memory])
+                csv_writer.writerow([itr, lr, loss_meter.avg, loss_val.item(), cost_L_meter.avg, cost_L_val_t1.mean(0).item(), NLL_meter.avg, -logp_x_val.mean(0).item(), cost_HJB_meter.avg, cost_HJB_val_t1.mean(0).item(), fwd_time_meter.avg, bwd_time_meter.avg, fwd_time_meter.sum, bwd_time_meter.sum, peak_memory])
                 csv_file.flush()
                 
             

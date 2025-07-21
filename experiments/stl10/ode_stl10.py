@@ -373,8 +373,6 @@ def accuracy(model, dataset_loader, device):
     return total_correct / N, loss/N
 
 
-def count_parameters(model):
-    return sum(p.numel() for p in model.parameters() if p.requires_grad)
 
 
 def makedirs(dirname):
@@ -412,7 +410,7 @@ def main():
     odeint_func, DynamicScaler = setup_environment(args.odeint, base_dir)
     
     # Import utilities after setting up the path
-    from utils import RunningAverageMeter, RunningMaximumMeter
+    from common import RunningAverageMeter, RunningMaximumMeter, AverageMeter, count_parameters
     
     # Get precision settings
     precision = get_precision_dtype(args.precision)
@@ -466,8 +464,8 @@ def main():
 
         best_acc = 0
         train_loss_meter = RunningAverageMeter()
-        fwd_time_meter = RunningAverageMeter()
-        bwd_time_meter = RunningAverageMeter()
+        fwd_time_meter = AverageMeter()
+        bwd_time_meter = AverageMeter()
         mem_meter = RunningMaximumMeter()
 
         csv_path = os.path.join(result_dir, folder_name + ".csv")
@@ -476,7 +474,7 @@ def main():
         writer.writerow([
             'iter', 'epoch', 'lr',
             'running_loss', 'train_loss', 'val_loss',
-            'time_fwd', 'time_bwd',
+            'time_fwd', 'time_bwd', 'time_fwd_sum', 'time_bwd_sum',
             'train_acc', 'val_acc', 'max_memory_mb'
         ])
 
@@ -628,6 +626,8 @@ def main():
                     val_loss,
                     fwd_time_meter.avg,
                     bwd_time_meter.avg,
+                    fwd_time_meter.sum,
+                    bwd_time_meter.sum,
                     train_acc,
                     val_acc,
                     mem_meter.max

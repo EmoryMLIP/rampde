@@ -202,8 +202,6 @@ def inf_generator(iterable):
         except StopIteration:
             iterator = iterable.__iter__()
 
-def count_parameters(model):
-    return sum(p.numel() for p in model.parameters() if p.requires_grad)
 
 def main():
     # Create parser and parse arguments
@@ -237,7 +235,7 @@ def main():
             print("torchdiffeq not available, continuing with torchmpnode")
     
     # Import utilities after setting up the path
-    from utils import RunningAverageMeter, RunningMaximumMeter
+    from common import RunningAverageMeter, RunningMaximumMeter, AverageMeter, count_parameters
     
     # Get precision settings
     precision = get_precision_dtype(args.precision)
@@ -295,8 +293,8 @@ def main():
 
         # Setup meters for tracking progress
         loss_meter = RunningAverageMeter()
-        fwd_time_meter = RunningAverageMeter()
-        bwd_time_meter = RunningAverageMeter()
+        fwd_time_meter = AverageMeter()
+        bwd_time_meter = AverageMeter()
         mem_meter = RunningMaximumMeter()
 
         # Setup solver kwargs for training (DynamicScaler for torchmpnode)
@@ -311,7 +309,7 @@ def main():
         writer = csv.writer(csv_file)
         writer.writerow([
             'iter', 'lr', 'running_loss', 'val_loss', 
-            'val_mmd', 'train_mmd', 'time_fwd', 'time_bwd', 'max_memory_mb'
+            'val_mmd', 'train_mmd', 'time_fwd', 'time_bwd', 'time_fwd_sum', 'time_bwd_sum', 'max_memory_mb'
         ])
 
         # Check for existing checkpoints
@@ -486,6 +484,8 @@ def main():
                     train_mmd,
                     fwd_time_meter.avg,
                     bwd_time_meter.avg,
+                    fwd_time_meter.sum,
+                    bwd_time_meter.sum,
                     mem_meter.val
                 ])
                 csv_file.flush()
