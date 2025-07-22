@@ -1,0 +1,22 @@
+{
+  "float32": {
+    "mean_time": 0.24555123129393905,
+    "std_time": 0.008350816466536824,
+    "solver": "Unscaled"
+  },
+  "bfloat16": {
+    "mean_time": 0.24972723894752563,
+    "std_time": 0.0021426388655304126,
+    "solver": "Unscaled"
+  },
+  "float16": {
+    "mean_time": 0.21635331064462662,
+    "std_time": 0.003209014990029891,
+    "solver": "UnscaledSafe"
+  },
+  "float16_Dynamic": {
+    "mean_time": 0.21596204119268805,
+    "std_time": 0.0031044260155724786,
+    "solver": "Dynamic"
+  }
+}

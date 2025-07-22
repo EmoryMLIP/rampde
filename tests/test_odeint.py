@@ -18,7 +18,7 @@ import sys
 import os
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
 from torchmpnode import odeint
-from torchmpnode import Euler, RK4, FixedGridODESolver
+from torchmpnode import Euler, RK4, FixedGridODESolverUnscaled
 from torch.amp import autocast
 
 class TestFixedGridODESolver(unittest.TestCase):
