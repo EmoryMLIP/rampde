@@ -178,7 +178,7 @@ def collect_all_results(base_dir, experiment_filter=None, date_filter=None,
     results = []
     
     # Define experiment directories to scan
-    experiment_dirs = ['mnist', 'stl10', 'cnf', 'otflow', 'otflowlarge', 'ode']
+    experiment_dirs = ['ode_mnist', 'ode_stl10', 'cnf', 'otflow', 'otflowlarge', 'ode']
     
     if experiment_filter:
         experiment_dirs = [d for d in experiment_dirs if d in experiment_filter]
@@ -282,7 +282,7 @@ def main():
     parser.add_argument('--output', type=str, default='experiment_summary.csv',
                        help='Output CSV file for collected results')
     parser.add_argument('--experiment', type=str, nargs='+',
-                       help='Filter by experiment type (mnist, stl10, cnf, etc.)')
+                       help='Filter by experiment type (ode_mnist, ode_stl10, cnf, otflow, otflowlarge, ode, etc.)')
     parser.add_argument('--days', type=int,
                        help='Only include experiments from the last N days')
     parser.add_argument('--precision', type=str, nargs='+',
