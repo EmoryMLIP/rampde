@@ -23,7 +23,7 @@ import numpy as np
 
 # Add parent directory to path
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
-from torchmpnode import odeint, NoScaler
+from torchmpnode import odeint
 
 # Control test output verbosity
 QUIET = os.environ.get('TORCHMPNODE_TEST_QUIET', '0') == '1'

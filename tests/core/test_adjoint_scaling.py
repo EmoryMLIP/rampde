@@ -16,7 +16,7 @@ matplotlib.use('Agg')  # for headless CI
 import matplotlib.pyplot as plt
 
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
-from torchmpnode import odeint, NoScaler, DynamicScaler
+from torchmpnode import odeint, DynamicScaler
 from torch.amp import autocast
 
 torch.set_default_dtype(torch.float32)
@@ -87,8 +87,13 @@ class PolynomialDampedODE(nn.Module):
         return y_T.detach().to(device), *[g.detach().to(device) for g in grads]
 
 def solve_ode(model, y0, t, method='rk4', working_dtype=torch.float32, scaler = DynamicScaler):
-    with autocast(device_type='cuda', dtype=working_dtype):        
-        return odeint(model, y0, t, method=method, loss_scaler=scaler(working_dtype))
+    with autocast(device_type='cuda', dtype=working_dtype):
+        # Handle case where scaler is False (no scaling) vs DynamicScaler class
+        if scaler is False:
+            loss_scaler = False
+        else:
+            loss_scaler = scaler(working_dtype)
+        return odeint(model, y0, t, method=method, loss_scaler=loss_scaler)
 
 
 # Helper function to compute gradients with respect to y0 and model params.
@@ -130,7 +135,7 @@ def compute_gradients(model, y0, t, method,  working_dtype=torch.float32, scaler
 #       • Provide a scalar problem whose solution spans the full dynamic
 #         range of float16, triggering both under‑ and overflow.
 #       • Compare analytic gradients (float64) with mixed‑precision
-#         adjoint implementations using NoScaler and DynamicScaler.
+#         adjoint implementations using False (no scaler) and DynamicScaler.
 #       • Verify DynamicScaler prevents NaN/inf in FP16 and yields accurate
 #         gradients, whereas naive FP16 fails.
 #       • Save a log‑scale plot of |y(t)| for inspection.
@@ -165,9 +170,9 @@ class TestGradientPrecisionComparison(unittest.TestCase):
             err = torch.linalg.norm(sol_no_grad[-1] - y_T_analytic) / torch.linalg.norm(y_T_analytic)
             state_errors[str(wdtype)] = f"{err:.8e}"
 
-        scalers_str = ["NoScaler", "DynamicScaler"]
+        scalers_str = ["False", "DynamicScaler"]
         for working_dtype in [torch.float32, torch.float16, torch.bfloat16]:
-            for (scaler, name_str) in zip([NoScaler, DynamicScaler], scalers_str):
+            for (scaler, name_str) in zip([False, DynamicScaler], scalers_str):
 
                 sol, grad_y0_num, grad_a_num, grad_b_num, grad_c_num = compute_gradients(
                     self.model, self.y0, self.t, method='rk4',

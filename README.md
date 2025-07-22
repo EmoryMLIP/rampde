@@ -7,12 +7,32 @@ Key features include:
 - Benchmark tools for performance and memory profiling.
 - Examples and tests for various neural ODE problems.
 
-Environment Info:
-  Python version: 3.12.7 | packaged by Anaconda, Inc. | (main, Oct  4 2024, 13:27:36) [GCC 11.2.0]
-  PyTorch version: 2.7.0+cu126
-  CUDA available: True
-  CUDA version: 12.6
-  cuDNN version: 90501
+## Installation
+
+Install the core package with:
+
+```bash
+pip install torchmpnode
+```
+
+### Optional Dependencies
+
+For benchmarking and comparison with torchdiffeq:
+```bash
+pip install "torchmpnode[benchmarks]"
+```
+
+For development (includes testing and benchmark dependencies):
+```bash
+pip install "torchmpnode[dev]"
+```
+
+For testing only:
+```bash
+pip install "torchmpnode[testing]"
+```
+
+Note: `torchdiffeq` is now an optional dependency. The core torchmpnode functionality works without it. Install `torchdiffeq` separately if needed for comparisons.
   
 ## Experiments
 

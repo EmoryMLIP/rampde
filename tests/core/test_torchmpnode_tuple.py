@@ -1,12 +1,19 @@
 import unittest
 import torch
-from torchdiffeq import odeint as torch_odeint
 
 import os, sys
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
 from torchmpnode import odeint as mpodeint
 
+# Try to import torchdiffeq, skip tests if not available
+try:
+    from torchdiffeq import odeint as torch_odeint
+    HAS_TORCHDIFFEQ = True
+except ImportError:
+    HAS_TORCHDIFFEQ = False
 
+
+@unittest.skipUnless(HAS_TORCHDIFFEQ, "torchdiffeq not available")
 class TestODEintEquivalence(unittest.TestCase):
 
     def setUp(self):

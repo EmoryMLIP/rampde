@@ -27,7 +27,6 @@ def setup_environment(odeint_type: str, base_dir: str) -> Tuple:
     """
     # Set up paths for imports
     sys.path.insert(0, os.path.join(base_dir, "examples"))  # for datasets
-    sys.path.insert(0, base_dir)  # Add root directory for torchmpnode import
     
     if odeint_type == 'torchmpnode':
         print("Using torchmpnode")

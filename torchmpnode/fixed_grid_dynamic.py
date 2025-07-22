@@ -13,6 +13,7 @@ from typing import Any, Optional, Tuple
 import torch
 from torch.amp import autocast
 from .fixed_grid_base import FixedGridODESolverBase
+from .utils import _is_any_infinite
 
 # Import custom_fwd and custom_bwd from torch.cuda.amp
 try:
@@ -110,7 +111,7 @@ class FixedGridODESolverDynamic(FixedGridODESolverBase):
                 attempts = 0
                 while attempts < scaler.max_attempts:
                     # Check for overflow in scaled gradients
-                    if scaler._is_any_infinite((scaler.S * a)):
+                    if _is_any_infinite((scaler.S * a,)):
                         scaler.update_on_overflow()
                         continue
                     
@@ -139,7 +140,7 @@ class FixedGridODESolverDynamic(FixedGridODESolverBase):
                                   for d, p in zip(dparams, params)]
                     
                     # Check for overflow in computed gradients
-                    if scaler._is_any_infinite((da, gti, gdti, dparams)):
+                    if _is_any_infinite((da, gti, gdti, dparams)):
                         scaler.update_on_overflow()
                         attempts += 1
                         continue
@@ -163,7 +164,7 @@ class FixedGridODESolverDynamic(FixedGridODESolverBase):
                     grad_t[i + 1] = grad_t[i + 1] + (dti / scaler.S) * gdti + gdti2.to(dtype_hi) / scaler.S
                 
                 # Check for overflow in accumulated gradients
-                if scaler._is_any_infinite((a, grad_t, grad_theta)):
+                if _is_any_infinite((a, grad_t, grad_theta)):
                     raise RuntimeError(
                         f"Gradients are not representable at time step i={i}"
                     )

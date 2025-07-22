@@ -271,7 +271,7 @@ def main():
             "running_L",   "val_L",
             "running_NLL", "val_NLL",
             "running_HJB", "val_HJB",
-            "time_fwd", "time_bwd", "time_fwd_sum", "time_bwd_sum", "max_memory_mb"
+            "time_fwd", "time_bwd", "time_fwd_sum", "time_bwd_sum", "max_memory_mb", "val_mmd"
         ])
 
         # Check if a saved model exists and load it
@@ -436,8 +436,34 @@ def main():
                                         + alpha[0]*vL1.mean()
                                         + alpha[1]*vH1.mean())
 
+                        # Compute MMD for validation
+                        # Generate samples from the learned distribution (inverse map)
+                        N_mmd = min(args.test_batch_size, val_x.size(0))
+                        y_mmd = p_z0.sample([N_mmd]).to(device)
+                        logp0_mmd = torch.zeros(N_mmd, 1, device=device)
+                        cL0_mmd = torch.zeros_like(logp0_mmd)
+                        cH0_mmd = torch.zeros_like(logp0_mmd)
+                        
+                        # Inverse map: from Gaussian to data space
+                        t_grid_inv = torch.linspace(t1, t0, args.nt_val, device=device)
+                        with autocast(device_type='cuda', dtype=precision):
+                            z_inv_t, _, _, _ = odeint_func(
+                                func,
+                                (y_mmd, logp0_mmd, cL0_mmd, cH0_mmd),
+                                t_grid_inv,
+                                method=args.method
+                            )
+                        z_inv = z_inv_t[-1]
+                        model_samples = z_inv[:, :d].cpu().numpy()
+                        
+                        # Get validation data samples
+                        val_samples = val_x[:N_mmd].cpu().numpy()
+                        
+                        # Compute MMD
+                        val_mmd = mmd(model_samples, val_samples)
+
                     print(f"[Iter {itr:5d}] LR {optimizer.param_groups[0]['lr']:.2e} | train loss {loss_meter.avg:.4f}, "
-                          f"val loss {loss_val:.4f} | fwd {fwd_time_meter.avg:.3f}s, bwd {bwd_time_meter.avg:.3f}s | "
+                          f"val loss {loss_val:.4f} | val MMD {val_mmd:.4e} | fwd {fwd_time_meter.avg:.3f}s, bwd {bwd_time_meter.avg:.3f}s | "
                           f"mem {mem_meter.max:.0f}MB")
                     
                     # Early stopping logic (only if not disabled)
@@ -493,7 +519,8 @@ def main():
                         bwd_time_meter.avg,
                         fwd_time_meter.sum,
                         bwd_time_meter.sum,
-                        mem_meter.max
+                        mem_meter.max,
+                        val_mmd
                     ])
                     csv_file.flush()
 

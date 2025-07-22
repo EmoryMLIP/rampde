@@ -13,6 +13,7 @@ from typing import Any, Optional, Tuple
 import torch
 from torch.amp import autocast
 from .fixed_grid_base import FixedGridODESolverBase
+from .utils import _is_any_infinite
 
 # Import custom_fwd and custom_bwd from torch.cuda.amp
 try:
@@ -105,7 +106,7 @@ class FixedGridODESolverUnscaledSafe(FixedGridODESolverBase):
                         dy = increment_func(ode_func, y, ti, dti_local)
                     
                     # Simple overflow checking without scaling loop
-                    if scaler._is_any_infinite((a)):
+                    if _is_any_infinite((a,)):
                         raise OverflowError(f"Overflow detected in gradients at time step i={i}")
                     
                     # Compute gradients - simple computation without scaling
@@ -133,7 +134,7 @@ class FixedGridODESolverUnscaledSafe(FixedGridODESolverBase):
                                   for d, p in zip(dparams, params)]
                     
                     # Check for overflow in computed gradients
-                    if scaler._is_any_infinite((da, gti, gdti, dparams)):
+                    if _is_any_infinite((da, gti, gdti, dparams)):
                         raise OverflowError(f"Overflow detected in computed gradients at time step i={i}")
                     
                     # Update gradients - direct computation without scaling
@@ -145,7 +146,7 @@ class FixedGridODESolverUnscaledSafe(FixedGridODESolverBase):
                         grad_t[i + 1] = grad_t[i + 1] + dti * gdti + gdti2.to(dtype_hi)
                     
                     # Check for overflow in accumulated gradients
-                    if scaler._is_any_infinite((a, grad_t, grad_theta)):
+                    if _is_any_infinite((a, grad_t, grad_theta)):
                         raise OverflowError(f"Overflow detected in accumulated gradients at time step i={i}")
         
         except OverflowError:

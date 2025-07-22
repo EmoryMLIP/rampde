@@ -32,5 +32,24 @@ class RunningMaximumMeter(object):
         else:
             self.max = max(self.max, val)
         self.val = val
+
+class AverageMeter(object):
+    """Computes and stores the cumulative average, sum, count, and current value"""
+
+    def __init__(self):
+        self.reset()
+
+    def reset(self):
+        self.val = 0
+        self.avg = 0
+        self.sum = 0
+        self.count = 0
+
+    def update(self, val, n=1):
+        self.val = val
+        self.sum += val * n
+        self.count += n
+        self.avg = self.sum / self.count
+
 def count_parameters(model):
     return sum(p.numel() for p in model.parameters() if p.requires_grad)

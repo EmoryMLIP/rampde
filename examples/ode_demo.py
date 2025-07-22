@@ -10,9 +10,16 @@ import torch.nn as nn
 import torch.optim as optim
 from torch.amp import autocast
 
-from torchdiffeq import odeint as odeint_diffeq
-sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
 from torchmpnode import odeint as odeint_mp
+
+# Try to import torchdiffeq, gracefully handle if not available
+try:
+    from torchdiffeq import odeint as odeint_diffeq
+    HAS_TORCHDIFFEQ = True
+except ImportError:
+    print("Warning: torchdiffeq not available. Install with 'pip install torchdiffeq' for comparison.")
+    odeint_diffeq = None
+    HAS_TORCHDIFFEQ = False
 
 from utils import RunningAverageMeter, RunningMaximumMeter
 
@@ -63,7 +70,9 @@ true_A  = torch.tensor([[-0.1, 6.0], [-2.0, -0.1]], device=device)
 # time grid and reference trajectory
 t = torch.linspace(0., 1., args.data_size, device=device)
 with torch.no_grad():
-    true_y = odeint_diffeq(
+    # Use torchdiffeq if available, otherwise fallback to torchmpnode
+    odeint_ref = odeint_diffeq if HAS_TORCHDIFFEQ else odeint_mp
+    true_y = odeint_ref(
         lambda tt, yy: (yy**3) @ true_A,
         true_y0, t, method='dopri5'
     )  # shape [T,1,8]
@@ -195,10 +204,12 @@ if __name__ == '__main__':
     opt_d  = optim.RMSprop(func_d.parameters(), lr=args.lr)
     opt_m  = optim.RMSprop(func_m.parameters(), lr=args.lr)
 
-    for odeint_option, func, optimizer, odeint_fn in [
-        ('torchdiffeq', func_d, opt_d, odeint_diffeq),
-        ('torchmpnode', func_m, opt_m, odeint_mp)
-    ]:
+    # Build list of solvers to test, only including torchdiffeq if available
+    solver_configs = [('torchmpnode', func_m, opt_m, odeint_mp)]
+    if HAS_TORCHDIFFEQ:
+        solver_configs.insert(0, ('torchdiffeq', func_d, opt_d, odeint_diffeq))
+    
+    for odeint_option, func, optimizer, odeint_fn in solver_configs:
         results_dir_exp = f"{args.results_dir}_{odeint_option}"
         makedirs(results_dir_exp)
         csv_path = os.path.join(results_dir_exp, 'metrics.csv')
@@ -288,10 +299,13 @@ if __name__ == '__main__':
 
     # After training both solvers, run Taylor analysis on the trained models
     precisions = {'float32': torch.float32, 'float16': torch.float16, 'bfloat16': torch.bfloat16}
-    for odeint_option, func, solver_name, solver_fn in [
-        ('torchdiffeq', func_d, 'diffeq', odeint_diffeq),
-        ('torchmpnode', func_m, 'mpnode', odeint_mp)
-    ]:
+    
+    # Build list of solvers for analysis, only including torchdiffeq if available
+    analysis_configs = [('torchmpnode', func_m, 'mpnode', odeint_mp)]
+    if HAS_TORCHDIFFEQ:
+        analysis_configs.insert(0, ('torchdiffeq', func_d, 'diffeq', odeint_diffeq))
+    
+    for odeint_option, func, solver_name, solver_fn in analysis_configs:
         exp_dir = os.path.join(args.results_dir, odeint_option)
         solvers = {solver_name: solver_fn}
         generate_and_save_taylor(

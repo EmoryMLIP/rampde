@@ -51,10 +51,14 @@ if args.odeint == 'torchmpnode':
     from torchmpnode import odeint
 else:    
     print("using torchdiffeq")
-    if args.adjoint:
-        from torchdiffeq import odeint_adjoint as odeint
-    else:
-        from torchdiffeq import odeint
+    try:
+        if args.adjoint:
+            from torchdiffeq import odeint_adjoint as odeint
+        else:
+            from torchdiffeq import odeint
+    except ImportError:
+        print("Error: torchdiffeq not available. Install with 'pip install torchdiffeq' or use --odeint=torchmpnode")
+        sys.exit(1)
 
 precision_map = {
     'float32': torch.float32,

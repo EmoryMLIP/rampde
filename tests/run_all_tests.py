@@ -123,8 +123,14 @@ def main():
     
     # Run unit tests
     if run_unit_tests:
-        test_dir = os.path.dirname(__file__)
-        unittest_result = run_unittest_suite(test_dir)
+        # Run core tests from the new core directory
+        core_test_dir = os.path.join(os.path.dirname(__file__), "core")
+        if os.path.exists(core_test_dir):
+            unittest_result = run_unittest_suite(core_test_dir)
+        else:
+            # Fallback to old structure
+            test_dir = os.path.dirname(__file__)
+            unittest_result = run_unittest_suite(test_dir)
     
     # Run performance tests
     if run_perf_tests:

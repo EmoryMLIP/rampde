@@ -9,6 +9,7 @@ to maintain numerical stability while maximizing precision utilization.
 from typing import Union, Optional, Any
 import torch
 import math
+from .utils import _is_any_infinite
 
 
 
@@ -68,30 +69,6 @@ class DynamicScaler:
         self.S: Optional[float] = None  # This will be initialized later
         self.__name__ = "DynamicScaler"
     
-    def _is_any_infinite(self, x: Union[torch.Tensor, tuple, list, None]) -> bool:
-        """
-        Recursively check if x (a tensor, list, or tuple of tensors) contains any non-finite values.
-        
-        This method handles nested structures of tensors and checks each tensor
-        for the presence of infinite or NaN values.
-        
-        Args:
-            x: Input to check - can be a tensor, list/tuple of tensors, or None
-            
-        Returns:
-            True if any tensor element is inf or NaN; otherwise False
-        """
-        if x is None:
-            return False
-        if isinstance(x, torch.Tensor):
-            return not x.isfinite().all().item()
-        if isinstance(x, (list, tuple)):
-            return any(self._is_any_infinite(elem) for elem in x)
-        # If x is neither, try to convert to tensor.
-        try:
-            return not torch.tensor(x).isfinite().all().item()
-        except Exception:
-            return False
 
     def init_scaling(self, a: torch.Tensor) -> None:
         """

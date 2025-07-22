@@ -22,7 +22,6 @@ import unittest
 import torch
 import torch.nn as nn
 import os, sys, copy
-sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
 from torchmpnode import odeint as mpodeint
 
 # Try to import torchdiffeq, skip all tests if not available

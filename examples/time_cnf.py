@@ -2,10 +2,15 @@ import os, sys
 import time
 import torch
 from torch.amp import autocast
-from torchdiffeq import odeint
-
-sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
 from torchmpnode import odeint as mpodeint
+
+# Try to import torchdiffeq, gracefully handle if not available
+try:
+    from torchdiffeq import odeint
+    HAS_TORCHDIFFEQ = True
+except ImportError:
+    print("Warning: torchdiffeq not available. Install with 'pip install torchdiffeq' for full comparison.")
+    HAS_TORCHDIFFEQ = False
 
 from cnf import CNF  # Assumes models.py is in the same directory
 
@@ -22,7 +27,15 @@ if __name__ == '__main__':
     # Define the parameter sets we want to test
     precisions = ['float32', 'float16', 'bfloat16']
     methods = ['rk4', 'dopri5']
-    odeints = [odeint]
+    
+    # Only include torchdiffeq odeint if available
+    odeints = []
+    if HAS_TORCHDIFFEQ:
+        odeints.append(odeint)
+    else:
+        print("Running with torchmpnode only (torchdiffeq not available)")
+        # For this example to work without torchdiffeq, we can still test mpodeint
+        odeints.append(mpodeint)
 
     # Map strings to torch dtypes
     precision_map = {
