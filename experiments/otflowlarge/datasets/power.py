@@ -1,6 +1,6 @@
 import numpy as np
 
-import datasets
+from . import root
 
 
 class POWER:
@@ -24,7 +24,7 @@ class POWER:
 
 
 def load_data():
-    return np.load(datasets.root + 'power/data.npy')
+    return np.load(root + 'power/data.npy')
 
 
 def load_data_split_with_noise():

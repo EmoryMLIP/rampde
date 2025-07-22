@@ -1,6 +1,6 @@
 import numpy as np
 
-import datasets
+from . import root
 
 
 class MINIBOONE:
@@ -14,7 +14,7 @@ class MINIBOONE:
 
     def __init__(self):
 
-        file = datasets.root + 'miniboone/data.npy'
+        file = root + 'miniboone/data.npy'
         trn, val, tst = load_data_normalised(file)
 
         self.trn = self.Data(trn)

@@ -1,7 +1,7 @@
 import pandas as pd
 import numpy as np
 
-import datasets
+from . import root
 
 
 class GAS:
@@ -15,7 +15,7 @@ class GAS:
 
     def __init__(self):
 
-        file = datasets.root + 'gas/ethylene_CO.pickle'
+        file = root + 'gas/ethylene_CO.pickle'
         trn, val, tst = load_data_and_clean_and_split(file)
 
         self.trn = self.Data(trn)

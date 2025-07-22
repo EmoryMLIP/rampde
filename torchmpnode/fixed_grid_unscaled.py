@@ -73,21 +73,20 @@ class FixedGridODESolverUnscaled(FixedGridODESolverBase):
         grad_theta = [torch.zeros_like(param) for param in params]
         grad_t = None if not t.requires_grad else torch.zeros_like(t)
         
-        # Preallocate buffer for efficiency
-        y_buffer = torch.zeros_like(yt[0])
+        # Fast path check - skip parameter gradients if not needed
+        any_param_requires_grad = any(p.requires_grad for p in params) if params else False
         
         # Backward pass loop - no scaling, no exceptions
         with torch.no_grad():
             for i in reversed(range(N - 1)):
                 dti = t[i + 1] - t[i]
                 
-                # Prepare current state
-                y_buffer.data.copy_(yt[i])
-                y = y_buffer.detach().requires_grad_(True)
+                # Prepare current state - directly from saved tensor
+                y = yt[i].detach().requires_grad_(True)
                 
-                # Prepare time variables
-                ti = t[i].clone().detach()
-                dti_local = dti.clone().detach()
+                # Prepare time variables - no unnecessary cloning
+                ti = t[i].detach()
+                dti_local = dti.detach()
                 if t.requires_grad:
                     ti.requires_grad_(True)
                     dti_local.requires_grad_(True)
@@ -96,11 +95,12 @@ class FixedGridODESolverUnscaled(FixedGridODESolverBase):
                 with torch.enable_grad():
                     dy = increment_func(ode_func, y, ti, dti_local)
                 
-                # Compute gradients - simple, direct computation
-                if t.requires_grad:
+                # Compute gradients - optimized for different cases
+                if t.requires_grad and any_param_requires_grad:
+                    # Full gradient computation
                     grads = torch.autograd.grad(
                         dy, (y, ti, dti_local, *params), a,
-                        create_graph=True, allow_unused=True
+                        create_graph=False, allow_unused=True
                     )
                     da, gti, gdti, *dparams = grads
                     
@@ -108,10 +108,24 @@ class FixedGridODESolverUnscaled(FixedGridODESolverBase):
                     gti = gti.to(dtype_hi) if gti is not None else torch.zeros_like(ti)
                     gdti = gdti.to(dtype_hi) if gdti is not None else torch.zeros_like(dti)
                     gdti2 = torch.sum(a * dy, dim=-1)
-                else:
+                elif t.requires_grad:
+                    # Only time gradients needed
+                    grads = torch.autograd.grad(
+                        dy, (y, ti, dti_local), a,
+                        create_graph=False, allow_unused=True
+                    )
+                    da, gti, gdti = grads
+                    dparams = [torch.zeros_like(p) for p in params]
+                    
+                    # Handle None gradients
+                    gti = gti.to(dtype_hi) if gti is not None else torch.zeros_like(ti)
+                    gdti = gdti.to(dtype_hi) if gdti is not None else torch.zeros_like(dti)
+                    gdti2 = torch.sum(a * dy, dim=-1)
+                elif any_param_requires_grad:
+                    # Only parameter gradients needed
                     grads = torch.autograd.grad(
                         dy, (y, *params), a,
-                        create_graph=True, allow_unused=True
+                        create_graph=False, allow_unused=True
                     )
                     da, *dparams = grads
                     gti = gdti = gdti2 = None
@@ -119,14 +133,27 @@ class FixedGridODESolverUnscaled(FixedGridODESolverBase):
                     # Handle None gradients for parameters
                     dparams = [d if d is not None else torch.zeros_like(p) 
                               for d, p in zip(dparams, params)]
+                else:
+                    # Only adjoint gradient needed
+                    da = torch.autograd.grad(dy, y, a, create_graph=False)[0]
+                    dparams = [torch.zeros_like(p) for p in params]
+                    gti = gdti = gdti2 = None
                 
-                # Update gradients - direct computation without scaling
-                a = a + dti * da.to(dtype_hi) + at[i].to(dtype_hi)
-                grad_theta = [g + dti * d.to(g.dtype) for g, d in zip(grad_theta, dparams)]
+                # Update gradients - optimized with in-place operations
+                # Convert da once and reuse
+                da_hi = da.to(dtype_hi)
+                a.add_(dti * da_hi).add_(at[i].to(dtype_hi))
+                
+                if any_param_requires_grad:
+                    # Use in-place operations for parameter gradient accumulation
+                    for g, d in zip(grad_theta, dparams):
+                        if d is not None:
+                            g.add_(dti * d.to(g.dtype))
                 
                 if grad_t is not None:
-                    grad_t[i] = grad_t[i] + dti * (gti - gdti) - gdti2.to(dtype_hi)
-                    grad_t[i + 1] = grad_t[i + 1] + dti * gdti + gdti2.to(dtype_hi)
+                    gdti2_hi = gdti2.to(dtype_hi)
+                    grad_t[i].add_(dti * (gti - gdti)).sub_(gdti2_hi)
+                    grad_t[i + 1].add_(dti * gdti).add_(gdti2_hi)
         
         # Return gradients for all inputs to forward pass
         # (increment_func, ode_func, y0, t, loss_scaler, *params)

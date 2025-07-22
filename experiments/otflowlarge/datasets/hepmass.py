@@ -3,7 +3,7 @@ import numpy as np
 from collections import Counter
 from os.path import join
 
-import datasets
+from . import root
 
 
 class HEPMASS:
@@ -21,7 +21,7 @@ class HEPMASS:
 
     def __init__(self):
 
-        path = datasets.root + 'hepmass/'
+        path = root + 'hepmass/'
         trn, val, tst = load_data_no_discrete_normalised_as_array(path)
 
         self.trn = self.Data(trn)

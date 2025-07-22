@@ -10,7 +10,7 @@ dataset_args[power]="--niters 36000 --m 128 --batch_size 10000 --test_batch_size
 dataset_args[gas]="--niters 60000 --m 512 --batch_size 2048 --test_batch_size 55000 --lr 0.01 --nt 10 --nt_val 28 --val_freq 50 --weight_decay 0.0 --alph 1.0,1200.0,40.0 --drop_freq 0 --early_stopping 20"
 dataset_args[hepmass]="--niters 40000 --m 256 --batch_size 2048 --test_batch_size 20000 --lr 0.02 --nt 12 --nt_val 24 --val_freq 50 --weight_decay 0.0 --alph 1.0,500.0,40.0 --drop_freq 0 --early_stopping 15"
 dataset_args[miniboone]="--niters 8000 --m 256 --batch_size 2048 --test_batch_size 5000 --lr 0.02 --nt 6 --nt_val 10 --val_freq 20 --weight_decay 0.0 --alph 1.0,100.0,15.0 --drop_freq 0 --early_stopping 15"
-dataset_args[bsds300]="--niters 120000 --m 512 --batch_size 256 --test_batch_size 1000 --lr 0.001 --nt 14 --nt_val 30 --val_freq 100 --alph 1.0,2000.0,800.0 --drop_freq 0 --lr_drop 3.3 --early_stopping 15"
+dataset_args[bsds300]="--niters 10000 --m 1024 --batch_size 512 --test_batch_size 1024 --lr 0.001 --nt 16 --nt_val 30 --val_freq 100 --alph 1.0,2000.0,800.0 --drop_freq 0 --lr_drop 3.3 --early_stopping 15"
 
 # Seed
 seed=42
@@ -43,6 +43,7 @@ for dataset in "${datasets[@]}"; do
     done
   done
 done
+
 
 # Remove wait commands since we're using sbatch instead of background jobs
 
