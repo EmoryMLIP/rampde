@@ -5,6 +5,7 @@ This module contains increment functions that compute dy for advancing
 the solution from y(t) to y(t+dt) in explicit ODE schemes.
 """
 
+from typing import Callable, Dict, Type
 import torch
 import torch.nn as nn
 
@@ -18,7 +19,13 @@ class Euler(nn.Module):
     order = 1
     name = 'euler'
 
-    def forward(self, func, y, t, dt):
+    def forward(
+        self, 
+        func: Callable[[torch.Tensor, torch.Tensor], torch.Tensor], 
+        y: torch.Tensor, 
+        t: torch.Tensor, 
+        dt: torch.Tensor
+    ) -> torch.Tensor:
         """
         Compute Euler increment.
         
@@ -44,7 +51,13 @@ class RK4(nn.Module):
     order = 4
     name = 'rk4'
 
-    def forward(self, func, y, t, dt):
+    def forward(
+        self, 
+        func: Callable[[torch.Tensor, torch.Tensor], torch.Tensor], 
+        y: torch.Tensor, 
+        t: torch.Tensor, 
+        dt: torch.Tensor
+    ) -> torch.Tensor:
         """
         Compute RK4 increment.
         
@@ -70,13 +83,13 @@ class RK4(nn.Module):
 
 
 # Dictionary of available increment functions
-INCREMENTS = {
+INCREMENTS: Dict[str, Type[nn.Module]] = {
     'euler': Euler,
     'rk4': RK4,
 }
 
 
-def get_increment_function(method):
+def get_increment_function(method: str) -> Type[nn.Module]:
     """
     Get increment function by name.
     

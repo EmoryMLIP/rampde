@@ -6,6 +6,7 @@ across all fixed grid solver variants. Only the backward pass differs between
 variants to handle different scaling and exception handling strategies.
 """
 
+from typing import Any, Optional, Tuple, Union
 import torch
 from torch.amp import autocast
 
@@ -31,7 +32,15 @@ class FixedGridODESolverBase(torch.autograd.Function):
 
     @staticmethod
     @custom_fwd(device_type='cuda')
-    def forward(ctx, increment_func, ode_func, y0, t, loss_scaler, *params):
+    def forward(
+        ctx: Any, 
+        increment_func: torch.nn.Module, 
+        ode_func: torch.nn.Module, 
+        y0: torch.Tensor, 
+        t: torch.Tensor, 
+        loss_scaler: Any, 
+        *params: torch.Tensor
+    ) -> torch.Tensor:
         """
         Shared forward pass implementation.
         
@@ -86,7 +95,7 @@ class FixedGridODESolverBase(torch.autograd.Function):
         return yt
     
     @staticmethod
-    def backward(ctx, at):
+    def backward(ctx: Any, at: torch.Tensor) -> Tuple[Optional[torch.Tensor], ...]:
         """
         Abstract backward method - must be implemented by subclasses.
         

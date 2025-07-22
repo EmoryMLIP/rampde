@@ -82,6 +82,21 @@ target/
 profile_default/
 ipython_config.py
 
+.data/*
+
+*.err
+*.out
+*.gz
+*.hdf5
+*.pth
+*.pt
+
+*.txt
+*.csv
+*.bin
+*.zip
+
+
 # pyenv
 #   For a library or package, you might want to ignore these files since the code is
 #   intended to run in multiple environments; otherwise, check them in:
@@ -183,3 +198,20 @@ examples/.data/mnist/MNIST/raw/t10k-images-idx3-ubyte
 .vscode/settings.json
 modeleq_demo.csv
 modeleq_demo_grad_memory.csv
+out/*
+experiments/otflow/slurm_logs*
+
+*.jpg
+*.gif
+*.csv
+
+results/*
+demos/out/*
+experiments/mnist/.data/*
+experiments/mnist/slurm_logs/*
+experiments/mnist/*.txt
+experiments/otflow/slurm_logs/*
+experiments/otflow/*.txt
+.data/stl10/stl10_binary.tar.gz
+experiments/results/otflowlarge/float32_torchmpnode_rk4_seed42_20250713_135143/model_iter_4000.pt
+experiments/stl10/.data/mnist/MNIST/raw/train-labels-idx1-ubyte

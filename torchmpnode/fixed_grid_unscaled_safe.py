@@ -5,9 +5,11 @@ This variant provides exception handling for overflow protection without
 dynamic scaling infrastructure. It's designed to work with PyTorch's 
 GradScaler when overflow protection is needed but dynamic scaling is not.
 
-Performance: ~0.0470s (1.16x slower than unscaled) - Exception handling overhead
+Performance: Minor overhead compared to unscaled variant due to exception
+handling infrastructure. Compatible with PyTorch's GradScaler.
 """
 
+from typing import Any, Optional, Tuple
 import torch
 from torch.amp import autocast
 from .fixed_grid_base import FixedGridODESolverBase
@@ -39,7 +41,7 @@ class FixedGridODESolverUnscaledSafe(FixedGridODESolverBase):
 
     @staticmethod
     @custom_bwd(device_type='cuda')
-    def backward(ctx, at):
+    def backward(ctx: Any, at: torch.Tensor) -> Tuple[Optional[torch.Tensor], ...]:
         """
         Unscaled safe backward pass with exception handling.
         

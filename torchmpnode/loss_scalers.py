@@ -1,11 +1,61 @@
+"""Dynamic loss scaling for mixed precision training.
+
+This module provides the DynamicScaler class for automatic loss scaling
+in mixed precision training to prevent gradient underflow in float16 precision.
+The scaler automatically adjusts the loss scale based on gradient magnitudes
+to maintain numerical stability while maximizing precision utilization.
+"""
+
+from typing import Union, Optional, Any
 import torch
 import math
 
 
 
 class DynamicScaler:
-    def __init__(self, dtype_low, target_factor=None, increase_factor=2.0, decrease_factor=0.5,
-                  max_attempts=50, delta=0):
+    """
+    Dynamic loss scaler for mixed precision ODE training in float16.
+    
+    This class implements automatic loss scaling to prevent gradient underflow
+    in float16 precision. It dynamically adjusts the scaling factor based on
+    gradient magnitudes, increasing scale when gradients are small and 
+    decreasing scale when overflow is detected.
+    
+    The scaling algorithm:
+    1. Initialize scaling factor based on input tensor magnitude
+    2. Scale gradients during backward pass to prevent underflow
+    3. Check for overflow/underflow and adjust scaling factor
+    4. Increase scale when gradients are small (< 0.5 * target)
+    5. Decrease scale when overflow is detected
+    
+    Args:
+        dtype_low: Low precision dtype (typically torch.float16)
+        target_factor: Target gradient magnitude (default: 1.0 / eps)
+        increase_factor: Factor to increase scale (default: 2.0)
+        decrease_factor: Factor to decrease scale on overflow (default: 0.5)
+        max_attempts: Maximum scaling attempts before giving up (default: 50)
+        delta: Small value added for numerical stability (default: 0)
+        
+    Attributes:
+        S: Current scaling factor (initialized on first use)
+        is_initialized: Whether the scaler has been initialized
+        eps: Machine epsilon for the low precision dtype
+        target: Target gradient magnitude
+        
+    Example:
+        >>> scaler = DynamicScaler(torch.float16)
+        >>> # During forward pass, scaler.S is None until first backward
+        >>> # During backward pass, scaler automatically initializes and adjusts
+    """
+    def __init__(
+        self, 
+        dtype_low: torch.dtype, 
+        target_factor: Optional[float] = None, 
+        increase_factor: float = 2.0, 
+        decrease_factor: float = 0.5,
+        max_attempts: int = 50, 
+        delta: float = 0
+    ):
         self.dtype_low = dtype_low
         # Set a target norm if not provided: 1/epsilon for low precision.
         self.eps = torch.finfo(dtype_low).eps
@@ -14,14 +64,22 @@ class DynamicScaler:
         self.decrease_factor = decrease_factor
         self.max_attempts = max_attempts
         self.delta = delta
-        self.is_initialized=False
-        self.S = None  # This will be initialized later
-        self.__name__=  "DynamicScaler"
+        self.is_initialized = False
+        self.S: Optional[float] = None  # This will be initialized later
+        self.__name__ = "DynamicScaler"
     
-    def _is_any_infinite(self, x):
+    def _is_any_infinite(self, x: Union[torch.Tensor, tuple, list, None]) -> bool:
         """
         Recursively check if x (a tensor, list, or tuple of tensors) contains any non-finite values.
-        Returns True if any tensor element is inf or NaN; otherwise False.
+        
+        This method handles nested structures of tensors and checks each tensor
+        for the presence of infinite or NaN values.
+        
+        Args:
+            x: Input to check - can be a tensor, list/tuple of tensors, or None
+            
+        Returns:
+            True if any tensor element is inf or NaN; otherwise False
         """
         if x is None:
             return False
@@ -35,7 +93,21 @@ class DynamicScaler:
         except Exception:
             return False
 
-    def init_scaling(self, a):
+    def init_scaling(self, a: torch.Tensor) -> None:
+        """
+        Initialize the scaling factor based on input tensor magnitude.
+        
+        This method analyzes the input tensor to determine an appropriate
+        initial scaling factor. The scale is chosen to bring the tensor
+        magnitude close to the target value while ensuring finite results.
+        
+        Args:
+            a: Input tensor to analyze for scaling initialization
+            
+        Raises:
+            ValueError: If input tensor contains non-finite or NaN values
+            RuntimeError: If unable to find a finite scale after 20 attempts
+        """
         if not(a.isfinite().all()) or a.isnan().any():
             raise ValueError("Input tensor contains non-finite or nan values.")
         
@@ -52,22 +124,37 @@ class DynamicScaler:
         else:
             raise RuntimeError(f"Scaler failed to find finite scale after 20 steps for {a.shape} with ||a||_inf = {a.abs().max()}.")
 
-    def update_on_overflow(self):
+    def update_on_overflow(self) -> None:
         """
-        Update the scaling factor on overflow (multiply S by decrease_factor) and
-        scale each of the provided arguments by decrease_factor.
+        Update the scaling factor on overflow.
+        
+        Multiplies the current scaling factor by decrease_factor to reduce
+        the scale and prevent further overflow in subsequent iterations.
         """
         self.S *= self.decrease_factor
 
-    def check_for_increase(self, a):
+    def check_for_increase(self, a: torch.Tensor) -> bool:
+        """
+        Check if scaling factor should be increased based on gradient magnitude.
+        
+        Compares the maximum absolute value of the tensor against the target
+        magnitude to determine if the scale should be increased.
+        
+        Args:
+            a: Tensor to check for magnitude
+            
+        Returns:
+            True if the tensor magnitude is less than 50% of target, False otherwise
+        """
         # Use .item() to return a Python bool, not a tensor
         return ((a.abs().max()) / self.target < 0.5).item()
                  
-    def update_on_small_grad(self):
+    def update_on_small_grad(self) -> None:
         """
-        Update the scaling factor on small gradients (multiply S by increase_factor) and
-        scale each of the provided arguments by increase_factor. Returns a tuple of
-        scaled inputs in the same order. Optionally apply scaling in place.
+        Update the scaling factor when gradients are small.
+        
+        Multiplies the current scaling factor by increase_factor to scale up
+        small gradients and improve precision utilization.
         """
         self.S *= self.increase_factor
     

@@ -5,6 +5,7 @@ This module provides the main odeint function that automatically selects
 the optimal solver variant based on the loss scaler type and precision.
 """
 
+from typing import Union, Optional, Tuple, Literal, TypeVar, Callable, Type, Any
 import torch
 from .increment import INCREMENTS, get_increment_function
 from .fixed_grid_unscaled import FixedGridODESolverUnscaled
@@ -12,14 +13,25 @@ from .fixed_grid_dynamic import FixedGridODESolverDynamic
 from .fixed_grid_unscaled_safe import FixedGridODESolverUnscaledSafe
 from .loss_scalers import DynamicScaler
 
+# Type definitions
+TensorType = TypeVar('TensorType', bound=torch.Tensor)
+TupleOrTensor = Union[torch.Tensor, Tuple[torch.Tensor, ...]]
+ScalerType = Union[DynamicScaler, None, Literal[False]]
+MethodType = Literal['euler', 'rk4']
 
-def _tensor_to_tuple(tensor, numels, shapes, length):
+
+def _tensor_to_tuple(
+    tensor: torch.Tensor, 
+    numels: list[int], 
+    shapes: list[torch.Size], 
+    length: Tuple[int, ...]
+) -> Tuple[torch.Tensor, ...]:
     """Convert tensor to tuple of tensors."""
     tup = torch.split(tensor, numels, dim=-1)
     return tuple([t.view((*length, *s)) for t, s in zip(tup, shapes)])
 
 
-def _tuple_to_tensor(tup):
+def _tuple_to_tensor(tup: Tuple[torch.Tensor, ...]) -> torch.Tensor:
     """Convert tuple of tensors to single tensor."""
     return torch.cat([t for t in tup], dim=-1)
 
@@ -29,18 +41,26 @@ class _TupleFunc(torch.nn.Module):
     Wrapper for ODE functions that work with tuples.
     Taken from torchdiffeq.
     """
-    def __init__(self, base_func, shapes, numels):
+    def __init__(
+        self, 
+        base_func: Callable[[torch.Tensor, Tuple[torch.Tensor, ...]], Tuple[torch.Tensor, ...]], 
+        shapes: list[torch.Size], 
+        numels: list[int]
+    ):
         super(_TupleFunc, self).__init__()
         self.base_func = base_func
         self.shapes = shapes
         self.numels = numels
 
-    def forward(self, t, y):
+    def forward(self, t: torch.Tensor, y: torch.Tensor) -> torch.Tensor:
         f = self.base_func(t, _tensor_to_tuple(y, self.numels, self.shapes, ()))
         return _tuple_to_tensor(f)
 
 
-def _select_ode_solver(loss_scaler, precision):
+def _select_ode_solver(
+    loss_scaler: ScalerType, 
+    precision: torch.dtype
+) -> Tuple[Type[torch.autograd.Function], Optional[DynamicScaler]]:
     """
     Select optimal ODE solver based on scaler type and precision.
     
@@ -85,7 +105,17 @@ def _select_ode_solver(loss_scaler, precision):
         return FixedGridODESolverUnscaledSafe, loss_scaler
 
 
-def odeint(func, y0, t, *, method='rk4', atol=None, rtol=None, loss_scaler=None):
+def odeint(
+    func: Union[Callable[[torch.Tensor, torch.Tensor], torch.Tensor], 
+                Callable[[torch.Tensor, Tuple[torch.Tensor, ...]], Tuple[torch.Tensor, ...]]], 
+    y0: TupleOrTensor, 
+    t: torch.Tensor, 
+    *, 
+    method: MethodType = 'rk4', 
+    atol: Optional[float] = None, 
+    rtol: Optional[float] = None, 
+    loss_scaler: ScalerType = None
+) -> TupleOrTensor:
     """
     Solve an ODE system with automatic solver selection.
     

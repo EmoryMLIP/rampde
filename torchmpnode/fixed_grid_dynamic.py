@@ -5,9 +5,11 @@ This variant includes dynamic scaling infrastructure to handle mixed precision
 training with DynamicScaler. It includes scaling loops, parameter dtype conversion,
 and overflow checking but no exception handling.
 
-Performance: ~0.0668s (1.65x slower than unscaled) - Required for DynamicScaler
+Performance: Moderate overhead compared to unscaled variant due to scaling loops
+and overflow checking. Required when using DynamicScaler for mixed precision.
 """
 
+from typing import Any, Optional, Tuple
 import torch
 from torch.amp import autocast
 from .fixed_grid_base import FixedGridODESolverBase
@@ -38,7 +40,7 @@ class FixedGridODESolverDynamic(FixedGridODESolverBase):
 
     @staticmethod
     @custom_bwd(device_type='cuda')
-    def backward(ctx, at):
+    def backward(ctx: Any, at: torch.Tensor) -> Tuple[Optional[torch.Tensor], ...]:
         """
         Dynamic scaling backward pass.
         

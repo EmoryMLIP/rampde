@@ -5,9 +5,11 @@ This variant provides the fastest performance by eliminating all scaling
 infrastructure. It should be used as the default for float32 and bfloat16
 precision where overflow is not a concern.
 
-Performance: ~0.0404s (1.00x baseline) - 65% faster than scaled variants
+Performance: Optimal performance baseline - significantly faster than variants
+with scaling or exception handling overhead.
 """
 
+from typing import Any, Optional, Tuple
 import torch
 from torch.amp import autocast
 from .fixed_grid_base import FixedGridODESolverBase
@@ -38,7 +40,7 @@ class FixedGridODESolverUnscaled(FixedGridODESolverBase):
 
     @staticmethod
     @custom_bwd(device_type='cuda')
-    def backward(ctx, at):
+    def backward(ctx: Any, at: torch.Tensor) -> Tuple[Optional[torch.Tensor], ...]:
         """
         Unscaled backward pass - optimal performance.
         
