@@ -10,6 +10,7 @@ import torch.nn as nn
 # Add paths for imports
 base_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), '../../..'))
 sys.path.insert(0, os.path.join(base_dir, "examples"))
+sys.path.insert(0, os.path.join(base_dir, "experiments", "otflowlarge"))
 
 from Phi import Phi
 
