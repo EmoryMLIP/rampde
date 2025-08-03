@@ -83,7 +83,7 @@ def _select_ode_solver(
         loss_scaler = None  # Convert False to None for solver selection
     # Create default loss scaler if not provided
     elif loss_scaler is None:
-        dtype_low = torch.get_autocast_gpu_dtype() if torch.is_autocast_enabled() else torch.float32
+        dtype_low = torch.get_autocast_gpu_dtype() if torch.is_autocast_enabled() else precision
         if dtype_low == torch.float16:
             loss_scaler = DynamicScaler(dtype_low=dtype_low)
         # else: loss_scaler remains None
@@ -93,7 +93,7 @@ def _select_ode_solver(
         return FixedGridODESolverDynamic, loss_scaler
     
     elif loss_scaler is None:
-        if precision in [torch.float32, torch.bfloat16]:
+        if precision in [torch.float32, torch.bfloat16, torch.float64]:
             # Optimal performance for stable precisions
             return FixedGridODESolverUnscaled, loss_scaler
         else:
@@ -160,7 +160,7 @@ def odeint(
     increment_func = get_increment_function(method)()
     
     # Determine precision for solver selection
-    precision = torch.get_autocast_gpu_dtype() if torch.is_autocast_enabled() else torch.float32
+    precision = torch.get_autocast_gpu_dtype() if torch.is_autocast_enabled() else y0.dtype
     
     # Automatically select optimal solver variant and create loss scaler if needed
     solver_class, loss_scaler = _select_ode_solver(loss_scaler, precision)

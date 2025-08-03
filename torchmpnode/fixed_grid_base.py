@@ -61,8 +61,8 @@ class FixedGridODESolverBase(torch.autograd.Function):
         """
         with torch.no_grad():
             # Determine precision levels
-            dtype_low = torch.get_autocast_gpu_dtype() if torch.is_autocast_enabled() else torch.float32
             dtype_hi = y0.dtype
+            dtype_low = torch.get_autocast_gpu_dtype() if torch.is_autocast_enabled() else dtype_hi
             
             # Initialize solution storage
             N = t.shape[0]
