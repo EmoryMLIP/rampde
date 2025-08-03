@@ -193,6 +193,15 @@ class FixedGridODESolverDynamic(FixedGridODESolverBase):
                 
                 # Check for overflow in accumulated gradients
                 if _is_any_infinite((a, grad_t, grad_theta)):
+                    # print isfinite for a, grad_t, grad_theta
+                    if not a.isfinite().all():
+                        print(f"Gradient a is not finite at time step i={i}: {a}")
+                    if grad_t is not None and not grad_t[i].isfinite().all():
+                        print(f"Gradient grad_t[{i}] is not finite: {grad_t[i]}")
+                    if grad_t is not None and not grad_t[i + 1].isfinite().all():
+                        print(f"Gradient grad_t[{i + 1}] is not finite: {grad_t[i + 1]}")
+                    if any(not g.isfinite().all() for g in grad_theta):
+                        print(f"Gradient grad_theta is not finite at time step i={i}: {[g for g in grad_theta if not g.isfinite().all()]}")
                     raise RuntimeError(
                         f"Gradients are not representable at time step i={i}"
                     )
