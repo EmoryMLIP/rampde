@@ -153,7 +153,7 @@ def determine_scaler(
             # Case 3: No scaling (unsafe mode)
             print("WARNING: Using float16 with torchmpnode without any scaling (unsafe mode)")
             print("Training will stop if NaN/inf is detected in loss or gradients")
-            return None, 'none', None
+            return None, 'none', False
             
         else:
             # Invalid case: both scalers enabled
@@ -173,7 +173,8 @@ def setup_experiment(
     gpu: int,
     scaler_name: Optional[str],
     timestamp: Optional[str] = None,
-    extra_params: Optional[dict] = None
+    extra_params: Optional[dict] = None,
+    args: Optional[object] = None
 ) -> Tuple[str, str, str, torch.device, object]:
     """
     Setup experiment directories, logging, and environment.
@@ -190,6 +191,7 @@ def setup_experiment(
         scaler_name: Name of the scaler ('grad', 'dynamic', 'none', or None)
         timestamp: Optional timestamp string (auto-generated if None)
         extra_params: Optional dict of extra parameters to include in folder name
+        args: Optional argument parser namespace containing all experiment parameters
         
     Returns:
         Tuple of (result_dir, ckpt_path, folder_name, device, log_file)
@@ -239,6 +241,12 @@ def setup_experiment(
         'timestamp': timestamp,
         'job_id': job_id
     }
+    
+    # Include all arguments from the parser if provided
+    if args is not None:
+        args_dict.update(vars(args))
+    
+    # Add any extra parameters (this allows overriding args if needed)
     if extra_params:
         args_dict.update(extra_params)
     

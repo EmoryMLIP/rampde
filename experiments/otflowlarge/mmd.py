@@ -21,6 +21,7 @@ def pdist(sample_1, sample_2, norm=2, eps=1e-5):
         Matrix of shape (n_1, n_2). The [i, j]-th entry is equal to
         ``|| sample_1[i, :] - sample_2[j, :] ||_p``."""
     n_1, n_2 = sample_1.size(0), sample_2.size(0)
+    sample_1, sample_2 = sample_1.float(), sample_2.float()
     norm = float(norm)
     if norm == 2.:
         norms_1 = torch.sum(sample_1**2, dim=1, keepdim=True)
@@ -117,7 +118,7 @@ def mmd(x,y, indepth=False, alph=1.0):
     :param y: numpy matrix of size (nex,:)
     :return: MMD(x,y)
     """
-
+    
     # convert to numpy
     if type(x) is torch.Tensor:
         x = x.numpy()

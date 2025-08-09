@@ -434,7 +434,7 @@ def main():
     result_dir, ckpt_path, folder_name, device, log_file = setup_experiment(
         args.results_dir, "ode_stl10", "stl10", args.precision,
         args.odeint, args.method, args.seed, args.gpu, scaler_name,
-        extra_params=extra_params
+        extra_params=extra_params, args=args
     )
     
     # Copy the script to results directory

@@ -22,7 +22,8 @@ echo "======================================================="
 # Test 1: torchdiffeq and torchmpnode with no scaling in various precisions
 echo "Test 1: No scaling comparison - float32, tfloat32, bfloat16"
 for dataset in "${datasets[@]}"; do
-  for precision in "float32" "tfloat32" "bfloat16"; do
+  for precision in "tfloat32"; do
+  # for precision in "float32" "tfloat32" "bfloat16"; do
     for odeint in "torchdiffeq" "torchmpnode"; do
       fixed_args=(
         --precision "$precision"
@@ -33,6 +34,7 @@ for dataset in "${datasets[@]}"; do
         --no_grad_scaler
         --no_dynamic_scaler
         --viz
+        --results_dir ../results_paper_cnf
       )
       extra_args=${dataset_args[$dataset]}
       echo "Submitting: $odeint $precision no-scaling - ${fixed_args[*]} $extra_args"
@@ -41,87 +43,92 @@ for dataset in "${datasets[@]}"; do
   done
 done
 
-# Remove wait commands since we're using sbatch instead of background jobs
+# # Remove wait commands since we're using sbatch instead of background jobs
 
-# Test 2: torchdiffeq in fp16 with and without grad scaling
-echo "Test 2: torchdiffeq fp16 scaling comparison"
-for dataset in "${datasets[@]}"; do
-  # torchdiffeq fp16 without grad scaling
-  fixed_args=(
-    --precision "float16"
-    --data "$dataset"
-    --method "rk4"
-    --odeint "torchdiffeq"
-    --seed "$seed"
-    --no_grad_scaler
-    --viz
-  )
-  extra_args=${dataset_args[$dataset]}
-  echo "Submitting: torchdiffeq float16 no-grad-scaler - ${fixed_args[*]} $extra_args"
-  sbatch --account=mathg3 job_cnf.sbatch "${fixed_args[@]}" $extra_args
+# # Test 2: torchdiffeq in fp16 with and without grad scaling
+# echo "Test 2: torchdiffeq fp16 scaling comparison"
+# for dataset in "${datasets[@]}"; do
+#   # torchdiffeq fp16 without grad scaling
+#   fixed_args=(
+#     --precision "float16"
+#     --data "$dataset"
+#     --method "rk4"
+#     --odeint "torchdiffeq"
+#     --seed "$seed"
+#     --no_grad_scaler
+#     --viz
+#     --results_dir ../results_paper_cnf
+#   )
+#   extra_args=${dataset_args[$dataset]}
+#   echo "Submitting: torchdiffeq float16 no-grad-scaler - ${fixed_args[*]} $extra_args"
+#   sbatch --account=mathg3 job_cnf.sbatch "${fixed_args[@]}" $extra_args
   
-  # torchdiffeq fp16 with grad scaling
-  fixed_args=(
-    --precision "float16"
-    --data "$dataset"
-    --method "rk4"
-    --odeint "torchdiffeq"
-    --seed "$seed"
-    --viz
-  )
-  extra_args=${dataset_args[$dataset]}
-  echo "Submitting: torchdiffeq float16 with-grad-scaler - ${fixed_args[*]} $extra_args"
-  sbatch --account=mathg3 job_cnf.sbatch "${fixed_args[@]}" $extra_args
-done
+#   # torchdiffeq fp16 with grad scaling
+#   fixed_args=(
+#     --precision "float16"
+#     --data "$dataset"
+#     --method "rk4"
+#     --odeint "torchdiffeq"
+#     --seed "$seed"
+#     --viz
+#     --results_dir ../results_paper_cnf
+#   )
+#   extra_args=${dataset_args[$dataset]}
+#   echo "Submitting: torchdiffeq float16 with-grad-scaler - ${fixed_args[*]} $extra_args"
+#   sbatch --account=mathg3 job_cnf.sbatch "${fixed_args[@]}" $extra_args
+# done
 
-# Remove wait commands since we're using sbatch instead of background jobs
+# # Remove wait commands since we're using sbatch instead of background jobs
 
-# Test 3: torchmpnode in fp16 with different scaling options
-echo "Test 3: torchmpnode fp16 scaling comparison"
-for dataset in "${datasets[@]}"; do
-  # torchmpnode fp16 with no scaling
-  fixed_args=(
-    --precision "float16"
-    --data "$dataset"
-    --method "rk4"
-    --odeint "torchmpnode"
-    --seed "$seed"
-    --no_grad_scaler
-    --no_dynamic_scaler
-    --viz
-  )
-  extra_args=${dataset_args[$dataset]}
-  echo "Submitting: torchmpnode float16 no-scaling - ${fixed_args[*]} $extra_args"
-  sbatch --account=mathg3 job_cnf.sbatch "${fixed_args[@]}" $extra_args
+# # Test 3: torchmpnode in fp16 with different scaling options
+# echo "Test 3: torchmpnode fp16 scaling comparison"
+# for dataset in "${datasets[@]}"; do
+#   # torchmpnode fp16 with no scaling
+#   fixed_args=(
+#     --precision "float16"
+#     --data "$dataset"
+#     --method "rk4"
+#     --odeint "torchmpnode"
+#     --seed "$seed"
+#     --no_grad_scaler
+#     --no_dynamic_scaler
+#     --viz
+#     --results_dir ../results_paper_cnf
+#   )
+#   extra_args=${dataset_args[$dataset]}
+#   echo "Submitting: torchmpnode float16 no-scaling - ${fixed_args[*]} $extra_args"
+#   sbatch --account=mathg3 job_cnf.sbatch "${fixed_args[@]}" $extra_args
   
-  # torchmpnode fp16 with only grad scaling
-  fixed_args=(
-    --precision "float16"
-    --data "$dataset"
-    --method "rk4"
-    --odeint "torchmpnode"
-    --seed "$seed"
-    --no_dynamic_scaler
-    --viz
-  )
-  extra_args=${dataset_args[$dataset]}
-  echo "Submitting: torchmpnode float16 only-grad-scaler - ${fixed_args[*]} $extra_args"
-  sbatch --account=mathg3 job_cnf.sbatch "${fixed_args[@]}" $extra_args
+#   # torchmpnode fp16 with only grad scaling
+#   fixed_args=(
+#     --precision "float16"
+#     --data "$dataset"
+#     --method "rk4"
+#     --odeint "torchmpnode"
+#     --seed "$seed"
+#     --no_dynamic_scaler
+#     --viz
+#     --results_dir ../results_paper_cnf
+#   )
+#   extra_args=${dataset_args[$dataset]}
+#   echo "Submitting: torchmpnode float16 only-grad-scaler - ${fixed_args[*]} $extra_args"
+#   sbatch --account=mathg3 job_cnf.sbatch "${fixed_args[@]}" $extra_args
   
-  # torchmpnode fp16 with only dynamic scaling (default)
-  fixed_args=(
-    --precision "float16"
-    --data "$dataset"
-    --method "rk4"
-    --odeint "torchmpnode"
-    --seed "$seed"
-    --no_grad_scaler
-    --viz
-  )
-  extra_args=${dataset_args[$dataset]}
-  echo "Submitting: torchmpnode float16 only-dynamic-scaler - ${fixed_args[*]} $extra_args"
-  sbatch --account=mathg3 job_cnf.sbatch "${fixed_args[@]}" $extra_args
-done
+#   # torchmpnode fp16 with only dynamic scaling (default)
+#   fixed_args=(
+#     --precision "float16"
+#     --data "$dataset"
+#     --method "rk4"
+#     --odeint "torchmpnode"
+#     --seed "$seed"
+#     --no_grad_scaler
+#     --viz
+#     --results_dir ../results_paper_cnf
+#   )
+#   extra_args=${dataset_args[$dataset]}
+#   echo "Submitting: torchmpnode float16 only-dynamic-scaler - ${fixed_args[*]} $extra_args"
+#   sbatch --account=mathg3 job_cnf.sbatch "${fixed_args[@]}" $extra_args
+# done
 
 # Remove wait commands since we're using sbatch instead of background jobs
 echo "All experiments submitted!"

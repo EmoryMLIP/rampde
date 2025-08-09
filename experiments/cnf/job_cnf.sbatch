@@ -43,10 +43,10 @@ python -u cnf.py "$@"
 # Wait a few seconds to ensure the driver has finished writing result_dir.txt.
 sleep 10
 
-RESULT_FILE="result_dir_${SLURM_JOB_ID}.txt"
+RESULT_FILE="result_dir.txt"
 RESULT_DIR=$(cat "${RESULT_FILE}")
 echo "Moving SLURM logs to ${RESULT_DIR}"
 
 # Move the SLURM log files into the results directory.
-# mv slurm_logs/ode_mnist_${SLURM_JOB_ID}.out ${RESULT_DIR}/slurm_log.out
-# mv slurm_logs/ode_mnist_${SLURM_JOB_ID}.err ${RESULT_DIR}/slurm_log.err
+mv slurm_logs/cnf_${SLURM_JOB_ID}.out ${RESULT_DIR}/slurm_log.out
+mv slurm_logs/cnf_${SLURM_JOB_ID}.err ${RESULT_DIR}/slurm_log.err

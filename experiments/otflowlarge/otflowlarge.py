@@ -227,7 +227,7 @@ def main():
     result_dir, ckpt_path, folder_name, device, log_file = setup_experiment(
         args.results_dir, "otflowlarge", args.data, args.precision,
         args.odeint, args.method, args.seed, args.gpu, scaler_name,
-        extra_params=extra_params
+        extra_params=extra_params, args=args
     )
         
     # Copy the script to results directory
@@ -294,6 +294,11 @@ def main():
                 z0, logp0, cL0, cH0 = get_minibatch(train_x, args.batch_size)
                 torch.cuda.reset_peak_memory_stats(device)
                 
+                # Ensure parameters are in fp32 (in case previous backward pass failed)
+                for name, param in func.named_parameters():
+                    if param.dtype != torch.float32:
+                        param.data = param.data.to(torch.float32)
+                
                 # clamp parameters
                 for p in func.parameters():
                     p.data = torch.clamp(p.data, clampMin, clampMax)
@@ -317,7 +322,8 @@ def main():
                         ts,
                         **odeint_kwargs
                     )
-                    z1, logp1, cL1, cH1 = z_t[-1], logp_t[-1], cL_t[-1], cH_t[-1]
+                    # Cast to fp32 to prevent overflow in loss computation
+                    z1, logp1, cL1, cH1 = z_t[-1].float(), logp_t[-1].float(), cL_t[-1].float(), cH_t[-1].float()
                     logp_x = p_z0.log_prob(z1).view(-1,1) + logp1
                     loss   = (-alpha[2]*logp_x.mean()
                               + alpha[0]*cL1.mean()
@@ -430,7 +436,8 @@ def main():
                                 torch.linspace(t0, t1, args.nt_val, device=device),
                                 method=args.method
                             )
-                            vz1, vpl1, vL1, vH1 = vz_t[-1], vpl_t[-1], vL_t[-1], vH_t[-1]
+                            # Cast to fp32 to prevent overflow in validation loss computation
+                            vz1, vpl1, vL1, vH1 = vz_t[-1].float(), vpl_t[-1].float(), vL_t[-1].float(), vH_t[-1].float()
                             logp_val = p_z0.log_prob(vz1).view(-1,1) + vpl1
                             loss_val = (-alpha[2]*logp_val.mean()
                                         + alpha[0]*vL1.mean()
@@ -454,10 +461,10 @@ def main():
                                 method=args.method
                             )
                         z_inv = z_inv_t[-1]
-                        model_samples = z_inv[:, :d].cpu().numpy()
+                        model_samples = z_inv[:, :d].float().cpu().numpy()
                         
                         # Get validation data samples
-                        val_samples = val_x[:N_mmd].cpu().numpy()
+                        val_samples = val_x[:N_mmd].float().cpu().numpy()
                         
                         # Compute MMD
                         val_mmd = mmd(model_samples, val_samples)
@@ -667,8 +674,8 @@ def main():
                                 method=args.method
                             )
                         z_inv = z_inv_t[-1]
-                        modelGen    = z_inv[:, :d].cpu().numpy()
-                        normSamples = y.cpu().numpy()
+                        modelGen    = z_inv[:, :d].float().cpu().numpy()
+                        normSamples = y.cpu().float().numpy()
 
                         nSamples = min(testData.shape[0], modelGen.shape[0])
                         testSamps  = testData[:nSamples, :]

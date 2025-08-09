@@ -263,7 +263,7 @@ def main():
     result_dir, ckpt_path, folder_name, device, log_file = setup_experiment(
         args.results_dir, "cnf", args.data, args.precision,
         args.odeint, args.method, args.seed, args.gpu, scaler_name,
-        extra_params=extra_params
+        extra_params=extra_params, args=args
     )
     
     # Copy the script to results directory
@@ -455,14 +455,13 @@ def main():
                             ts_samples,
                             method=args.method
                         )
-                    generated_samples = z_t_samples[-1]
+                    generated_samples = z_t_samples[-1].float()
                     
                     # Compute MMD between target and generated samples
                     val_mmd = compute_mmd_loss(target_samples, generated_samples)
                     
-                    # Compute MMD between training and validation target
-                    train_target, _ = get_batch(args.num_samples, args.data, device)
-                    train_mmd = compute_mmd_loss(train_target, target_samples)
+                    # Compute MMD between training and latent variable
+                    train_mmd = compute_mmd_loss(z0_v.float(), torch.randn_like(z0_v).float())
 
                 print(
                     f"Iter {itr:4d} | LR: {optimizer.param_groups[0]['lr']:.4f} | "
