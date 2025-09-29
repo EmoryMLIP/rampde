@@ -5,8 +5,9 @@
 # Default training arguments
 default_args=(
   --batch_size  128 
-  --nepochs   2  
+  --nepochs   3  
   --lr        1e-1
+  --result_dir ../results_paper
 )
 
 # Seed

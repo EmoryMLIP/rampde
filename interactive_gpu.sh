@@ -14,4 +14,6 @@
 source /home/lruthot/scratch/cot-flow/venv/bin/activate
 
 # Start an interactive session
-srun --pty /bin/bash
+srun --gres=gpu:1 --time=08:00:00 --pty /bin/bash
+
+# python -m debugpy --listen 5678 --wait-for-client examples/otflow_exp.py

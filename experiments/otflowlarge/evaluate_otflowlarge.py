@@ -21,7 +21,6 @@ from torch.amp import autocast
 # Add path for imports
 base_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), '../..'))
 sys.path.insert(0, os.path.join(base_dir, "examples"))
-sys.path.insert(0, base_dir)
 
 def create_parser():
     """Create argument parser for evaluation."""
@@ -175,7 +174,7 @@ def evaluate_model(args):
     odeint_func, ScalerClass = setup_environment(args)
     
     # Import required modules
-    from utils import RunningAverageMeter
+    from common import RunningAverageMeter
     from mmd import mmd
     import datasets
     from Phi import Phi

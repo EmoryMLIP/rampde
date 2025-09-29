@@ -21,7 +21,15 @@ See the `out` directory for detailed results and plots.
 import torch
 import torch.nn as nn
 from torch.amp import autocast
-from torchdiffeq import odeint
+
+# Try to import torchdiffeq, gracefully handle if not available
+try:
+    from torchdiffeq import odeint
+    HAS_TORCHDIFFEQ = True
+except ImportError:
+    print("Error: This demo requires torchdiffeq for comparison. Install with 'pip install torchdiffeq'")
+    import sys
+    sys.exit(1)
 import os
 import sys
 import csv

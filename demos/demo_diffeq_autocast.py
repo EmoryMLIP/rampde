@@ -8,7 +8,15 @@
 import torch
 import torch.nn as nn
 from torch.amp import autocast
-from torchdiffeq import odeint
+
+# Try to import torchdiffeq, gracefully handle if not available
+try:
+    from torchdiffeq import odeint
+    HAS_TORCHDIFFEQ = True
+except ImportError:
+    print("Error: This demo requires torchdiffeq. Install with 'pip install torchdiffeq'")
+    import sys
+    sys.exit(1)
 
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 if device.type != 'cuda':

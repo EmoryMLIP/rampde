@@ -14,7 +14,7 @@ test_args=(
   --momentum 0.9
   --weight_decay 5e-4
   --test_freq 1         # Test every epoch to get 3 CSV rows
-  --width 64
+  --width 128
 )
 
 # Use test results directory if available

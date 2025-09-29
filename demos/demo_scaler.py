@@ -40,9 +40,13 @@ if args.odeint == 'torchmpnode':
     solver_kwargs = {'loss_scaler': scaler}
 else:
     print("Using torchdiffeq")
-    from torchdiffeq import odeint
-    solver_kwargs = {}
-    args.scaler = 'autocast_gradscaler'
+    try:
+        from torchdiffeq import odeint
+        solver_kwargs = {}
+        args.scaler = 'autocast_gradscaler'
+    except ImportError:
+        print("Error: torchdiffeq not available. Install with 'pip install torchdiffeq' or use --odeint=torchmpnode")
+        sys.exit(1)
 
 device = torch.device("cuda")
 

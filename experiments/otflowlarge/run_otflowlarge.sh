@@ -36,10 +36,11 @@ for dataset in "${datasets[@]}"; do
         --seed "$seed"
         --no_grad_scaler
         --no_dynamic_scaler
+        --results_dir ../results_paper_otflowlarge
       )
       extra_args=${dataset_args[$dataset]}
       echo "Submitting: $odeint $precision no-scaling - ${fixed_args[*]} $extra_args"
-      sbatch --account=mathg3 job_otflowlarge.sbatch "${fixed_args[@]}" $extra_args
+      sbatch  job_otflowlarge.sbatch "${fixed_args[@]}" $extra_args
     done
   done
 done
@@ -58,6 +59,7 @@ for dataset in "${datasets[@]}"; do
     --odeint "torchdiffeq"
     --seed "$seed"
     --no_grad_scaler
+    --results_dir ../results_paper_otflowlarge
   )
   extra_args=${dataset_args[$dataset]}
   echo "Submitting: torchdiffeq float16 no-grad-scaler - ${fixed_args[*]} $extra_args"
@@ -70,6 +72,7 @@ for dataset in "${datasets[@]}"; do
     --method "rk4"
     --odeint "torchdiffeq"
     --seed "$seed"
+    --results_dir ../results_paper_otflowlarge
   )
   extra_args=${dataset_args[$dataset]}
   echo "Submitting: torchdiffeq float16 with-grad-scaler - ${fixed_args[*]} $extra_args"
@@ -90,6 +93,7 @@ for dataset in "${datasets[@]}"; do
     --seed "$seed"
     --no_grad_scaler
     --no_dynamic_scaler
+    --results_dir ../results_paper_otflowlarge
   )
   extra_args=${dataset_args[$dataset]}
   echo "Submitting: torchmpnode float16 no-scaling - ${fixed_args[*]} $extra_args"
@@ -103,6 +107,7 @@ for dataset in "${datasets[@]}"; do
     --odeint "torchmpnode"
     --seed "$seed"
     --no_dynamic_scaler
+    --results_dir ../results_paper_otflowlarge
   )
   extra_args=${dataset_args[$dataset]}
   echo "Submitting: torchmpnode float16 only-grad-scaler - ${fixed_args[*]} $extra_args"
@@ -116,6 +121,7 @@ for dataset in "${datasets[@]}"; do
     --odeint "torchmpnode"
     --seed "$seed"
     --no_grad_scaler
+    --results_dir ../results_paper_otflowlarge
   )
   extra_args=${dataset_args[$dataset]}
   echo "Submitting: torchmpnode float16 only-dynamic-scaler - ${fixed_args[*]} $extra_args"

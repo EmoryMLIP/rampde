@@ -67,13 +67,13 @@ run_test() {
 }
 
 # 1. MNIST Test (fastest, good for debugging)
-run_test "MNIST Neural ODE" "mnist/run_mnist_test.sh"
+# run_test "MNIST Neural ODE" "mnist/run_mnist_test.sh"
 
 # 2. CNF Test (2D toy datasets, quick validation)  
-run_test "Continuous Normalizing Flows" "cnf/run_cnf_test.sh"
+# run_test "Continuous Normalizing Flows" "cnf/run_cnf_test.sh"
 
 # 3. STL10 Test (image classification, moderate complexity)
-run_test "STL10 Neural ODE" "stl10/run_stl10_test.sh"
+# run_test "STL10 Neural ODE" "stl10/run_stl10_test.sh"
 
 # 4. OTFlowLarge Test (most complex, longest even when shortened)
 run_test "OTFlow Large-scale" "otflowlarge/run_otflowlarge_test.sh"
