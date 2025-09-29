@@ -37,11 +37,15 @@ class SpeedTest(unittest.TestCase):
         # Skip if CUDA is not available
         if not torch.cuda.is_available():
             raise unittest.SkipTest("CUDA not available, skipping performance tests")
-        
+
+        # Clear GPU memory cache to ensure clean state
+        torch.cuda.empty_cache()
+        torch.cuda.synchronize()
+
         # Disable TF32 to get cleaner FP32 vs FP16 comparison
         torch.backends.cuda.matmul.allow_tf32 = False
         torch.backends.cudnn.allow_tf32 = False
-        
+
         # Set random seed for reproducibility
         torch.manual_seed(42)
         
@@ -52,8 +56,8 @@ class SpeedTest(unittest.TestCase):
         cls.dtype_hi = torch.float32
         cls.dtype_low = torch.float16
         
-        # Set up test parameters - smaller than paper figure for CI speed
-        cls.dimensions = [ 1024, 2048, 4096]  # Problem dimensions to test
+        # Set up test parameters - test larger sizes first for better speedup measurement
+        cls.dimensions = [4096, 2048, 1024]  # Problem dimensions to test (larger first)
         cls.batch_size = 1024
         cls.t_final = 1.0
         cls.Nsteps = 8
@@ -65,8 +69,18 @@ class SpeedTest(unittest.TestCase):
 
     def setUp(self):
         """Set up test fixtures before each test."""
+        # Clear GPU cache and synchronize before each test
+        torch.cuda.empty_cache()
+        torch.cuda.synchronize()
+
         if not QUIET:
             print(f"\nRunning performance test with dimensions: {self.dimensions}")
+
+    def tearDown(self):
+        """Clean up after each test."""
+        # Clean up GPU memory after each test
+        torch.cuda.empty_cache()
+        torch.cuda.synchronize()
     
     def create_ode_problem(self, dim):
         """Create a linear ODE problem with the given dimension."""
@@ -88,7 +102,11 @@ class SpeedTest(unittest.TestCase):
     def benchmark_precision(self, dim, precision):
         """Benchmark ODE solution for a given dimension and precision."""
         mixed = (precision == self.dtype_low)
-        
+
+        # Ensure TF32 is disabled for consistent benchmarking
+        torch.backends.cuda.matmul.allow_tf32 = False
+        torch.backends.cudnn.allow_tf32 = False
+
         # Set up ODE problem
         rhs, y0, t_grid = self.create_ode_problem(dim)
         
@@ -98,14 +116,15 @@ class SpeedTest(unittest.TestCase):
         # Deactivate dynamic scaling for fp16 to test raw performance
         loss_scaler = False if mixed else None
         
-        # Warmup
-        with ac_ctx:
-            y_all = odeint(rhs, y0, t_grid, method=self.method, loss_scaler=loss_scaler)
-            yN = y_all[-1]
-            loss = yN.to(self.dtype_hi).sum()
-            loss.backward()
-        y0.grad = None
-        rhs.zero_grad()
+        # Extended warmup for more stable timing
+        for _ in range(3):
+            with ac_ctx:
+                y_all = odeint(rhs, y0, t_grid, method=self.method, loss_scaler=loss_scaler)
+                yN = y_all[-1]
+                loss = yN.to(self.dtype_hi).sum()
+                loss.backward()
+            y0.grad = None
+            rhs.zero_grad()
         torch.cuda.synchronize()
         
         # Forward timing
@@ -143,8 +162,17 @@ class SpeedTest(unittest.TestCase):
         results = []
         
         for dim in self.dimensions:
+            # Aggressive GPU state clearing between dimensions
+            torch.cuda.empty_cache()
+            torch.cuda.synchronize()
+
             # Run benchmarks for both precisions
             result_fp32 = self.benchmark_precision(dim, self.dtype_hi)
+
+            # Clear GPU state between precision tests
+            torch.cuda.empty_cache()
+            torch.cuda.synchronize()
+
             result_fp16 = self.benchmark_precision(dim, self.dtype_low)
             
             # Calculate speedups

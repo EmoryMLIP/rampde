@@ -68,7 +68,7 @@ class FixedGridODESolverUnscaledSafe(FixedGridODESolverBase):
         scaler = ctx.loss_scaler
         
         # Determine precision
-        dtype_low = torch.get_autocast_gpu_dtype() if torch.is_autocast_enabled() else dtype_hi
+        dtype_low = torch.get_autocast_dtype('cuda') if torch.is_autocast_enabled() else dtype_hi
         
         # Initialize gradients
         N = t.shape[0]
