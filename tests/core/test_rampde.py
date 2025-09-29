@@ -1,7 +1,7 @@
 """
 Unit tests for comparing the solutions and gradients of ODE solvers.
 
-This test suite verifies that the custom ODE solver (`mpodeint` from `torchmpnode`) 
+This test suite verifies that the custom ODE solver (`mpodeint` from `rampde`) 
 produces results consistent with `torchdiffeq.odeint`. The tests evaluate both 
 the final solution and gradients using different ODE function types:
 
@@ -22,7 +22,7 @@ import unittest
 import torch
 import torch.nn as nn
 import os, sys, copy
-from torchmpnode import odeint as mpodeint
+from rampde import odeint as mpodeint
 
 # Try to import torchdiffeq, skip all tests if not available
 try:
@@ -115,11 +115,11 @@ class TestODEintEquivalence(unittest.TestCase):
 
         # Compare the final solutions.
         self.assertTrue(torch.allclose(my_solution, torch_solution, rtol=1e-5, atol=1e-5),
-                        "The solutions from torchmpnode and torchdiffeq differ more than expected.")
+                        "The solutions from rampde and torchdiffeq differ more than expected.")
         # Compare gradients for each parameter.
         for g1, g2 in zip(grad_params, my_grad_params):
             self.assertTrue(torch.allclose(g1, g2, rtol=1e-5, atol=1e-5),
-                        "The gradients from torchmpnode and torchdiffeq differ more than expected.")
+                        "The gradients from rampde and torchdiffeq differ more than expected.")
 
     def test_linear_odefunc_on_cpu(self):
         print("\nRunning test_linear_odefunc_on_cpu\n")

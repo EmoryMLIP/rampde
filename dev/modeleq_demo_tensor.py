@@ -9,7 +9,7 @@ with analytical solution:
 
 We then compute the relative error in the solution as well as in the
 sensitivities (gradients of the final state with respect to x and A)
-when using various ODE solvers in torchdiffeq and torchmpnode, and
+when using various ODE solvers in torchdiffeq and rampde, and
 we force as much work as possible onto NVIDIA Tensor Cores.
 """
 
@@ -17,7 +17,7 @@ import torch
 from torchdiffeq import odeint
 import sys, os
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
-from torchmpnode import odeint as mpodeint
+from rampde import odeint as mpodeint
 from torch.amp import autocast
 import time
 
@@ -153,7 +153,7 @@ if __name__ == '__main__':
 
     # Methods and packages to compare
     methods  = ['euler', 'rk4']
-    packages = ['torchdiffeq', 'torchmpnode']
+    packages = ['torchdiffeq', 'rampde']
 
     # For fixed-step methods, experiment with various numbers of steps.
     steps_list = [32, 64, 128, 256, 512, 1024, 2048, 4096, 8192]

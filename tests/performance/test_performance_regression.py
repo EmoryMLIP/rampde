@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Main performance regression test for torchmpnode three-variant architecture.
+Main performance regression test for rampde three-variant architecture.
 
 This test verifies that:
 1. The correct solver is selected for each configuration
@@ -26,9 +26,9 @@ current_dir = Path(__file__).parent
 base_dir = current_dir.parent.parent
 sys.path.insert(0, str(base_dir))
 
-from torchmpnode import odeint
-from torchmpnode.odeint import _select_ode_solver
-from torchmpnode.loss_scalers import DynamicScaler
+from rampde import odeint
+from rampde.odeint import _select_ode_solver
+from rampde.loss_scalers import DynamicScaler
 
 from utils.test_models import create_simple_ode_model, create_test_data, get_model_info
 from utils.timing_utils import run_timing_test, verify_solver_selection, format_timing_results
@@ -280,7 +280,7 @@ def check_performance_regression(results, baselines, threshold=0.1):
 def main():
     """Run all performance regression tests."""
     print("=" * 80)
-    print("torchmpnode Performance Regression Test Suite")
+    print("rampde Performance Regression Test Suite")
     print("=" * 80)
     
     # Test 1: Solver Selection

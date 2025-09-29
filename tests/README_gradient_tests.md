@@ -143,10 +143,10 @@ If you get import errors:
 # Make sure you're in the right environment
 conda activate torch26
 
-# Check if torchmpnode is available
-python -c "import torchmpnode; print('OK')"
+# Check if rampde is available
+python -c "import rampde; print('OK')"
 
-# Run standalone tests that don't need torchmpnode
+# Run standalone tests that don't need rampde
 python test_ode_gradients_simple.py
 ```
 

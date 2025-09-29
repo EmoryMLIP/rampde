@@ -39,7 +39,7 @@ echo ""
 echo "Test 1: Comprehensive precision and scaling comparison"
 
 # float32 tests (no scaling needed)
-for odeint in "torchdiffeq" "torchmpnode"; do
+for odeint in "torchdiffeq" "rampde"; do
   fixed_args=(
     --precision "float32"
     --method "rk4"
@@ -83,41 +83,41 @@ for precision in "float16" "bfloat16" "tfloat32"; do
   echo "Submitting: torchdiffeq $precision with-grad-scaler"
   sbatch --account=mathg3 job_ode_stl10.sbatch "${fixed_args[@]}" "${test_args[@]}"
 
-  # torchmpnode precision + no scaling
+  # rampde precision + no scaling
   fixed_args=(
     --precision "$precision"
     --method "rk4"
-    --odeint "torchmpnode"
+    --odeint "rampde"
     --seed "$seed"
     --results_dir "$results_dir"
     --no_grad_scaler
     --no_dynamic_scaler
   )
-  echo "Submitting: torchmpnode $precision no-scaling"
+  echo "Submitting: rampde $precision no-scaling"
   sbatch --account=mathg3 job_ode_stl10.sbatch "${fixed_args[@]}" "${test_args[@]}"
 
-  # torchmpnode precision + dynamic scaler only
+  # rampde precision + dynamic scaler only
   fixed_args=(
     --precision "$precision"
     --method "rk4"
-    --odeint "torchmpnode"
+    --odeint "rampde"
     --seed "$seed"
     --results_dir "$results_dir"
     --no_grad_scaler
   )
-  echo "Submitting: torchmpnode $precision with-dynamic-scaler"
+  echo "Submitting: rampde $precision with-dynamic-scaler"
   sbatch --account=mathg3 job_ode_stl10.sbatch "${fixed_args[@]}" "${test_args[@]}"
 
-  # torchmpnode precision + grad scaler only
+  # rampde precision + grad scaler only
   fixed_args=(
     --precision "$precision"
     --method "rk4"
-    --odeint "torchmpnode"
+    --odeint "rampde"
     --seed "$seed"
     --results_dir "$results_dir"
     --no_dynamic_scaler
   )
-  echo "Submitting: torchmpnode $precision with-grad-scaler"
+  echo "Submitting: rampde $precision with-grad-scaler"
   sbatch --account=mathg3 job_ode_stl10.sbatch "${fixed_args[@]}" "${test_args[@]}"
 done
 

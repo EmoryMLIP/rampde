@@ -152,7 +152,7 @@ def main():
     func = CNF(in_out_dim=2, hidden_dim=32, width=128).to(device)
     
     # Load trained weights
-    checkpoint_path = '/local/scratch/lruthot/code/torchmpnode/experiments/results_paper/cnf/2spirals_float32_torchmpnode_rk4_lr_0.01_niters_2000_num_samples_1024_hidden_dim_32_width_128_num_timesteps_128_seed42_20250722_225045/ckpt.pth'
+    checkpoint_path = '/local/scratch/lruthot/code/rampde/experiments/results_paper/cnf/2spirals_float32_rampde_rk4_lr_0.01_niters_2000_num_samples_1024_hidden_dim_32_width_128_num_timesteps_128_seed42_20250722_225045/ckpt.pth'
     checkpoint = torch.load(checkpoint_path, map_location=device)
     func.load_state_dict(checkpoint['func_state_dict'])
     print(f"Loaded trained weights from checkpoint at iteration {checkpoint['iteration']}")
@@ -176,14 +176,14 @@ def main():
     scaler_configs = [
         # BF16 configurations (no scaling needed)
         ('torchdiffeq', None),        # torchdiffeq + bf16
-        ('torchmpnode', None),        # torchmpnode + bf16
+        ('rampde', None),        # rampde + bf16
         
         # FP16 configurations (only when precision is float16)
         ('torchdiffeq', 'none'),      # torchdiffeq + fp16 + no_scaling
         ('torchdiffeq', 'grad'),      # torchdiffeq + fp16 + grad_scaling
-        ('torchmpnode', 'none'),      # torchmpnode + fp16 + no_scaling
-        ('torchmpnode', 'grad'),      # torchmpnode + fp16 + grad_scaling
-        ('torchmpnode', 'dynamic'),   # torchmpnode + fp16 + dynamic_scaling
+        ('rampde', 'none'),      # rampde + fp16 + no_scaling
+        ('rampde', 'grad'),      # rampde + fp16 + grad_scaling
+        ('rampde', 'dynamic'),   # rampde + fp16 + dynamic_scaling
     ]
     
     print("Starting CNF roundoff experiment...")
@@ -198,7 +198,7 @@ def main():
         timesteps_values=timesteps_values,
         methods=methods,
         precisions=precisions,
-        odeint_types=['torchdiffeq', 'torchmpnode'],  # Will be filtered by scaler_configs
+        odeint_types=['torchdiffeq', 'rampde'],  # Will be filtered by scaler_configs
         scaler_configs=scaler_configs
     )
     

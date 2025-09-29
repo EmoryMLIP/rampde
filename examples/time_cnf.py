@@ -2,7 +2,7 @@ import os, sys
 import time
 import torch
 from torch.amp import autocast
-from torchmpnode import odeint as mpodeint
+from rampde import odeint as mpodeint
 
 # Try to import torchdiffeq, gracefully handle if not available
 try:
@@ -33,7 +33,7 @@ if __name__ == '__main__':
     if HAS_TORCHDIFFEQ:
         odeints.append(odeint)
     else:
-        print("Running with torchmpnode only (torchdiffeq not available)")
+        print("Running with rampde only (torchdiffeq not available)")
         # For this example to work without torchdiffeq, we can still test mpodeint
         odeints.append(mpodeint)
 

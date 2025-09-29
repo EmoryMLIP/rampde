@@ -44,13 +44,13 @@ def create_parser():
     # new arguments
     parser.add_argument('--method', type=str, choices=['rk4', 'euler'], default='rk4')
     parser.add_argument('--precision', type=str, choices=['tfloat32', 'float32', 'float16','bfloat16'], default='float16')
-    parser.add_argument('--odeint', type=str, choices=['torchdiffeq', 'torchmpnode'], default='torchmpnode')
+    parser.add_argument('--odeint', type=str, choices=['torchdiffeq', 'rampde'], default='rampde')
     parser.add_argument('--unstable', action='store_true', 
                         help='Use unstable ODE formulation (default: stable)')
     parser.add_argument('--no_grad_scaler', action='store_true',
                         help='Disable GradScaler for torchdiffeq with float16 (default: enabled)')
     parser.add_argument('--no_dynamic_scaler', action='store_true',
-                        help='Disable DynamicScaler for torchmpnode with float16 (default: enabled)')
+                        help='Disable DynamicScaler for rampde with float16 (default: enabled)')
 
     parser.add_argument('--results_dir', type=str, default='./results')
     parser.add_argument('--seed', type=int, default=0)
@@ -186,9 +186,9 @@ class MPNODE_STL10(nn.Module):
         self.norm1 = nn.InstanceNorm2d(ch, affine=True)
 
         # 2) ODE block #1
-        if args.odeint == 'torchmpnode' and dynamic_scaler_enabled and ScalerClass is not None:
+        if args.odeint == 'rampde' and dynamic_scaler_enabled and ScalerClass is not None:
             S1 = ScalerClass(precision)
-        elif args.odeint == 'torchmpnode' and args.precision == 'float16' and not dynamic_scaler_enabled:
+        elif args.odeint == 'rampde' and args.precision == 'float16' and not dynamic_scaler_enabled:
             # Explicitly disable internal scaler when using external GradScaler  
             S1 = False
         else:
@@ -202,9 +202,9 @@ class MPNODE_STL10(nn.Module):
         # self.norm3 = nn.InstanceNorm2d(ch)
 
         # 4) ODE block #2
-        if args.odeint == 'torchmpnode' and dynamic_scaler_enabled and ScalerClass is not None:
+        if args.odeint == 'rampde' and dynamic_scaler_enabled and ScalerClass is not None:
             S2 = ScalerClass(precision)
-        elif args.odeint == 'torchmpnode' and args.precision == 'float16' and not dynamic_scaler_enabled:
+        elif args.odeint == 'rampde' and args.precision == 'float16' and not dynamic_scaler_enabled:
             # Explicitly disable internal scaler when using external GradScaler
             S2 = False
         else:
@@ -214,9 +214,9 @@ class MPNODE_STL10(nn.Module):
         self.avg2 = nn.AvgPool2d(2, stride=2)
         self.norm4 = nn.InstanceNorm2d(4*ch, affine=True)
         
-        if args.odeint == 'torchmpnode' and dynamic_scaler_enabled and ScalerClass is not None:
+        if args.odeint == 'rampde' and dynamic_scaler_enabled and ScalerClass is not None:
             S3 = ScalerClass(precision)
-        elif args.odeint == 'torchmpnode' and args.precision == 'float16' and not dynamic_scaler_enabled:
+        elif args.odeint == 'rampde' and args.precision == 'float16' and not dynamic_scaler_enabled:
             # Explicitly disable internal scaler when using external GradScaler
             S3 = False
         else:

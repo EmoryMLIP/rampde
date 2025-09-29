@@ -175,7 +175,7 @@ class ResNN(nn.Module):
         self.combined_act = combined_tanh_antideriv  # JIT optimized combined function
         self.h = 1.0 / (self.nTh-1) # step size for the ResNet
 
-    @custom_fwd(device_type='cuda')
+    @custom_fwd(cast_inputs=torch.float16)
     def forward(self, x):
         """
             Forward pass of the ResNet with mixed precision optimization
@@ -214,7 +214,7 @@ class Phi(nn.Module):
         if self.c.bias is not None:
             self.c.bias.data   = torch.zeros(self.c.bias.data.shape)
 
-    @custom_fwd(device_type='cuda')
+    @custom_fwd(cast_inputs=torch.float16)
     def forward(self, x):
         """ calculating Phi(s, theta) with mixed precision optimization """
 
@@ -228,7 +228,7 @@ class Phi(nn.Module):
         
         return self.w(self.N(x)) + quadratic_term + self.c(x)
 
-    @custom_fwd(device_type='cuda')
+    @custom_fwd(cast_inputs=torch.float16)
     def trHess(self, x, justGrad=False, print_prec=False):
         """
         Transpose-free mixed precision optimized computation of gradient and trace(Hessian)

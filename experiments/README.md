@@ -1,6 +1,6 @@
-# torchmpnode Experiments
+# rampde Experiments
 
-This directory contains experiments for evaluating **torchmpnode**, a high-performance mixed-precision library for Neural Ordinary Differential Equations (ODEs). The experiments compare performance across different precisions, ODE solvers, and datasets.
+This directory contains experiments for evaluating **rampde**, a high-performance mixed-precision library for Neural Ordinary Differential Equations (ODEs). The experiments compare performance across different precisions, ODE solvers, and datasets.
 
 ## Overview
 
@@ -61,7 +61,7 @@ results/{experiment_type}/{folder_name}/
 {dataset}_{precision}_{scaler}_{odeint}_{method}_seed{N}_{timestamp}
 ```
 
-Example: `mnist_float16_grad_torchmpnode_rk4_seed42_20250121_143022`
+Example: `mnist_float16_grad_rampde_rk4_seed42_20250121_143022`
 
 ## Running Experiments
 
@@ -70,25 +70,25 @@ Example: `mnist_float16_grad_torchmpnode_rk4_seed42_20250121_143022`
 #### MNIST Neural ODE Classification
 ```bash
 cd experiments/mnist
-python ode_mnist.py --precision float16 --odeint torchmpnode --method rk4 --seed 42 --nepochs 10
+python ode_mnist.py --precision float16 --odeint rampde --method rk4 --seed 42 --nepochs 10
 ```
 
 #### STL-10 Image Classification
 ```bash
 cd experiments/stl10
-python ode_stl10.py --precision bfloat16 --odeint torchmpnode --method rk4 --seed 42 --nepochs 5
+python ode_stl10.py --precision bfloat16 --odeint rampde --method rk4 --seed 42 --nepochs 5
 ```
 
 #### 2D Continuous Normalizing Flows
 ```bash
 cd experiments/cnf
-python cnf.py --data swissroll --precision float32 --odeint torchmpnode --niters 1000
+python cnf.py --data swissroll --precision float32 --odeint rampde --niters 1000
 ```
 
 #### Large-scale Optimal Transport
 ```bash
 cd experiments/otflowlarge
-python otflowlarge.py --data bsds300 --precision float16 --odeint torchmpnode --niters 5000
+python otflowlarge.py --data bsds300 --precision float16 --odeint rampde --niters 5000
 ```
 
 ### Batch Experiments with SLURM
@@ -102,7 +102,7 @@ chmod +x run_stl10.sh
 
 This runs comparisons across:
 - **Precisions**: float32, tfloat32, bfloat16, float16
-- **Integrators**: torchdiffeq, torchmpnode
+- **Integrators**: torchdiffeq, rampde
 - **Scaling strategies**: GradScaler, DynamicScaler, no scaling
 
 ## Analysis Tools
@@ -266,10 +266,10 @@ When adding new experiments:
 If you use this experiment framework in your research, please cite:
 
 ```bibtex
-@software{torchmpnode_experiments,
-  title={torchmpnode Experiment Management System},
+@software{rampde_experiments,
+  title={rampde Experiment Management System},
   author={Your Name},
   year={2025},
-  url={https://github.com/your-org/torchmpnode}
+  url={https://github.com/your-org/rampde}
 }
 ```

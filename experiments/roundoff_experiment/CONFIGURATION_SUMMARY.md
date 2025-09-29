@@ -8,26 +8,26 @@ The experiments now test the following configurations as requested:
 
 ### BFloat16 Configurations (no scaling needed)
 1. **torchdiffeq + bf16**: Standard torchdiffeq with bfloat16 precision
-2. **torchmpnode + bf16**: torchmpnode with bfloat16 precision
+2. **rampde + bf16**: rampde with bfloat16 precision
 
 ### Float16 Configurations (with various scaling strategies)
 3. **torchdiffeq + fp16 + no_scaling**: torchdiffeq with fp16, no gradient scaling
 4. **torchdiffeq + fp16 + grad_scaling**: torchdiffeq with fp16 using PyTorch's GradScaler (repeats grad computation until loss scale is found)
-5. **torchmpnode + fp16 + no_scaling**: torchmpnode with fp16, explicitly disabled scaling (loss_scaler=False)
-6. **torchmpnode + fp16 + grad_scaling**: torchmpnode with fp16 using default gradient scaling (loss_scaler=None)
-7. **torchmpnode + fp16 + dynamic_scaling**: torchmpnode with fp16 using explicit DynamicScaler
+5. **rampde + fp16 + no_scaling**: rampde with fp16, explicitly disabled scaling (loss_scaler=False)
+6. **rampde + fp16 + grad_scaling**: rampde with fp16 using default gradient scaling (loss_scaler=None)
+7. **rampde + fp16 + dynamic_scaling**: rampde with fp16 using explicit DynamicScaler
 
 ## Implementation Details
 
 ### Scaling Parameter Mapping
 - `scaler_type = None`: Used for bf16 (no scaling needed)
 - `scaler_type = 'none'`: Explicitly disables scaling for fp16
-- `scaler_type = 'grad'`: Gradient scaling (PyTorch GradScaler for torchdiffeq, default for torchmpnode)
-- `scaler_type = 'dynamic'`: Dynamic scaling (torchmpnode only)
+- `scaler_type = 'grad'`: Gradient scaling (PyTorch GradScaler for torchdiffeq, default for rampde)
+- `scaler_type = 'dynamic'`: Dynamic scaling (rampde only)
 
 ### Key Changes
 1. **Proper bf16 handling**: BF16 configurations now correctly run without any scaling
-2. **Explicit fp16 no-scaling**: Using `loss_scaler=False` for torchmpnode to disable scaling
+2. **Explicit fp16 no-scaling**: Using `loss_scaler=False` for rampde to disable scaling
 3. **GradScaler for torchdiffeq**: Proper implementation of PyTorch's GradScaler for fp16 gradient scaling
 4. **Configuration filtering**: Invalid combinations (e.g., bf16 with scaling) are automatically skipped
 

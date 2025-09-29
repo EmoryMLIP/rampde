@@ -46,7 +46,7 @@ SIGN      = 1.0 if args.sign == "pos" else -1.0
 SIGN_TAG  = args.sign        # 'pos' or 'neg' – used in output file names
 
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
-from torchmpnode import odeint as mpodeint
+from rampde import odeint as mpodeint
 
 # --- configuration in the Taylor expansion of the ODE function---
 # Choose between 'input' and 'weights'

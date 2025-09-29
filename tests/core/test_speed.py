@@ -1,6 +1,6 @@
 #!/usr/bin/env python
 """
-Performance test for torchmpnode package, suitable for CI pipelines.
+Performance test for rampde package, suitable for CI pipelines.
 
 This test verifies that:
 1. FP16 computation is faster than FP32 for representative problem sizes
@@ -23,13 +23,13 @@ import numpy as np
 
 # Add parent directory to path
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
-from torchmpnode import odeint
+from rampde import odeint
 
 # Control test output verbosity
 QUIET = os.environ.get('TORCHMPNODE_TEST_QUIET', '0') == '1'
 
 class SpeedTest(unittest.TestCase):
-    """Test case for performance benchmarking of torchmpnode."""
+    """Test case for performance benchmarking of rampde."""
     
     @classmethod
     def setUpClass(cls):

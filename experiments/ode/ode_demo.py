@@ -16,7 +16,7 @@ from torch.amp import autocast
 import sys
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '../..')))
 import torchdiffeq
-import torchmpnode
+import rampde
 
 base_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), '../..'))
 sys.path.insert(0, os.path.join(base_dir, "examples"))
@@ -35,7 +35,7 @@ parser.add_argument('--gpu',           type=int, default=0)
 parser.add_argument('--adjoint',       action='store_true')
 parser.add_argument('--method',        type=str, choices=['rk4','dopri5','euler'], default='rk4')
 parser.add_argument('--precision',     type=str, choices=['float32','float16','bfloat16'], default='float16')
-parser.add_argument('--odeint',        type=str, choices=['torchdiffeq','torchmpnode'], default='torchdiffeq')
+parser.add_argument('--odeint',        type=str, choices=['torchdiffeq','rampde'], default='torchdiffeq')
 parser.add_argument('--results_dir',   type=str, default='./results/png_rmsproptest')
 parser.add_argument('--scaler',        type=str, choices=['noscaler','dynamicscaler'], default='dynamicscaler')
 parser.add_argument('--hidden_dim',    type=int, default=128)
@@ -136,11 +136,11 @@ def compute_relative_vf_error(model, sample_y):
 
 
 def visualize_compare(true_y, func_d, itr, result_dir, odeintfn):
-    # if odeintfn == 'torchmpnode':
-    #     print("Using torchmpnode - viz")
+    # if odeintfn == 'rampde':
+    #     print("Using rampde - viz")
     #     import sys
     #     sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '../..')))
-    #     from torchmpnode import odeint
+    #     from rampde import odeint
     # else:
     #     print("Using torchdiffeq - viz")
     #     if args.adjoint:
@@ -149,15 +149,15 @@ def visualize_compare(true_y, func_d, itr, result_dir, odeintfn):
     #         from torchdiffeq import odeint
 
     with torch.no_grad():
-        if odeintfn == 'torchmpnode':
-            from torchmpnode import NoScaler, DynamicScaler
+        if odeintfn == 'rampde':
+            from rampde import NoScaler, DynamicScaler
             scaler_map = {
                 'noscaler': NoScaler(dtype_low=args.precision),
                 'dynamicscaler': DynamicScaler(dtype_low=args.precision)
             }
             scaler = scaler_map[args.scaler]
             solver_kwargs = {'loss_scaler': scaler}
-            pred_d = torchmpnode.odeint(func_d, true_y0, t, method=args.method, **solver_kwargs)
+            pred_d = rampde.odeint(func_d, true_y0, t, method=args.method, **solver_kwargs)
         else:
             pred_d = torchdiffeq.odeint(func_d, true_y0, t, method=args.method)
 
@@ -217,11 +217,11 @@ if ckpts:
     optimizer.load_state_dict(cp['optimizer_state_dict'])
     print(f"Loaded checkpoint {latest_ckpt}")
 else:
-    # if args.odeint == 'torchmpnode':
-    #     print("Using torchmpnode")
+    # if args.odeint == 'rampde':
+    #     print("Using rampde")
     #     import sys
     #     sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '../..')))
-    #     from torchmpnode import odeint
+    #     from rampde import odeint
     # else:
     #     print("Using torchdiffeq")
     #     if args.adjoint:
@@ -255,8 +255,8 @@ else:
         torch.cuda.reset_peak_memory_stats(device)
 
         with autocast(device_type='cuda', dtype=args.precision):
-            if args.odeint == 'torchmpnode':
-                from torchmpnode import NoScaler, DynamicScaler
+            if args.odeint == 'rampde':
+                from rampde import NoScaler, DynamicScaler
                 scaler_map = {
                     'noscaler': NoScaler(dtype_low=args.precision),
                     'dynamicscaler': DynamicScaler(dtype_low=args.precision)
@@ -267,7 +267,7 @@ else:
                 start_fwd = torch.cuda.Event(enable_timing=True)
                 end_fwd   = torch.cuda.Event(enable_timing=True)
                 start_fwd.record()
-                pred = torchmpnode.odeint(func, y0, bt, method=args.method, **solver_kwargs)
+                pred = rampde.odeint(func, y0, bt, method=args.method, **solver_kwargs)
                 
             else:
 
@@ -304,8 +304,8 @@ else:
         if itr % args.test_freq == 0:
             with torch.no_grad(), autocast(device_type='cuda', dtype=args.precision):
                 
-                if args.odeint == 'torchmpnode':
-                    pred_val = torchmpnode.odeint(func, true_y0, t, method=args.method, **solver_kwargs)
+                if args.odeint == 'rampde':
+                    pred_val = rampde.odeint(func, true_y0, t, method=args.method, **solver_kwargs)
                 else:
                     pred_val = torchdiffeq.odeint(func, true_y0, t, method=args.method)
 

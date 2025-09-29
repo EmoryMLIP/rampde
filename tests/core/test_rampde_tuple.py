@@ -3,7 +3,7 @@ import torch
 
 import os, sys
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
-from torchmpnode import odeint as mpodeint
+from rampde import odeint as mpodeint
 
 # Try to import torchdiffeq, skip tests if not available
 try:
@@ -80,13 +80,13 @@ class TestODEintEquivalence(unittest.TestCase):
 
         # Compare
         self.assertTrue(torch.allclose(my_solution, torch_solution, rtol=1e-4, atol=1e6),
-                        "The solutions from torchmpnode and torchdiffeq differ more than expected.")
+                        "The solutions from rampde and torchdiffeq differ more than expected.")
                 
         if not quiet:
             print(torch.norm((grad - my_grad)).item())
             print(torch.norm((grad - my_grad)/torch.norm(grad)).item())
         self.assertTrue(torch.allclose(grad, my_grad, rtol=1e-5, atol=1e-5),
-                        "The gradients from torchmpnode and torchdiffeq differ more than expected.")
+                        "The gradients from rampde and torchdiffeq differ more than expected.")
         
 
         

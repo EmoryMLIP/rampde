@@ -4,16 +4,16 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project Overview
 
-torchmpnode is a PyTorch-compatible library for high-performance, mixed-precision solvers for Neural Ordinary Differential Equations (ODEs). It provides seamless integration with PyTorch's autocast and torchdiffeq package, supporting both forward and backward computations with customizable precision.
+rampde is a PyTorch-compatible library for high-performance, mixed-precision solvers for Neural Ordinary Differential Equations (ODEs). It provides seamless integration with PyTorch's autocast and torchdiffeq package, supporting both forward and backward computations with customizable precision.
 
 ## Core Architecture
 
 ### Main Components
 
-- **torchmpnode/odeint.py**: Main entry point providing the `odeint` function with API compatibility to torchdiffeq
-- **torchmpnode/fixed_grid.py**: Core solver implementations (Euler, RK4, FixedGridODESolver)
-- **torchmpnode/loss_scalers.py**: Mixed precision scaling components (DynamicScaler)
-- **torchmpnode/fixed_grid_fast.py**: Optimized fixed grid solver implementation
+- **rampde/odeint.py**: Main entry point providing the `odeint` function with API compatibility to torchdiffeq
+- **rampde/fixed_grid.py**: Core solver implementations (Euler, RK4, FixedGridODESolver)
+- **rampde/loss_scalers.py**: Mixed precision scaling components (DynamicScaler)
+- **rampde/fixed_grid_fast.py**: Optimized fixed grid solver implementation
 
 ### Key Features
 
@@ -45,7 +45,7 @@ pip install -e .
 Once published to PyPI, the package can be installed via:
 
 ```bash
-pip install torchmpnode
+pip install rampde
 ```
 
 ### Optional Dependencies
@@ -54,13 +54,13 @@ The package now makes torchdiffeq an optional dependency. Install with optional 
 
 ```bash
 # For benchmarking and comparison with torchdiffeq
-pip install torchmpnode[benchmarks]
+pip install rampde[benchmarks]
 
 # For testing (includes torchdiffeq for comparison tests)
-pip install torchmpnode[testing]
+pip install rampde[testing]
 
 # For development (includes all dependencies)
-pip install torchmpnode[dev]
+pip install rampde[dev]
 ```
 
 ## Development Commands
@@ -78,10 +78,10 @@ python tests/run_all_tests.py
 python tests/run_all_tests.py --include-performance
 
 # Run specific core test file
-python tests/core/test_torchmpnode.py
+python tests/core/test_rampde.py
 
 # Run tests with verbose output (remove TORCHMPNODE_TEST_QUIET env var)
-TORCHMPNODE_TEST_QUIET=0 python tests/core/test_torchmpnode.py
+TORCHMPNODE_TEST_QUIET=0 python tests/core/test_rampde.py
 
 # Run gradient quality tests
 python tests/core/test_backward.py
@@ -164,19 +164,19 @@ class ODEFunc(nn.Module):
         return self.net(y)  # or any function of t and y
 ```
 
-### Using torchmpnode
+### Using rampde
 
 Replace torchdiffeq imports:
 ```python
 # from torchdiffeq import odeint
-from torchmpnode import odeint
+from rampde import odeint
 ```
 
 The API is identical, with additional mixed precision support via autocast.
 
 ### Mixed Precision Usage
 
-torchmpnode automatically detects autocast context and applies appropriate precision:
+rampde automatically detects autocast context and applies appropriate precision:
 
 ```python
 with torch.autocast(device_type='cuda'):
@@ -188,8 +188,8 @@ with torch.autocast(device_type='cuda'):
 The test suite is organized into logical sections:
 
 ### Core Library Tests (`tests/core/`)
-- **test_torchmpnode.py**: Numerical accuracy comparison with torchdiffeq
-- **test_torchmpnode_tuple.py**: Tuple-valued ODE compatibility tests
+- **test_rampde.py**: Numerical accuracy comparison with torchdiffeq
+- **test_rampde_tuple.py**: Tuple-valued ODE compatibility tests
 - **test_backward.py**: Gradient quality tests using Taylor expansion
 - **test_odeint.py**: Integration tests for the main odeint function
 - **test_adjoint_scaling.py**: Mixed precision scaling validation
@@ -205,7 +205,7 @@ The test suite is organized into logical sections:
 ### Experiment-Specific Tests (`experiments/[experiment]/tests/`)
 - **experiments/stl10/tests/**: STL10 experiment tests that depend on local experiment code
 
-Tests compare solutions and gradients between torchmpnode and torchdiffeq under identical conditions (float32) to ensure numerical consistency.
+Tests compare solutions and gradients between rampde and torchdiffeq under identical conditions (float32) to ensure numerical consistency.
 
 ## Dependencies
 
@@ -214,9 +214,9 @@ Tests compare solutions and gradients between torchmpnode and torchdiffeq under 
 - numpy
 
 ### Optional Dependencies
-- torchdiffeq (for comparison testing and benchmarking - install via `pip install torchmpnode[testing]` or `pip install torchmpnode[benchmarks]`)
-- matplotlib (for visualization examples - install via `pip install torchmpnode[examples]`)
-- pytest, pytest-cov (for testing - install via `pip install torchmpnode[testing]`)
+- torchdiffeq (for comparison testing and benchmarking - install via `pip install rampde[testing]` or `pip install rampde[benchmarks]`)
+- matplotlib (for visualization examples - install via `pip install rampde[examples]`)
+- pytest, pytest-cov (for testing - install via `pip install rampde[testing]`)
 
 Additional experiment dependencies are in `experiments/otflowlarge/requirements.txt`.
 

@@ -12,7 +12,7 @@
 # SLURM job template for single OTFlow roundoff configuration
 # Environment variables expected:
 # - PRECISION: float16 or bfloat16
-# - ODEINT_TYPE: torchmpnode or torchdiffeq  
+# - ODEINT_TYPE: rampde or torchdiffeq  
 # - SCALER_TYPE: none, grad, dynamic, or empty string for None
 # - METHOD: euler or rk4
 # - N_TIMESTEPS: 8, 16, 32, 64, 128, or 256
@@ -38,7 +38,7 @@ echo "  N_TIMESTEPS: ${N_TIMESTEPS}"
 echo "  SEED: ${SEED:-42}"
 
 # Navigate to experiment directory
-cd /local/scratch/lruthot/code/torchmpnode/experiments/roundoff_experiment
+cd /local/scratch/lruthot/code/rampde/experiments/roundoff_experiment
 
 # Create logs directory if it doesn't exist
 mkdir -p logs

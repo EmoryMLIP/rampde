@@ -1,7 +1,7 @@
 """
 Test dtype preservation without autocast.
 
-This test verifies that torchmpnode correctly preserves data types (float32, float64, bfloat16)
+This test verifies that rampde correctly preserves data types (float32, float64, bfloat16)
 throughout ODE computations when autocast is not used. It ensures that all intermediates
 maintain the expected precision.
 """
@@ -9,7 +9,7 @@ maintain the expected precision.
 import unittest
 import torch
 import torch.nn as nn
-from torchmpnode import odeint
+from rampde import odeint
 
 
 class SimpleDtypeCheckingODE(nn.Module):
@@ -117,7 +117,7 @@ class TestDtypePreservation(unittest.TestCase):
         if not torch.cuda.is_available():
             self.skipTest("CUDA not available")
             
-        from torchmpnode.loss_scalers import DynamicScaler
+        from rampde.loss_scalers import DynamicScaler
         
         # Create ODE with float16
         func = SimpleDtypeCheckingODE(dim=10, target_dtype=torch.float16).cuda()
@@ -178,11 +178,11 @@ class TestDtypePreservation(unittest.TestCase):
         if not torch.cuda.is_available():
             self.skipTest("CUDA not available")
             
-        from torchmpnode.odeint import _select_ode_solver
-        from torchmpnode.loss_scalers import DynamicScaler
-        from torchmpnode.fixed_grid_unscaled import FixedGridODESolverUnscaled
-        from torchmpnode.fixed_grid_dynamic import FixedGridODESolverDynamic
-        from torchmpnode.fixed_grid_unscaled_safe import FixedGridODESolverUnscaledSafe
+        from rampde.odeint import _select_ode_solver
+        from rampde.loss_scalers import DynamicScaler
+        from rampde.fixed_grid_unscaled import FixedGridODESolverUnscaled
+        from rampde.fixed_grid_dynamic import FixedGridODESolverDynamic
+        from rampde.fixed_grid_unscaled_safe import FixedGridODESolverUnscaledSafe
         
         # Test float64 - should use unscaled
         solver, _ = _select_ode_solver(None, torch.float64)

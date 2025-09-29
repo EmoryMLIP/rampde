@@ -40,7 +40,7 @@ echo "Test 1: Comprehensive precision and scaling comparison"
 
 # float32 tests (no scaling needed)
 for dataset in "${datasets[@]}"; do
-  for odeint in "torchdiffeq" "torchmpnode"; do
+  for odeint in "torchdiffeq" "rampde"; do
     fixed_args=(
       --precision "float32"
       --data "$dataset"
@@ -89,54 +89,54 @@ for dataset in "${datasets[@]}"; do
   echo "Submitting: torchdiffeq float16 with-grad-scaler - $dataset"
   sbatch --account=mathg3 job_otflowlarge.sbatch "${fixed_args[@]}" $extra_args
   
-  # torchmpnode float16 + no scaling
+  # rampde float16 + no scaling
   fixed_args=(
     --precision "float16"
     --data "$dataset"
     --method "rk4"
-    --odeint "torchmpnode"
+    --odeint "rampde"
     --seed "$seed"
     --results_dir "$results_dir"
     --no_grad_scaler
     --no_dynamic_scaler
   )
   extra_args=${test_dataset_args[$dataset]}
-  echo "Submitting: torchmpnode float16 no-scaling - $dataset"
+  echo "Submitting: rampde float16 no-scaling - $dataset"
   sbatch --account=mathg3 job_otflowlarge.sbatch "${fixed_args[@]}" $extra_args
   
-  # torchmpnode float16 + dynamic scaler only
+  # rampde float16 + dynamic scaler only
   fixed_args=(
     --precision "float16"
     --data "$dataset"
     --method "rk4"
-    --odeint "torchmpnode"
+    --odeint "rampde"
     --seed "$seed"
     --results_dir "$results_dir"
     --no_grad_scaler
   )
   extra_args=${test_dataset_args[$dataset]}
-  echo "Submitting: torchmpnode float16 with-dynamic-scaler - $dataset"
+  echo "Submitting: rampde float16 with-dynamic-scaler - $dataset"
   sbatch --account=mathg3 job_otflowlarge.sbatch "${fixed_args[@]}" $extra_args
   
-  # torchmpnode float16 + grad scaler only
+  # rampde float16 + grad scaler only
   fixed_args=(
     --precision "float16"
     --data "$dataset"
     --method "rk4"
-    --odeint "torchmpnode"
+    --odeint "rampde"
     --seed "$seed"
     --results_dir "$results_dir"
     --no_dynamic_scaler
   )
   extra_args=${test_dataset_args[$dataset]}
-  echo "Submitting: torchmpnode float16 with-grad-scaler - $dataset"
+  echo "Submitting: rampde float16 with-grad-scaler - $dataset"
   sbatch --account=mathg3 job_otflowlarge.sbatch "${fixed_args[@]}" $extra_args
 done
 
 # tfloat32 tests (no scaling needed)
 echo "tfloat32 tests:"
 for dataset in "${datasets[@]}"; do
-  for odeint in "torchdiffeq" "torchmpnode"; do
+  for odeint in "torchdiffeq" "rampde"; do
     fixed_args=(
       --precision "tfloat32"
       --data "$dataset"
@@ -156,7 +156,7 @@ done
 # bfloat16 tests (no scaling needed - bfloat16 has better numerical stability)
 echo "bfloat16 tests:"
 for dataset in "${datasets[@]}"; do
-  for odeint in "torchdiffeq" "torchmpnode"; do
+  for odeint in "torchdiffeq" "rampde"; do
     fixed_args=(
       --precision "bfloat16"
       --data "$dataset"

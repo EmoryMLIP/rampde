@@ -38,7 +38,7 @@ def create_parser():
                         choices=['tfloat32', 'float32', 'float16', 'bfloat16'],
                         help='Precision used during training')
     parser.add_argument('--odeint', type=str, required=True,
-                        choices=['torchdiffeq', 'torchmpnode'],
+                        choices=['torchdiffeq', 'rampde'],
                         help='ODE solver used during training')
     parser.add_argument('--method', type=str, required=True,
                         choices=['rk4', 'euler'],
@@ -91,10 +91,10 @@ def setup_precision(precision_str):
 
 def setup_environment(args):
     """Setup the environment and imports based on args."""
-    if args.odeint == 'torchmpnode':
-        print("Using torchmpnode for evaluation")
-        from torchmpnode import odeint
-        from torchmpnode.loss_scalers import DynamicScaler, NoScaler
+    if args.odeint == 'rampde':
+        print("Using rampde for evaluation")
+        from rampde import odeint
+        from rampde.loss_scalers import DynamicScaler, NoScaler
         
         # Determine appropriate scaler
         if args.precision == 'float16' and args.dynamic_scaler:
@@ -222,7 +222,7 @@ def evaluate_model(args):
     
     # Setup loss scaler if needed
     loss_scaler = None
-    if args.odeint == 'torchmpnode' and ScalerClass is not None:
+    if args.odeint == 'rampde' and ScalerClass is not None:
         loss_scaler = ScalerClass(precision)
     
     # Create covariance matrix and distribution

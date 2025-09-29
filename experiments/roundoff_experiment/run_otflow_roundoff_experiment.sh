@@ -10,7 +10,7 @@ echo "=============================================="
 
 # Configuration parameters
 PRECISIONS=("float16" "bfloat16")
-ODEINT_TYPES=("torchmpnode" "torchdiffeq")
+ODEINT_TYPES=("rampde" "torchdiffeq")
 METHODS=("euler" "rk4")
 N_TIMESTEPS=(8 16 32 64 128 256)
 SEED=42
@@ -84,8 +84,8 @@ get_scaler_types() {
         # bfloat16 doesn't need scaling
         echo "None"
     elif [ "$precision" == "float16" ]; then
-        if [ "$odeint_type" == "torchmpnode" ]; then
-            # torchmpnode supports all scaling types
+        if [ "$odeint_type" == "rampde" ]; then
+            # rampde supports all scaling types
             echo "none grad dynamic"
         elif [ "$odeint_type" == "torchdiffeq" ]; then
             # torchdiffeq only supports none and grad

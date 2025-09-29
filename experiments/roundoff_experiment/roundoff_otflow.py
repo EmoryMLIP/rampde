@@ -207,7 +207,7 @@ def parse_arguments():
                        help='Precision to use')
     
     parser.add_argument('--odeint_type', type=str, required=True,
-                       choices=['torchmpnode', 'torchdiffeq'],
+                       choices=['rampde', 'torchdiffeq'],
                        help='ODE solver type')
     
     parser.add_argument('--scaler_type', type=str, default=None,
@@ -244,8 +244,8 @@ def validate_configuration(args):
         if args.precision == 'bfloat16':
             args.scaler_type = None  # bfloat16 doesn't need scaling
         elif args.precision == 'float16':
-            if args.odeint_type == 'torchmpnode':
-                args.scaler_type = 'dynamic'  # default for torchmpnode
+            if args.odeint_type == 'rampde':
+                args.scaler_type = 'dynamic'  # default for rampde
             else:
                 args.scaler_type = 'grad'  # default for torchdiffeq
     
@@ -308,7 +308,7 @@ def main():
     func = OTFlow(in_out_dim=d, hidden_dim=1024, alpha=alpha, Phi_class=Phi).to(device)
     
     # Load trained weights
-    checkpoint_path = '/local/scratch/lruthot/code/torchmpnode/experiments/results_paper/otflowlarge/bsds300_float32_torchmpnode_rk4_alpha_1.0,2000.0,800.0_lr_0.001_niters_10000_batch_size_512_hidden_dim_1024_nt_16_seed42_20250725_165512/ckpt_final.pth'
+    checkpoint_path = '/local/scratch/lruthot/code/rampde/experiments/results_paper/otflowlarge/bsds300_float32_rampde_rk4_alpha_1.0,2000.0,800.0_lr_0.001_niters_10000_batch_size_512_hidden_dim_1024_nt_16_seed42_20250725_165512/ckpt_final.pth'
     checkpoint = torch.load(checkpoint_path, map_location=device)
     func.load_state_dict(checkpoint['model_state_dict'])
     print(f"🏋️  Loaded trained weights from checkpoint at iteration {checkpoint['iteration']}")

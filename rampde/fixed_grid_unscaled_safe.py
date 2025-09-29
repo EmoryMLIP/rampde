@@ -41,7 +41,7 @@ class FixedGridODESolverUnscaledSafe(FixedGridODESolverBase):
     """
 
     @staticmethod
-    @custom_bwd(device_type='cuda')
+    @custom_bwd
     def backward(ctx: Any, at: torch.Tensor) -> Tuple[Optional[torch.Tensor], ...]:
         """
         Unscaled safe backward pass with exception handling.

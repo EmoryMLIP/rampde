@@ -29,7 +29,7 @@ parser.add_argument('--adjoint', action='store_true')
 # new arguments
 parser.add_argument('--method', type=str, choices=['rk4', 'dopri5', 'euler'], default='rk4')
 parser.add_argument('--precision', type=str, choices=['float32', 'float16', 'bfloat16'], default='float16')
-parser.add_argument('--odeint', type=str, choices=['torchdiffeq', 'torchmpnode'], default='torchmpnode')
+parser.add_argument('--odeint', type=str, choices=['torchdiffeq', 'rampde'], default='rampde')
 parser.add_argument('--seed', type=int, default=None, help="Random seed; if not provided, no seeding will occur")
 args = parser.parse_args()
 
@@ -95,12 +95,12 @@ print("Running on device:", device)
 # ------------------------------
 from torchdiffeq import odeint as odeint_fwd
 
-if args.odeint == 'torchmpnode':
-    print("Using torchmpnode")
+if args.odeint == 'rampde':
+    print("Using rampde")
     import sys
     import os
     sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
-    from torchmpnode import odeint
+    from rampde import odeint
 else:
     print("Using torchdiffeq")
     if args.adjoint:

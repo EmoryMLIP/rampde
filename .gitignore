@@ -213,7 +213,7 @@ experiments/mnist/*.txt
 experiments/otflow/slurm_logs/*
 experiments/otflow/*.txt
 .data/stl10/stl10_binary.tar.gz
-experiments/results/otflowlarge/float32_torchmpnode_rk4_seed42_20250713_135143/model_iter_4000.pt
+experiments/results/otflowlarge/float32_rampde_rk4_seed42_20250713_135143/model_iter_4000.pt
 experiments/stl10/.data/mnist/MNIST/raw/train-labels-idx1-ubyte
 experiments/otflowlarge/data/data/cifar10/data_batch_1
 experiments/otflowlarge/data/data/cifar10/data_batch_2

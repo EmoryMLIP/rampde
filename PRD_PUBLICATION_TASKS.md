@@ -1,7 +1,7 @@
 # RAMPDE Publication Readiness - Product Requirements Document
 
 ## Project Overview
-**Goal**: Complete the publication preparation of RAMPDE (formerly torchmpnode), a mixed-precision Neural ODE solver library for PyTorch, alongside academic paper submission.
+**Goal**: Complete the publication preparation of RAMPDE (formerly rampde), a mixed-precision Neural ODE solver library for PyTorch, alongside academic paper submission.
 
 **Current Status**: Repository has been cleaned up and cloned to new private GitHub repository. Ready for systematic package renaming and publication preparation.
 
@@ -31,7 +31,7 @@
 **Priority**: HIGH | **Estimated Effort**: 4-6 hours
 
 #### 3.1 Core Package Rename
-- [ ] Rename directory: `torchmpnode/` → `rampde/`
+- [ ] Rename directory: `rampde/` → `rampde/`
 - [ ] Update `__init__.py` imports and package references
 - [ ] Update internal cross-references between modules
 
@@ -43,20 +43,20 @@
 #### 3.3 Import Statement Updates (~2000+ files)
 **Files requiring systematic updates:**
 - All Python files in `examples/`, `tests/`, `demos/`, `experiments/`
-- Change `from torchmpnode import` → `from rampde import`
-- Change `import torchmpnode` → `import rampde`
+- Change `from rampde import` → `from rampde import`
+- Change `import rampde` → `import rampde`
 - Update internal package references
 
 #### 3.4 Documentation Updates
 - [ ] **README.md**: All package name references and URLs
 - [ ] **CLAUDE.md**: Project documentation
 - [ ] Docstrings in all Python modules
-- [ ] Code comments mentioning torchmpnode
+- [ ] Code comments mentioning rampde
 
 #### 3.5 Test and File Renaming
-- [ ] `tests/core/test_torchmpnode.py` → `tests/core/test_rampde.py`
-- [ ] `tests/core/test_torchmpnode_tuple.py` → `tests/core/test_rampde_tuple.py`
-- [ ] `experiments/roundoff_experiment/plot_torchmpnode_dynamic.py` → `plot_rampde_dynamic.py`
+- [ ] `tests/core/test_rampde.py` → `tests/core/test_rampde.py`
+- [ ] `tests/core/test_rampde_tuple.py` → `tests/core/test_rampde_tuple.py`
+- [ ] `experiments/roundoff_experiment/plot_rampde_dynamic.py` → `plot_rampde_dynamic.py`
 - [ ] Update all references to renamed files
 
 #### 3.6 Metadata and URLs
@@ -99,17 +99,17 @@
 ### File Search Strategy
 The renaming operation affects ~2000+ files. Use systematic approach:
 ```bash
-# Find all files with torchmpnode references
-find . -type f \( -name "*.py" -o -name "*.md" -o -name "*.toml" -o -name "*.txt" -o -name "*.sh" \) -exec grep -l "torchmpnode" {} \;
+# Find all files with rampde references
+find . -type f \( -name "*.py" -o -name "*.md" -o -name "*.toml" -o -name "*.txt" -o -name "*.sh" \) -exec grep -l "rampde" {} \;
 
 # Count total references
-find . -type f -name "*.py" -exec grep -c "torchmpnode" {} + | awk -F: '{sum += $2} END {print sum}'
+find . -type f -name "*.py" -exec grep -c "rampde" {} + | awk -F: '{sum += $2} END {print sum}'
 ```
 
 ### Testing Priorities
 1. **Core Package Import**: `import rampde` must work
 2. **API Compatibility**: All public APIs unchanged
-3. **Numerical Accuracy**: Results match torchmpnode exactly
+3. **Numerical Accuracy**: Results match rampde exactly
 4. **Performance**: No regression in benchmark performance
 5. **Dependencies**: Optional dependencies handled gracefully
 
@@ -124,7 +124,7 @@ find . -type f -name "*.py" -exec grep -c "torchmpnode" {} + | awk -F: '{sum += 
 - **SLURM Scripts**: Experiment scripts must reference correct package
 
 ### Rollback Strategy
-- Original repository preserved at `/local/scratch/lruthot/code/torchmpnode/`
+- Original repository preserved at `/local/scratch/lruthot/code/rampde/`
 - Git history maintained until final publication
 - Can revert to any commit during development
 
@@ -140,7 +140,7 @@ find . -type f -name "*.py" -exec grep -c "torchmpnode" {} + | awk -F: '{sum += 
 ### Technical Milestones
 - [ ] Package installs and imports successfully as `rampde`
 - [ ] All tests pass with new package name
-- [ ] Numerical results identical to original torchmpnode
+- [ ] Numerical results identical to original rampde
 - [ ] Performance benchmarks show no regression
 - [ ] All experiment scripts execute without errors
 
@@ -154,9 +154,9 @@ find . -type f -name "*.py" -exec grep -c "torchmpnode" {} + | awk -F: '{sum += 
 ---
 
 ## Contact and Handoff Information
-- **Original Package**: torchmpnode (Mixed precision Neural ODE solvers)
+- **Original Package**: rampde (Mixed precision Neural ODE solvers)
 - **Target Package**: rampde (R-A-M-P-D-E)
 - **Paper Context**: Academic publication requiring reproducible code
 - **Timeline**: End of week for public release
 
-This PRD provides complete specifications for converting torchmpnode to rampde while maintaining all functionality and preparing for academic publication.
+This PRD provides complete specifications for converting rampde to rampde while maintaining all functionality and preparing for academic publication.

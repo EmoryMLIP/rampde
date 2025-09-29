@@ -30,15 +30,15 @@ def plot_experiments(filenames, column_name, legends, line_styles, markers):
 if __name__ == "__main__":
     # Dummy CSV filenames.
     filenames = [
-        "results/otflow/float32_torchmpnode_rk4_seed24_20250304_102614/float32_torchmpnode_rk4_seed24_20250304_102614.csv",
+        "results/otflow/float32_rampde_rk4_seed24_20250304_102614/float32_rampde_rk4_seed24_20250304_102614.csv",
         # "results/otflow/float32_torchdiffeq_rk4_seed24_20250304_102446/float32_torchdiffeq_rk4_seed24_20250304_102446.csv",
-        "results/otflow/float16_torchmpnode_rk4_seed24_20250304_101643/float16_torchmpnode_rk4_seed24_20250304_101643.csv",
+        "results/otflow/float16_rampde_rk4_seed24_20250304_101643/float16_rampde_rk4_seed24_20250304_101643.csv",
         # "results/otflow/float16_torchdiffeq_rk4_seed24_20250304_101643/float16_torchdiffeq_rk4_seed24_20250304_101643.csv"
     ]
     legends = [
-        "fp32 - torchmpnode",
+        "fp32 - rampde",
         # "fp32 - torchdiffeq",
-        "fp16 - torchmpnode",
+        "fp16 - rampde",
         # "fp16 - torchdiffeq"
     ]
 

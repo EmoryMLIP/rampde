@@ -1,6 +1,6 @@
 # Performance Regression Tests
 
-This directory contains performance regression tests for torchmpnode to monitor performance against torchdiffeq and detect regressions in the three-variant architecture.
+This directory contains performance regression tests for rampde to monitor performance against torchdiffeq and detect regressions in the three-variant architecture.
 
 ## Test Structure
 

@@ -11,14 +11,14 @@
 
 # Set up environment
 export HOME=/local/scratch/lruthot
-cd /local/scratch/lruthot/code/torchmpnode/experiments/roundoff_experiment
+cd /local/scratch/lruthot/code/rampde/experiments/roundoff_experiment
 
 # Initialize conda
 eval "$(/local/scratch/lruthot/miniconda3/bin/conda shell.bash hook)"
 conda activate torch26
 
-# Add torchmpnode to PYTHONPATH
-export PYTHONPATH=/local/scratch/lruthot/code/torchmpnode:$PYTHONPATH
+# Add rampde to PYTHONPATH
+export PYTHONPATH=/local/scratch/lruthot/code/rampde:$PYTHONPATH
 
 # Print environment info
 echo "Running on host: $(hostname)"

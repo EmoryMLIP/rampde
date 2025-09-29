@@ -28,7 +28,7 @@ bash run_otflow_roundoff_experiment.sh
 
 ### **Run Single Configuration**
 ```bash
-python roundoff_otflow.py --precision float16 --odeint_type torchmpnode --scaler_type dynamic --method rk4 --n_timesteps 64 --seed 42
+python roundoff_otflow.py --precision float16 --odeint_type rampde --scaler_type dynamic --method rk4 --n_timesteps 64 --seed 42
 ```
 
 ### **Generate Plots**

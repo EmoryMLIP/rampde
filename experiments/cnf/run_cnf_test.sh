@@ -37,7 +37,7 @@ echo "Test 1: Comprehensive precision and scaling comparison"
 
 # float32 tests (no scaling needed)
 for dataset in "${datasets[@]}"; do
-  for odeint in "torchdiffeq" "torchmpnode"; do
+  for odeint in "torchdiffeq" "rampde"; do
     fixed_args=(
       --precision "float32"
       --data "$dataset"
@@ -60,7 +60,7 @@ echo "Testing different precision types:"
 for precision in "bfloat16" "tfloat32"; do
   echo "Testing precision: $precision (no scaling needed)"
   for dataset in "${datasets[@]}"; do
-    for odeint in "torchdiffeq" "torchmpnode"; do
+    for odeint in "torchdiffeq" "rampde"; do
       fixed_args=(
         --precision "$precision"
         --data "$dataset"
@@ -113,12 +113,12 @@ for dataset in "${datasets[@]}"; do
   echo "Submitting: torchdiffeq float16 with-grad-scaler - $dataset"
   sbatch --account=mathg3 job_cnf.sbatch "${fixed_args[@]}" $extra_args
   
-  # torchmpnode float16 + no scaling
+  # rampde float16 + no scaling
   fixed_args=(
     --precision "float16"
     --data "$dataset"
     --method "rk4"
-    --odeint "torchmpnode"
+    --odeint "rampde"
     --seed "$seed"
     --results_dir "$results_dir"
     --viz
@@ -126,43 +126,43 @@ for dataset in "${datasets[@]}"; do
     --no_dynamic_scaler
   )
   extra_args=${test_dataset_args[$dataset]}
-  echo "Submitting: torchmpnode float16 no-scaling - $dataset"
+  echo "Submitting: rampde float16 no-scaling - $dataset"
   sbatch --account=mathg3 job_cnf.sbatch "${fixed_args[@]}" $extra_args
   
-  # torchmpnode float16 + dynamic scaler only
+  # rampde float16 + dynamic scaler only
   fixed_args=(
     --precision "float16"
     --data "$dataset"
     --method "rk4"
-    --odeint "torchmpnode"
+    --odeint "rampde"
     --seed "$seed"
     --results_dir "$results_dir"
     --viz
     --no_grad_scaler
   )
   extra_args=${test_dataset_args[$dataset]}
-  echo "Submitting: torchmpnode float16 with-dynamic-scaler - $dataset"
+  echo "Submitting: rampde float16 with-dynamic-scaler - $dataset"
   sbatch --account=mathg3 job_cnf.sbatch "${fixed_args[@]}" $extra_args
 done
 
-# Test 2: Additional torchmpnode float16 scaling strategies
+# Test 2: Additional rampde float16 scaling strategies
 echo ""
-echo "Test 2: Additional torchmpnode float16 scaling strategies"
+echo "Test 2: Additional rampde float16 scaling strategies"
 
-# torchmpnode float16 + grad scaler only
+# rampde float16 + grad scaler only
 for dataset in "${datasets[@]}"; do
   fixed_args=(
     --precision "float16"
     --data "$dataset"
     --method "rk4"
-    --odeint "torchmpnode"
+    --odeint "rampde"
     --seed "$seed"
     --results_dir "$results_dir"
     --viz
     --no_dynamic_scaler
   )
   extra_args=${test_dataset_args[$dataset]}
-  echo "Submitting: torchmpnode float16 with-grad-scaler - $dataset"
+  echo "Submitting: rampde float16 with-grad-scaler - $dataset"
   sbatch --account=mathg3 job_cnf.sbatch "${fixed_args[@]}" $extra_args
 done
 

@@ -21,7 +21,7 @@ default_args="\
 # Grid search choices
 precisions=("float32" "float16" "bfloat16")
 methods=("rk4" "euler")
-odeints=("torchmpnode") #"torchdiffeq" 
+odeints=("rampde") #"torchdiffeq" 
 
 mkdir -p slurm_logs
 

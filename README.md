@@ -1,5 +1,5 @@
-# torchmpnode
-torchmpnode is a PyTorch-compatible library designed to provide high-performance, mixed-precision solvers for Neural Ordinary Differential Equations (ODEs). The package integrates seamlessly with PyTorch’s ecosystem, allowing users to replace standard solvers with mixed-precision alternatives for faster computation and reduced memory usage.
+# rampde
+rampde is a PyTorch-compatible library designed to provide high-performance, mixed-precision solvers for Neural Ordinary Differential Equations (ODEs). The package integrates seamlessly with PyTorch’s ecosystem, allowing users to replace standard solvers with mixed-precision alternatives for faster computation and reduced memory usage.
 
 Key features include:
 - Easy API compatibility with Pytorch's autocast and the torchdiffeq package.
@@ -12,27 +12,27 @@ Key features include:
 Install the core package with:
 
 ```bash
-pip install torchmpnode
+pip install rampde
 ```
 
 ### Optional Dependencies
 
 For benchmarking and comparison with torchdiffeq:
 ```bash
-pip install "torchmpnode[benchmarks]"
+pip install "rampde[benchmarks]"
 ```
 
 For development (includes testing and benchmark dependencies):
 ```bash
-pip install "torchmpnode[dev]"
+pip install "rampde[dev]"
 ```
 
 For testing only:
 ```bash
-pip install "torchmpnode[testing]"
+pip install "rampde[testing]"
 ```
 
-Note: `torchdiffeq` is now an optional dependency. The core torchmpnode functionality works without it. Install `torchdiffeq` separately if needed for comparisons.
+Note: `torchdiffeq` is now an optional dependency. The core rampde functionality works without it. Install `torchdiffeq` separately if needed for comparisons.
   
 ## Experiments
 
@@ -83,9 +83,9 @@ python demos/demo_scaler.py
 
 ## Tests
 
-Use tests/test_torchmpnode.py, to check numerical solution and gradients under the same high precision (f32). 
+Use tests/test_rampde.py, to check numerical solution and gradients under the same high precision (f32). 
 Use tests/test_backward_input.py, test_backward_weights.py and test_backward_time.py to test the quality of the gradient approximation based on Taylor expansion. 
-In tests/test_torchmpnode.py, we see that torchdiffeq and torchmpnode performs consistently in terms of numerical solution and gradients under the same high precision (f32). However, tests/test_backward_input.py, test_backward_weights.py and test_backward_time.py show that torchmpnode yields better gradient approximations. Further tests on torchmpnode and gradient scaling can be found in tests/test_odeint.py and tests/test_gradient_scaling.py.
+In tests/test_rampde.py, we see that torchdiffeq and rampde performs consistently in terms of numerical solution and gradients under the same high precision (f32). However, tests/test_backward_input.py, test_backward_weights.py and test_backward_time.py show that rampde yields better gradient approximations. Further tests on rampde and gradient scaling can be found in tests/test_odeint.py and tests/test_gradient_scaling.py.
 
 
 

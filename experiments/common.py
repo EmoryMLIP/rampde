@@ -1,5 +1,5 @@
 """
-Common utilities for torchmpnode experiments.
+Common utilities for rampde experiments.
 
 This module provides shared functions for setting up experiments, handling
 precision configurations, and managing gradient scaling strategies.
@@ -19,8 +19,8 @@ def setup_environment(odeint_type: str, base_dir: str) -> Tuple:
     Setup the environment and imports based on ODE solver type.
     
     Args:
-        odeint_type: 'torchmpnode' or 'torchdiffeq'
-        base_dir: Base directory of the torchmpnode project
+        odeint_type: 'rampde' or 'torchdiffeq'
+        base_dir: Base directory of the rampde project
         
     Returns:
         Tuple of (odeint_func, DynamicScaler_class or None)
@@ -28,10 +28,10 @@ def setup_environment(odeint_type: str, base_dir: str) -> Tuple:
     # Set up paths for imports
     sys.path.insert(0, os.path.join(base_dir, "examples"))  # for datasets
     
-    if odeint_type == 'torchmpnode':
-        print("Using torchmpnode")
-        from torchmpnode import odeint
-        from torchmpnode.loss_scalers import DynamicScaler
+    if odeint_type == 'rampde':
+        print("Using rampde")
+        from rampde import odeint
+        from rampde.loss_scalers import DynamicScaler
         return odeint, DynamicScaler
     else:    
         print("Using torchdiffeq")
@@ -94,10 +94,10 @@ def determine_scaler(
     Determine which scaler to use based on configuration.
     
     Args:
-        odeint_type: 'torchmpnode' or 'torchdiffeq'
+        odeint_type: 'rampde' or 'torchdiffeq'
         precision_str: Precision mode string
         grad_scaler_enabled: Whether PyTorch GradScaler is enabled
-        dynamic_scaler_enabled: Whether torchmpnode DynamicScaler is enabled
+        dynamic_scaler_enabled: Whether rampde DynamicScaler is enabled
         DynamicScaler_class: The DynamicScaler class (None for torchdiffeq)
         
     Returns:
@@ -106,7 +106,7 @@ def determine_scaler(
         - scaler_name: 'grad', 'dynamic', 'none', or None
         - loss_scaler_for_odeint: DynamicScaler instance or False or None
         
-    The three main cases for torchmpnode + float16:
+    The three main cases for rampde + float16:
     1. Dynamic scaling only: dynamic_scaler=True, grad_scaler=False
        → (None, 'dynamic', DynamicScaler instance)
     2. Gradient scaling only: dynamic_scaler=False, grad_scaler=True  
@@ -131,27 +131,27 @@ def determine_scaler(
             print("WARNING: Using float16 with torchdiffeq without GradScaler - may encounter NaN/overflow")
             return None, 'none', None
     
-    # Handle torchmpnode cases
-    if odeint_type == 'torchmpnode':
+    # Handle rampde cases
+    if odeint_type == 'rampde':
         if dynamic_scaler_enabled and not grad_scaler_enabled:
             # Case 1: Dynamic scaling only
             if DynamicScaler_class is None:
                 raise ValueError("DynamicScaler class not available but dynamic scaling is enabled")
             scaler = DynamicScaler_class(precision)
-            print("Using DynamicScaler for float16 precision with torchmpnode")
+            print("Using DynamicScaler for float16 precision with rampde")
             return None, 'dynamic', scaler
             
         elif not dynamic_scaler_enabled and grad_scaler_enabled:
             # Case 2: Gradient scaling only (safe mode)
             from torch.amp import GradScaler
             scaler = GradScaler('cuda')
-            print(f"Using PyTorch GradScaler for float16 precision with torchmpnode (safe mode, DynamicScaler disabled)")
+            print(f"Using PyTorch GradScaler for float16 precision with rampde (safe mode, DynamicScaler disabled)")
             print(f"Initial scale: {scaler.get_scale()}")
             return scaler, 'grad', False  # False disables internal scaling
             
         elif not dynamic_scaler_enabled and not grad_scaler_enabled:
             # Case 3: No scaling (unsafe mode)
-            print("WARNING: Using float16 with torchmpnode without any scaling (unsafe mode)")
+            print("WARNING: Using float16 with rampde without any scaling (unsafe mode)")
             print("Training will stop if NaN/inf is detected in loss or gradients")
             return None, 'none', False
             
@@ -184,7 +184,7 @@ def setup_experiment(
         experiment_name: Name of the experiment (e.g., 'otflowlarge', 'stl10')
         data_name: Dataset name (e.g., 'bsds300', 'miniboone')
         precision_str: Precision mode string
-        odeint_type: 'torchmpnode' or 'torchdiffeq'
+        odeint_type: 'rampde' or 'torchdiffeq'
         method: ODE solver method (e.g., 'rk4', 'euler')
         seed: Random seed (None for no seed)
         gpu: GPU device number

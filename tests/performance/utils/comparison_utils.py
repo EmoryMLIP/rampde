@@ -1,5 +1,5 @@
 """
-Utilities for comparing torchmpnode performance against torchdiffeq.
+Utilities for comparing rampde performance against torchdiffeq.
 """
 
 import time
@@ -70,7 +70,7 @@ def run_torchdiffeq_baseline(model, x, t, method='rk4', num_runs=10, warmup=3):
 
 def compare_against_torchdiffeq(model, x, t, configs, method='rk4'):
     """
-    Compare torchmpnode configurations against torchdiffeq baseline.
+    Compare rampde configurations against torchdiffeq baseline.
     
     Args:
         model: ODE model
@@ -82,7 +82,7 @@ def compare_against_torchdiffeq(model, x, t, configs, method='rk4'):
     Returns:
         dict: Comparison results
     """
-    from torchmpnode import odeint as torchmpnode_odeint
+    from rampde import odeint as rampde_odeint
     
     results = {}
     
@@ -105,7 +105,7 @@ def compare_against_torchdiffeq(model, x, t, configs, method='rk4'):
             'success': False
         }
     
-    # Run torchmpnode configurations
+    # Run rampde configurations
     for name, precision, scaler in configs:
         print(f"Running {name}...")
         
@@ -120,7 +120,7 @@ def compare_against_torchdiffeq(model, x, t, configs, method='rk4'):
             for _ in range(3):
                 optimizer.zero_grad()
                 with autocast(device_type='cuda', dtype=precision):
-                    y = torchmpnode_odeint(model, x, t, method=method, loss_scaler=scaler)
+                    y = rampde_odeint(model, x, t, method=method, loss_scaler=scaler)
                     loss = torch.norm(y[-1])**2
                 loss.backward()
                 optimizer.step()
@@ -134,7 +134,7 @@ def compare_against_torchdiffeq(model, x, t, configs, method='rk4'):
                 
                 start = time.perf_counter()
                 with autocast(device_type='cuda', dtype=precision):
-                    y = torchmpnode_odeint(model, x, t, method=method, loss_scaler=scaler)
+                    y = rampde_odeint(model, x, t, method=method, loss_scaler=scaler)
                     loss = torch.norm(y[-1])**2
                 loss.backward()
                 torch.cuda.synchronize()
@@ -162,21 +162,21 @@ def compare_against_torchdiffeq(model, x, t, configs, method='rk4'):
     return results
 
 
-def calculate_performance_ratio(torchmpnode_time, torchdiffeq_time):
+def calculate_performance_ratio(rampde_time, torchdiffeq_time):
     """
-    Calculate performance ratio between torchmpnode and torchdiffeq.
+    Calculate performance ratio between rampde and torchdiffeq.
     
     Args:
-        torchmpnode_time: torchmpnode execution time
+        rampde_time: rampde execution time
         torchdiffeq_time: torchdiffeq execution time
     
     Returns:
-        float: Performance ratio (>1 means torchmpnode is slower)
+        float: Performance ratio (>1 means rampde is slower)
     """
     if torchdiffeq_time is None or torchdiffeq_time == 0:
         return None
     
-    return torchmpnode_time / torchdiffeq_time
+    return rampde_time / torchdiffeq_time
 
 
 def format_comparison_results(results):
@@ -239,7 +239,7 @@ def check_accuracy_against_torchdiffeq(model, x, t, precision, scaler, method='r
         print("torchdiffeq not available for accuracy check")
         return None, None, False
     
-    from torchmpnode import odeint as torchmpnode_odeint
+    from rampde import odeint as rampde_odeint
     
     device = x.device
     model.to(device)
@@ -250,17 +250,17 @@ def check_accuracy_against_torchdiffeq(model, x, t, precision, scaler, method='r
         with torch.no_grad():
             y_torchdiffeq = torchdiffeq_odeint(model, x, t, method=method)
         
-        # Run torchmpnode
+        # Run rampde
         with torch.no_grad():
             with autocast(device_type='cuda', dtype=precision):
-                y_torchmpnode = torchmpnode_odeint(model, x, t, method=method, loss_scaler=scaler)
+                y_rampde = rampde_odeint(model, x, t, method=method, loss_scaler=scaler)
         
         # Convert to same precision for comparison
         y_torchdiffeq_fp32 = y_torchdiffeq.float()
-        y_torchmpnode_fp32 = y_torchmpnode.float()
+        y_rampde_fp32 = y_rampde.float()
         
         # Calculate differences
-        diff = torch.abs(y_torchdiffeq_fp32 - y_torchmpnode_fp32)
+        diff = torch.abs(y_torchdiffeq_fp32 - y_rampde_fp32)
         max_diff = torch.max(diff).item()
         relative_error = (torch.norm(diff) / torch.norm(y_torchdiffeq_fp32)).item()
         

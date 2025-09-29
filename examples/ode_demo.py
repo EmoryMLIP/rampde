@@ -10,7 +10,7 @@ import torch.nn as nn
 import torch.optim as optim
 from torch.amp import autocast
 
-from torchmpnode import odeint as odeint_mp
+from rampde import odeint as odeint_mp
 
 # Try to import torchdiffeq, gracefully handle if not available
 try:
@@ -34,7 +34,7 @@ parser.add_argument('--gpu',           type=int, default=0)
 parser.add_argument('--adjoint',       action='store_true')
 parser.add_argument('--method',        type=str, choices=['rk4','dopri5','euler'], default='rk4')
 parser.add_argument('--precision',     type=str, choices=['float32','float16','bfloat16'], default='float16')
-parser.add_argument('--odeint',        type=str, choices=['torchdiffeq','torchmpnode'], default='torchmpnode')
+parser.add_argument('--odeint',        type=str, choices=['torchdiffeq','rampde'], default='rampde')
 parser.add_argument('--results_dir',   type=str, default='ode_demo')
 parser.add_argument('--hidden_dim',    type=int, default=128)
 parser.add_argument('--lr',            type=float, default=1e-4)
@@ -70,7 +70,7 @@ true_A  = torch.tensor([[-0.1, 6.0], [-2.0, -0.1]], device=device)
 # time grid and reference trajectory
 t = torch.linspace(0., 1., args.data_size, device=device)
 with torch.no_grad():
-    # Use torchdiffeq if available, otherwise fallback to torchmpnode
+    # Use torchdiffeq if available, otherwise fallback to rampde
     odeint_ref = odeint_diffeq if HAS_TORCHDIFFEQ else odeint_mp
     true_y = odeint_ref(
         lambda tt, yy: (yy**3) @ true_A,
@@ -205,7 +205,7 @@ if __name__ == '__main__':
     opt_m  = optim.RMSprop(func_m.parameters(), lr=args.lr)
 
     # Build list of solvers to test, only including torchdiffeq if available
-    solver_configs = [('torchmpnode', func_m, opt_m, odeint_mp)]
+    solver_configs = [('rampde', func_m, opt_m, odeint_mp)]
     if HAS_TORCHDIFFEQ:
         solver_configs.insert(0, ('torchdiffeq', func_d, opt_d, odeint_diffeq))
     
@@ -301,7 +301,7 @@ if __name__ == '__main__':
     precisions = {'float32': torch.float32, 'float16': torch.float16, 'bfloat16': torch.bfloat16}
     
     # Build list of solvers for analysis, only including torchdiffeq if available
-    analysis_configs = [('torchmpnode', func_m, 'mpnode', odeint_mp)]
+    analysis_configs = [('rampde', func_m, 'mpnode', odeint_mp)]
     if HAS_TORCHDIFFEQ:
         analysis_configs.insert(0, ('torchdiffeq', func_d, 'diffeq', odeint_diffeq))
     

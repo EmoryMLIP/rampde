@@ -16,7 +16,7 @@ from torchdiffeq import odeint
 import sys
 import os
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
-from torchmpnode import odeint as mpodeint
+from rampde import odeint as mpodeint
 from torch.amp import autocast
 
 
@@ -137,7 +137,7 @@ if __name__ == '__main__':
 
     # We will use three different methods.
     methods = ['euler','rk4']
-    packages = ['torchdiffeq','torchmpnode']
+    packages = ['torchdiffeq','rampde']
 
     # For fixed-step methods, experiment with various numbers of steps.
     steps_list = [32, 64, 128, 256, 512, 1024, 2048, 4096, 8192]

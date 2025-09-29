@@ -49,7 +49,7 @@ parser.add_argument('--seed', type=int, default=None, help="Random seed; if not 
 # new arguments
 parser.add_argument('--method', type=str, choices=['rk4', 'euler'], default='rk4')
 parser.add_argument('--precision', type=str, choices=['float32','tfloat32', 'float16','bfloat16'], default='float32')
-parser.add_argument('--odeint', type=str, choices=['torchdiffeq', 'torchmpnode'], default='torchdiffeq')
+parser.add_argument('--odeint', type=str, choices=['torchdiffeq', 'rampde'], default='torchdiffeq')
 
 args = parser.parse_args()
 args.alpha = [float(a) for a in args.alpha.split(',')]
@@ -141,9 +141,9 @@ else:
 sys.path.insert(0, base_dir)
 sys.path.insert(0, os.path.join(base_dir, "examples"))
 from common import RunningAverageMeter, RunningMaximumMeter, AverageMeter
-if args.odeint == 'torchmpnode':
-    print("Using torchmpnode")
-    from torchmpnode import odeint
+if args.odeint == 'rampde':
+    print("Using rampde")
+    from rampde import odeint
 else:    
     print("using torchdiffeq")
     if args.adjoint:

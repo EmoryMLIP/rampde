@@ -148,9 +148,9 @@ def plot_scaler_comparison(results, output_dir):
     # Colors for different configurations
     colors = {
         'torchdiffeq-grad': 'blue',
-        'torchmpnode-dynamic': 'green',
-        'torchmpnode-grad': 'orange',
-        'torchmpnode-none': 'red'
+        'rampde-dynamic': 'green',
+        'rampde-grad': 'orange',
+        'rampde-none': 'red'
     }
     
     # Markers for different precisions

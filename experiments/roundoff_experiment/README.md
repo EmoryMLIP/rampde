@@ -1,12 +1,12 @@
 # Roundoff Error Experiments
 
-This directory contains lightweight experiments to measure roundoff errors in neural ODE integration as step size h approaches zero. The experiments validate the theoretical analysis showing that torchmpnode's mixed-precision approach maintains better numerical accuracy than standard implementations.
+This directory contains lightweight experiments to measure roundoff errors in neural ODE integration as step size h approaches zero. The experiments validate the theoretical analysis showing that rampde's mixed-precision approach maintains better numerical accuracy than standard implementations.
 
 ## Overview
 
 The experiments compare:
 - **Precisions**: float16, bfloat16 (against fp64 reference)
-- **Backends**: torchdiffeq, torchmpnode
+- **Backends**: torchdiffeq, rampde
 - **Scalers**: GradScaler, DynamicScaler, no scaling
 - **Step sizes**: h ∈ {0.1, 0.01, 0.001, 0.0001, 0.00001}
 - **Methods**: Euler, RK4
@@ -69,7 +69,7 @@ For each configuration, we measure:
 The experiments should demonstrate:
 
 1. **Roundoff error growth**: As h→0, roundoff errors dominate truncation errors
-2. **torchmpnode advantage**: Better error control with DynamicScaler
+2. **rampde advantage**: Better error control with DynamicScaler
 3. **Precision comparison**: Different behavior between float16 and bfloat16
 4. **Method differences**: RK4 vs Euler error patterns
 
@@ -89,7 +89,7 @@ results/
 
 The log-log plots should show:
 - Error decreasing with h until roundoff effects dominate
-- torchmpnode+DynamicScaler maintaining lower errors at small h
+- rampde+DynamicScaler maintaining lower errors at small h
 - Reference lines showing theoretical convergence rates (h^p)
 
 This provides empirical validation of the theoretical roundoff analysis in the paper.

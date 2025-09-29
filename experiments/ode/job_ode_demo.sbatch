@@ -29,7 +29,7 @@ pip install torchdiffeq
 
 # if [[ "$ODEINT" == "torchdiffeq" ]]; then
 #   conda activate torch26
-# elif [[ "$ODEINT" == "torchmpnode" ]]; then
+# elif [[ "$ODEINT" == "rampde" ]]; then
 #   conda activate torch27
 # else
 #   echo "Error: unrecognized odeint value '$ODEINT'" >&2

@@ -16,7 +16,7 @@ matplotlib.use('Agg')  # for headless CI
 import matplotlib.pyplot as plt
 
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
-from torchmpnode import odeint, DynamicScaler
+from rampde import odeint, DynamicScaler
 from torch.amp import autocast
 
 torch.set_default_dtype(torch.float32)

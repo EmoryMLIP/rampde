@@ -39,14 +39,14 @@ def create_parser():
                         choices=['tfloat32', 'float32', 'float16','bfloat16'], default='float32',
                         help='Precision mode (float32 corresponds to --prec single in OT-Flow)')
     parser.add_argument('--odeint', type=str,
-                        choices=['torchdiffeq', 'torchmpnode'], default='torchmpnode')
+                        choices=['torchdiffeq', 'rampde'], default='rampde')
     parser.add_argument('--adjoint', action='store_true')
     
     # Gradient scaling arguments
     parser.add_argument('--no_grad_scaler', action='store_true',
                         help='Disable GradScaler for torchdiffeq with float16 (default: enabled)')
     parser.add_argument('--no_dynamic_scaler', action='store_true',
-                        help='Disable DynamicScaler for torchmpnode with float16 (default: enabled)')
+                        help='Disable DynamicScaler for rampde with float16 (default: enabled)')
     
     # Training arguments
     parser.add_argument('--niters', type=int, default=15000)
@@ -188,7 +188,7 @@ def main():
     else:
         print("No seed specified, using random initialization")
     
-    # Get base directory (torchmpnode root)
+    # Get base directory (rampde root)
     base_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), '../..'))
     
     # Setup environment and imports
@@ -312,7 +312,7 @@ def main():
                     
                     # Prepare odeint arguments
                     odeint_kwargs = {'method': args.method}
-                    if args.odeint == 'torchmpnode' and loss_scaler_for_odeint is not None:
+                    if args.odeint == 'rampde' and loss_scaler_for_odeint is not None:
                         odeint_kwargs['loss_scaler'] = loss_scaler_for_odeint
                     
                     # Single odeint call

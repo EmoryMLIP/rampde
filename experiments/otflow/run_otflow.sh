@@ -6,8 +6,8 @@
 precisions=(  "float16"  "tfloat32" "bfloat16" )
 precisions=( "float32" )
 methods=("rk4")
-# odeints=( "torchmpnode" "torchdiffeq" )
-odeints=( "torchmpnode" )
+# odeints=( "rampde" "torchdiffeq" )
+odeints=( "rampde" )
 # List of datasets
 # datasets=("8gaussians" "checkerboard"  "moons" "pinwheel")
 datasets=( "pinwheel")
@@ -38,7 +38,7 @@ dataset_args=(
 )
 # precisions=("float16" "bfloat16" "float32")
 # methods=("euler")
-# odeints=("torchdiffeq" "torchmpnode")
+# odeints=("torchdiffeq" "rampde")
 seed=42
 
 # Create a directory for Slurm log files if needed.

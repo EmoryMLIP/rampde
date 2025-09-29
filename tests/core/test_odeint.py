@@ -1,6 +1,6 @@
 """
 
-This test verifies the convergence order of the custom ODE solvers (Euler and RK4) implemented in torchmpnode. 
+This test verifies the convergence order of the custom ODE solvers (Euler and RK4) implemented in rampde. 
 It uses a linear ODE with a known analytical solution and checks that the numerical solution converges at the 
 expected rate as the number of time steps increases. The test passes if the observed order of convergence matches 
 the theoretical order for each solver in at least 4 out of 9 step doublings.
@@ -17,8 +17,8 @@ import numpy as np
 import sys
 import os
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
-from torchmpnode import odeint
-from torchmpnode import Euler, RK4, FixedGridODESolverUnscaled
+from rampde import odeint
+from rampde import Euler, RK4, FixedGridODESolverUnscaled
 from torch.amp import autocast
 
 class TestFixedGridODESolver(unittest.TestCase):

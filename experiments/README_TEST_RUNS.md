@@ -1,10 +1,10 @@
-# Test Run System for torchmpnode Experiments
+# Test Run System for rampde Experiments
 
 This document describes the test run system designed to quickly validate experiment functionality and generate initial performance data.
 
 ## Overview
 
-The test run system provides shortened versions of all torchmpnode experiments to accomplish three key goals:
+The test run system provides shortened versions of all rampde experiments to accomplish three key goals:
 
 1. **Functionality Verification**: Ensure all experiments run without errors
 2. **Initial Performance Data**: Generate timing and memory usage data for analysis
@@ -60,7 +60,7 @@ cd otflowlarge && chmod +x run_otflowlarge_test.sh && ./run_otflowlarge_test.sh
 Each test focuses on key combinations for speed:
 
 - **Precisions**: float32, float16 (most important comparison)
-- **Backends**: torchdiffeq, torchmpnode  
+- **Backends**: torchdiffeq, rampde  
 - **Scaling**: Representative scaling strategies for each backend
 - **Datasets**: Single representative dataset per experiment type
 

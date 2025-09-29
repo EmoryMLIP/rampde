@@ -1,17 +1,17 @@
 #!/bin/bash
-# run_all_experiments.sh - Master script for running all torchmpnode paper experiments
+# run_all_experiments.sh - Master script for running all rampde paper experiments
 # Usage: chmod +x run_all_experiments.sh && ./run_all_experiments.sh
 #
-# Purpose: Run comprehensive experiments comparing torchmpnode vs torchdiffeq across:
+# Purpose: Run comprehensive experiments comparing rampde vs torchdiffeq across:
 # - All precision modes: fp32, tfp32, bfp16 for both libraries
 # - Float16 with/without grad scaler for both libraries  
-# - Float16 with torchmpnode dynamic scaler
+# - Float16 with rampde dynamic scaler
 # - All major experiment types: MNIST, CNF, STL10, OTFlowLarge
 
 echo "=========================================="
-echo "torchmpnode Paper Experiments Runner"
+echo "rampde Paper Experiments Runner"
 echo "=========================================="
-echo "This script runs the complete experiment suite for the torchmpnode paper."
+echo "This script runs the complete experiment suite for the rampde paper."
 echo "Experiments include all precision configurations across MNIST, CNF, STL10, and OTFlowLarge."
 echo ""
 
@@ -31,7 +31,7 @@ echo ""
 # Time tracking
 start_time=$(date +%s)
 
-echo "Starting torchmpnode paper experiment suite at $(date)"
+echo "Starting rampde paper experiment suite at $(date)"
 echo ""
 
 # Function to run an experiment script and track time
@@ -100,14 +100,14 @@ echo "========================="
 echo "Each experiment runs the following precision configurations:"
 echo ""
 echo "1. Base precision comparison (no scaling):"
-echo "   - torchdiffeq + torchmpnode: float32, tfloat32, bfloat16"
+echo "   - torchdiffeq + rampde: float32, tfloat32, bfloat16"
 echo ""
 echo "2. Float16 scaling comparison:"
 echo "   - torchdiffeq: float16 without grad scaler"
 echo "   - torchdiffeq: float16 with grad scaler"
-echo "   - torchmpnode: float16 without any scaling"
-echo "   - torchmpnode: float16 with grad scaler only"
-echo "   - torchmpnode: float16 with dynamic scaler only"
+echo "   - rampde: float16 without any scaling"
+echo "   - rampde: float16 with grad scaler only"
+echo "   - rampde: float16 with dynamic scaler only"
 echo ""
 echo "Experiments include:"
 echo "- MNIST: Neural ODE for digit classification"

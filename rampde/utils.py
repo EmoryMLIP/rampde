@@ -1,7 +1,7 @@
 """
-Utility functions for torchmpnode.
+Utility functions for rampde.
 
-This module contains general utility functions used across the torchmpnode package.
+This module contains general utility functions used across the rampde package.
 """
 
 from typing import Union
@@ -13,7 +13,7 @@ def _is_any_infinite(x: Union[torch.Tensor, tuple, list, None]) -> bool:
     Recursively check if x (a tensor, list, or tuple of tensors) contains any non-finite values.
     
     This function handles nested structures of tensors and checks each tensor
-    for the presence of infinite or NaN values. It's used throughout torchmpnode
+    for the presence of infinite or NaN values. It's used throughout rampde
     for overflow detection in mixed precision computations.
     
     Args:

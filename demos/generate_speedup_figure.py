@@ -2,7 +2,7 @@
 """
 Generates a figure showing speedup of FP16 vs FP32 for varying problem sizes.
 This figure can be used in a paper to demonstrate the performance benefits
-of mixed-precision computation with the torchmpnode package.
+of mixed-precision computation with the rampde package.
 
 The script:
 1. Measures forward and backward pass times for different problem sizes
@@ -25,7 +25,7 @@ import matplotlib as mpl
 
 import torch
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
-from torchmpnode import odeint
+from rampde import odeint
 
 # Disable TF32 to get cleaner FP32 vs FP16 comparison
 torch.backends.cuda.matmul.allow_tf32 = False
@@ -340,7 +340,7 @@ def generate_figures(results_dim, results_batch):
 # ------------------------------------------------------------
 if __name__ == "__main__":
     print("=" * 80)
-    print("Generating speedup benchmarks for torchmpnode (FP16 vs FP32)")
+    print("Generating speedup benchmarks for rampde (FP16 vs FP32)")
     print("=" * 80)
     
     # Check for CUDA

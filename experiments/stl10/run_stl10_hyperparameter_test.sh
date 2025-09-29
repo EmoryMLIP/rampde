@@ -1,5 +1,5 @@
 #!/bin/bash
-# run_stl10_hyperparameter_test.sh - STL10 hyperparameter sweep with torchmpnode bfloat16
+# run_stl10_hyperparameter_test.sh - STL10 hyperparameter sweep with rampde bfloat16
 # Usage: chmod +x run_stl10_hyperparameter_test.sh ; ./run_stl10_hyperparameter_test.sh
 
 # Default training arguments (modified for hyperparameter testing)
@@ -11,16 +11,16 @@ default_args=(
   --results_dir 2025-07-29-hyperparameter_test
   --precision "bfloat16"
   --method "rk4"
-  --odeint "torchmpnode"
-  --no_grad_scaler  # Use torchmpnode's native mixed precision
+  --odeint "rampde"
+  --no_grad_scaler  # Use rampde's native mixed precision
 )
 
 # Fixed configuration for all experiments
 fixed_args=(
   --precision "bfloat16"
   --method "rk4"
-  --odeint "torchmpnode"
-  --no_grad_scaler  # torchmpnode handles mixed precision internally
+  --odeint "rampde"
+  --no_grad_scaler  # rampde handles mixed precision internally
 )
 
 # Hyperparameter sweep arrays
@@ -33,7 +33,7 @@ seed=25
 # Make log directory
 mkdir -p slurm_logs
 
-echo "Running STL10 Hyperparameter Sweep with torchmpnode bfloat16"
+echo "Running STL10 Hyperparameter Sweep with rampde bfloat16"
 echo "============================================================="
 echo "Weight decay values: ${weight_decays[*]}"
 echo "Iteration counts: ${iterations[*]}"

@@ -24,7 +24,7 @@ def run_timing_test(model, x, t, precision, scaler, method='rk4', num_runs=10, w
     Returns:
         tuple: (mean_time, std_time, success)
     """
-    from torchmpnode import odeint
+    from rampde import odeint
     
     device = x.device
     model.to(device)
@@ -82,7 +82,7 @@ def measure_memory_usage(model, x, t, precision, scaler, method='rk4'):
     Returns:
         dict: Memory usage statistics
     """
-    from torchmpnode import odeint
+    from rampde import odeint
     
     device = x.device
     model.to(device)
@@ -135,8 +135,8 @@ def verify_solver_selection(scaler, precision):
     Returns:
         tuple: (expected_solver, actual_solver, matches)
     """
-    from torchmpnode.odeint import _select_ode_solver
-    from torchmpnode.loss_scalers import DynamicScaler
+    from rampde.odeint import _select_ode_solver
+    from rampde.loss_scalers import DynamicScaler
     
     # Determine expected solver
     if isinstance(scaler, DynamicScaler):
@@ -168,7 +168,7 @@ def check_numerical_accuracy(model, x, t, config1, config2, tolerance=1e-4):
     Returns:
         tuple: (max_diff, relative_error, accurate)
     """
-    from torchmpnode import odeint
+    from rampde import odeint
     
     device = x.device
     model.to(device)

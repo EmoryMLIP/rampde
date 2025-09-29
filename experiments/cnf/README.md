@@ -4,7 +4,7 @@ This directory contains an enhanced implementation of Continuous Normalizing Flo
 
 ## Overview
 
-The CNF implementation models continuous transformations between probability distributions using Neural ODEs with time-dependent vector fields. This version includes significant enhancements for production-scale experimentation and comparison between `torchdiffeq` and `torchmpnode` solvers.
+The CNF implementation models continuous transformations between probability distributions using Neural ODEs with time-dependent vector fields. This version includes significant enhancements for production-scale experimentation and comparison between `torchdiffeq` and `rampde` solvers.
 
 ## Key Files
 
@@ -49,7 +49,7 @@ def hyper_trace(W, B, U, x, target_dtype):
 **New Features**:
 - Full `torch.amp.autocast` integration
 - Gradient scaling for `torchdiffeq` with `GradScaler`
-- Dynamic loss scaling for `torchmpnode` with `DynamicScaler`
+- Dynamic loss scaling for `rampde` with `DynamicScaler`
 - Precision-aware dtype handling throughout
 
 **Supported Precisions**:
@@ -125,7 +125,7 @@ choices=['swissroll', '8gaussians', 'pinwheel', 'circles',
 
 ### Basic Training
 ```bash
-python cnf.py --data 2spirals --odeint torchmpnode --precision float16 --niters 2000
+python cnf.py --data 2spirals --odeint rampde --precision float16 --niters 2000
 ```
 
 ### Batch Experiments
@@ -146,7 +146,7 @@ pytest test_hyper_trace.py -v
 ## Configuration Options
 
 ### Solver Configuration
-- `--odeint`: Choose between `torchdiffeq` and `torchmpnode`
+- `--odeint`: Choose between `torchdiffeq` and `rampde`
 - `--method`: ODE solving method (`rk4`, `euler`)
 - `--num_timesteps`: Number of time steps for integration
 

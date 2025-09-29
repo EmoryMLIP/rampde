@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-OTFlow performance test for torchmpnode three-variant architecture.
+OTFlow performance test for rampde three-variant architecture.
 
 This test specifically focuses on complex ODE models like OTFlow to ensure
 performance improvements are maintained for realistic use cases.
@@ -23,9 +23,9 @@ current_dir = Path(__file__).parent
 base_dir = current_dir.parent.parent
 sys.path.insert(0, str(base_dir))
 
-from torchmpnode import odeint
-from torchmpnode.odeint import _select_ode_solver
-from torchmpnode.loss_scalers import DynamicScaler
+from rampde import odeint
+from rampde.odeint import _select_ode_solver
+from rampde.loss_scalers import DynamicScaler
 
 from utils.test_models import create_otflow_model, create_test_data, get_model_info
 from utils.timing_utils import run_timing_test, verify_solver_selection
@@ -148,9 +148,9 @@ def test_otflow_vs_torchdiffeq():
     
     # Select key configurations for comparison
     configs = [
-        ("torchmpnode_unscaled", torch.float32, None),
-        ("torchmpnode_bfloat16", torch.bfloat16, None),
-        ("torchmpnode_float16", torch.float16, None),
+        ("rampde_unscaled", torch.float32, None),
+        ("rampde_bfloat16", torch.bfloat16, None),
+        ("rampde_float16", torch.float16, None),
     ]
     
     comparison_results = compare_against_torchdiffeq(model, x, t, configs)

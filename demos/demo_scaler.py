@@ -14,7 +14,7 @@ import math
 import argparse
 
 parser = argparse.ArgumentParser()
-parser.add_argument('--odeint', type=str, choices=['torchdiffeq', 'torchmpnode'], default='torchdiffeq')
+parser.add_argument('--odeint', type=str, choices=['torchdiffeq', 'rampde'], default='torchdiffeq')
 parser.add_argument('--scaler', type=str, choices=['noscaler', 'dynamicscaler'], default='dynamicscaler')
 parser.add_argument('--precision', type=str, choices=['float32', 'float16', 'bfloat16'], default='float16')
 args = parser.parse_args()
@@ -26,12 +26,12 @@ precision_map = {
 }
 args.precision = precision_map[args.precision]
 
-if args.odeint == 'torchmpnode':
-    print("Using torchmpnode")
+if args.odeint == 'rampde':
+    print("Using rampde")
     import sys
     sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '../..')))
-    from torchmpnode import odeint
-    from torchmpnode import NoScaler, DynamicScaler
+    from rampde import odeint
+    from rampde import NoScaler, DynamicScaler
     scaler_map = {
         'noscaler': NoScaler(dtype_low=args.precision),
         'dynamicscaler': DynamicScaler(dtype_low=args.precision)
@@ -45,7 +45,7 @@ else:
         solver_kwargs = {}
         args.scaler = 'autocast_gradscaler'
     except ImportError:
-        print("Error: torchdiffeq not available. Install with 'pip install torchdiffeq' or use --odeint=torchmpnode")
+        print("Error: torchdiffeq not available. Install with 'pip install torchdiffeq' or use --odeint=rampde")
         sys.exit(1)
 
 device = torch.device("cuda")
@@ -88,7 +88,7 @@ def train():
             loss = torch.nn.functional.mse_loss(yT_pred, yT_true)*LossDecrease
             print(f"  [ step {step:02d} ] Loss={loss:.4e}")
 
-            if args.odeint == 'torchmpnode':
+            if args.odeint == 'rampde':
                 loss.backward()
                 opt.step()
             else:

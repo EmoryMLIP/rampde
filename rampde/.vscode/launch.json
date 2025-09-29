@@ -12,7 +12,7 @@
             "pathMappings": [
                 {
                     "localRoot": "${workspaceFolder}",
-                    "remoteRoot": "/home/lruthot/scratch/torchmpnode"
+                    "remoteRoot": "/home/lruthot/scratch/rampde"
                 }
             ],
             "preLaunchTask": "Start Debug Server"

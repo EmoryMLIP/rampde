@@ -28,17 +28,17 @@ parser.add_argument('--train_dir', type=str, default=None)
 # new arguments
 parser.add_argument('--method', type=str, choices=['rk4', 'dopri5'], default='rk4')
 parser.add_argument('--precision', type=str, choices=['float32', 'float16','bfloat16'], default='float32')
-parser.add_argument('--odeint', type=str, choices=['torchdiffeq', 'torchmpnode'], default='torchdiffeq')
+parser.add_argument('--odeint', type=str, choices=['torchdiffeq', 'rampde'], default='torchdiffeq')
 parser.add_argument('--results_dir', type=str, default="./results")
 args = parser.parse_args()
 
-if args.odeint == 'torchmpnode':
-    print("Using torchmpnode")
+if args.odeint == 'rampde':
+    print("Using rampde")
     assert args.method == 'rk4' 
     import sys
     import os
     sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
-    from torchmpnode import odeint
+    from rampde import odeint
 else:    
     print("using torchdiffeq")
     try:
@@ -47,7 +47,7 @@ else:
         else:
             from torchdiffeq import odeint
     except ImportError:
-        print("Error: torchdiffeq not available. Install with 'pip install torchdiffeq' or use --odeint=torchmpnode")
+        print("Error: torchdiffeq not available. Install with 'pip install torchdiffeq' or use --odeint=rampde")
         sys.exit(1)
 
 precision_map = {

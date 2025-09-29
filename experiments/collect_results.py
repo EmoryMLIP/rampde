@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Universal Result Collection Script for torchmpnode experiments.
+Universal Result Collection Script for rampde experiments.
 
 This script scans experiment directories and collects results into a unified DataFrame.
 It supports filtering by experiment type, date, precision, method, and other parameters.
@@ -276,7 +276,7 @@ def create_comparison_table(df, group_by=['experiment_type', 'dataset', 'precisi
     return comparison
 
 def main():
-    parser = argparse.ArgumentParser(description='Collect and analyze torchmpnode experiment results')
+    parser = argparse.ArgumentParser(description='Collect and analyze rampde experiment results')
     parser.add_argument('--results_dir', type=str, default='./results',
                        help='Base results directory')
     parser.add_argument('--output', type=str, default='experiment_summary.csv',

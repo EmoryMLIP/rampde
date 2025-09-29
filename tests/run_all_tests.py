@@ -101,7 +101,7 @@ def print_test_summary(unittest_result, performance_results=None):
 
 def main():
     """Main test runner with command line options."""
-    parser = argparse.ArgumentParser(description="Run torchmpnode test suite")
+    parser = argparse.ArgumentParser(description="Run rampde test suite")
     parser.add_argument("--include-performance", action="store_true",
                       help="Include performance regression tests")
     parser.add_argument("--performance-only", action="store_true",
@@ -115,7 +115,7 @@ def main():
     run_unit_tests = not args.performance_only
     run_perf_tests = args.include_performance or args.performance_only
     
-    print("torchmpnode Test Suite")
+    print("rampde Test Suite")
     print("=" * 60)
     
     unittest_result = None

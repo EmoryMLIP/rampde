@@ -36,7 +36,7 @@ parser.add_argument('--train_dir', type=str, default="./results/cnf")
 parser.add_argument('--method', type=str, choices=['rk4', 'euler'], default='rk4')
 parser.add_argument('--precision', type=str, choices=['float32', 'float16', 'bfloat16'], default='float16')
 # This argument is now only used as a default; we will loop over both options.
-parser.add_argument('--odeint', type=str, choices=['torchdiffeq', 'torchmpnode'], default='torchmpnode')
+parser.add_argument('--odeint', type=str, choices=['torchdiffeq', 'rampde'], default='rampde')
 parser.add_argument('--results_dir', type=str, default="./results/cnf")
 parser.add_argument('--scaler', type=str, choices=['noscaler', 'dynamicscaler'], default='noscaler')
 
@@ -221,7 +221,7 @@ if args.viz:
         grid_points = np.vstack([X.ravel(), Y.ravel()]).T
         grid_tensor = torch.tensor(grid_points, dtype=torch.float32, device=device)
 
-        for odeint_option in ['torchdiffeq', 'torchmpnode']:
+        for odeint_option in ['torchdiffeq', 'rampde']:
             func = CNF(in_out_dim=2, hidden_dim=args.hidden_dim, width=args.width).to(device)
 
             train_dir_opt = args.train_dir #+ '_' + odeint_option
@@ -231,11 +231,11 @@ if args.viz:
             func.to(device).eval()
             print(f"Loaded checkpoint for {odeint_option} from {ckpt_path}")
 
-            if odeint_option == 'torchmpnode':
+            if odeint_option == 'rampde':
                 import sys
                 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
-                from torchmpnode import odeint as odeint_fn
-                from torchmpnode import NoScaler, DynamicScaler
+                from rampde import odeint as odeint_fn
+                from rampde import NoScaler, DynamicScaler
                 scaler_map = {
                     'noscaler':     NoScaler(dtype_low=args.precision),
                     'dynamicscaler': DynamicScaler(dtype_low=args.precision)
@@ -301,12 +301,12 @@ if args.viz:
         axes[1].set_xticks([]); axes[1].set_yticks([])
         fig.colorbar(cs1, ax=axes[1])
 
-        # torchmpnode result
+        # rampde result
         cs2 = axes[2].tricontourf(
             grid_points[:, 0], grid_points[:, 1],
-            learned_logp_grids['torchmpnode'], levels=50
+            learned_logp_grids['rampde'], levels=50
         )
-        axes[2].set_title("Learned density\n(torchmpnode)")
+        axes[2].set_title("Learned density\n(rampde)")
         axes[2].set_xticks([]); axes[2].set_yticks([])
         fig.colorbar(cs2, ax=axes[2])
 
@@ -320,7 +320,7 @@ plt.figure(figsize=(6, 4))
 
 plot_styles = {
     'torchdiffeq':  {'color': 'blue', 'linestyle': '-', 'marker': 'o'},
-    'torchmpnode':  {'color': 'red',  'linestyle': '-', 'marker': 'o'},
+    'rampde':  {'color': 'red',  'linestyle': '-', 'marker': 'o'},
 }
 
 for method, diffs in comparison_logp_diff.items():

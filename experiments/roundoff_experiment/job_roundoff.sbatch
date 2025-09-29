@@ -19,7 +19,7 @@ export CUDA_VISIBLE_DEVICES=0
 export PYTHONUNBUFFERED=1
 
 # Change to experiment directory
-cd /local/scratch/lruthot/code/torchmpnode/experiments/roundoff_experiment
+cd /local/scratch/lruthot/code/rampde/experiments/roundoff_experiment
 
 # Print environment info
 echo "Starting roundoff experiments..."

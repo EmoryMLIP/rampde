@@ -45,11 +45,11 @@ def create_parser():
     # new arguments
     parser.add_argument('--method', type=str, choices=['rk4', 'dopri5'], default='rk4')
     parser.add_argument('--precision', type=str, choices=['tfloat32', 'float32', 'float16','bfloat16'], default='float16')
-    parser.add_argument('--odeint', type=str, choices=['torchdiffeq', 'torchmpnode'], default='torchmpnode')
+    parser.add_argument('--odeint', type=str, choices=['torchdiffeq', 'rampde'], default='rampde')
     parser.add_argument('--no_grad_scaler', action='store_true',
                         help='Disable GradScaler for torchdiffeq with float16 (default: enabled)')
     parser.add_argument('--no_dynamic_scaler', action='store_true',
-                        help='Disable DynamicScaler for torchmpnode with float16 (default: enabled)')
+                        help='Disable DynamicScaler for rampde with float16 (default: enabled)')
 
     parser.add_argument('--results_dir', type=str, default='./results')
     parser.add_argument('--seed', type=int, default=0)
@@ -293,7 +293,7 @@ def main():
             from torchdiffeq import odeint_adjoint as odeint_func
             print("Warning: Using torchdiffeq with adjoint method, which is not recommended for low precision training.")
         except ImportError:
-            print("torchdiffeq not available, continuing with torchmpnode")
+            print("torchdiffeq not available, continuing with rampde")
     
     # Import utilities after setting up the path
     from common import RunningAverageMeter, RunningMaximumMeter, AverageMeter, count_parameters

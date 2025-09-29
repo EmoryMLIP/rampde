@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Visualization Dashboard for torchmpnode experiments.
+Visualization Dashboard for rampde experiments.
 
 This script creates comparison plots and performance visualizations from collected experiment results.
 """
@@ -366,7 +366,7 @@ def create_summary_dashboard(df, output_dir='.'):
         table.scale(1.2, 1.5)
         ax6.set_title('Best Performers by Experiment Type', pad=20)
     
-    plt.suptitle('torchmpnode Experiment Summary Dashboard', fontsize=16, y=0.98)
+    plt.suptitle('rampde Experiment Summary Dashboard', fontsize=16, y=0.98)
     plt.tight_layout()
     output_path = os.path.join(output_dir, 'summary_dashboard.png')
     plt.savefig(output_path, dpi=150, bbox_inches='tight')
@@ -374,7 +374,7 @@ def create_summary_dashboard(df, output_dir='.'):
     print(f"Saved summary dashboard to: {output_path}")
 
 def main():
-    parser = argparse.ArgumentParser(description='Visualize torchmpnode experiment results')
+    parser = argparse.ArgumentParser(description='Visualize rampde experiment results')
     parser.add_argument('input', type=str, help='Input CSV file from collect_results.py')
     parser.add_argument('--output_dir', type=str, default='./visualizations',
                        help='Output directory for plots')

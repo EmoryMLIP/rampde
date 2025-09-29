@@ -37,7 +37,7 @@ echo "Test 1: Comprehensive precision and scaling comparison"
 # Test different precision types
 for precision in "float32" "tfloat32" "bfloat16"; do
   echo "Testing precision: $precision (no scaling needed)"
-  for odeint in "torchdiffeq" "torchmpnode"; do
+  for odeint in "torchdiffeq" "rampde"; do
     fixed_args=(
       --precision "$precision"
       --method "rk4"
@@ -80,41 +80,41 @@ fixed_args=(
 echo "Submitting: torchdiffeq float16 with-grad-scaler"
 sbatch --account=mathg3 job_ode_mnist.sbatch "${fixed_args[@]}" "${test_args[@]}"
 
-# torchmpnode float16 + no scaling
+# rampde float16 + no scaling
 fixed_args=(
   --precision "float16"
   --method "rk4"
-  --odeint "torchmpnode"
+  --odeint "rampde"
   --seed "$seed"
   --results_dir "$results_dir"
   --no_grad_scaler
   --no_dynamic_scaler
 )
-echo "Submitting: torchmpnode float16 no-scaling"
+echo "Submitting: rampde float16 no-scaling"
 sbatch --account=mathg3 job_ode_mnist.sbatch "${fixed_args[@]}" "${test_args[@]}"
 
-# torchmpnode float16 + dynamic scaler only
+# rampde float16 + dynamic scaler only
 fixed_args=(
   --precision "float16"
   --method "rk4"
-  --odeint "torchmpnode"
+  --odeint "rampde"
   --seed "$seed"
   --results_dir "$results_dir"
   --no_grad_scaler
 )
-echo "Submitting: torchmpnode float16 with-dynamic-scaler"
+echo "Submitting: rampde float16 with-dynamic-scaler"
 sbatch --account=mathg3 job_ode_mnist.sbatch "${fixed_args[@]}" "${test_args[@]}"
 
-# torchmpnode float16 + grad scaler only
+# rampde float16 + grad scaler only
 fixed_args=(
   --precision "float16"
   --method "rk4"
-  --odeint "torchmpnode"
+  --odeint "rampde"
   --seed "$seed"
   --results_dir "$results_dir"
   --no_dynamic_scaler
 )
-echo "Submitting: torchmpnode float16 with-grad-scaler"
+echo "Submitting: rampde float16 with-grad-scaler"
 sbatch --account=mathg3 job_ode_mnist.sbatch "${fixed_args[@]}" "${test_args[@]}"
 
 echo ""

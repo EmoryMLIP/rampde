@@ -30,14 +30,14 @@ def create_parser():
                         choices=['tfloat32', 'float32', 'float16','bfloat16'], default='tfloat32',
                         help='Precision mode (float32 corresponds to --prec single in OT-Flow)')
     parser.add_argument('--odeint', type=str,
-                        choices=['torchdiffeq', 'torchmpnode'], default='torchmpnode')
+                        choices=['torchdiffeq', 'rampde'], default='rampde')
     parser.add_argument('--adjoint', action='store_true')
     
     # Gradient scaling arguments
     parser.add_argument('--no_grad_scaler', action='store_true',
                         help='Disable GradScaler for torchdiffeq with float16 (default: enabled)')
     parser.add_argument('--no_dynamic_scaler', action='store_true',
-                        help='Disable DynamicScaler for torchmpnode with float16 (default: enabled)')
+                        help='Disable DynamicScaler for rampde with float16 (default: enabled)')
     
     # Training arguments
     parser.add_argument('--niters', type=int, default=120000)
@@ -92,12 +92,12 @@ def setup_environment(args):
     # Set up paths for both solvers
     base_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), '../..'))
     sys.path.insert(0, os.path.join(base_dir, "examples"))  # for datasets, utils
-    sys.path.insert(0, base_dir)  # Add root directory for torchmpnode import
+    sys.path.insert(0, base_dir)  # Add root directory for rampde import
     
-    if args.odeint == 'torchmpnode':
-        print("Using torchmpnode")
-        from torchmpnode import odeint
-        from torchmpnode.loss_scalers import DynamicScaler
+    if args.odeint == 'rampde':
+        print("Using rampde")
+        from rampde import odeint
+        from rampde.loss_scalers import DynamicScaler
         return odeint, DynamicScaler
     else:    
         print("using torchdiffeq")
@@ -138,18 +138,18 @@ def determine_scaler(args, DynamicScaler, precision):
         scaler_name = 'grad'
         print(f"Using PyTorch GradScaler for float16 precision with torchdiffeq (initial scale: {scaler.get_scale()})")
         return scaler, scaler_name, None
-    elif args.odeint == 'torchmpnode' and args.precision == 'float16' and args.dynamic_scaler:
-        # torchmpnode + float16 + DynamicScaler
+    elif args.odeint == 'rampde' and args.precision == 'float16' and args.dynamic_scaler:
+        # rampde + float16 + DynamicScaler
         scaler = DynamicScaler(precision)
         scaler_name = 'dynamic'
-        print("Using DynamicScaler for float16 precision with torchmpnode")
+        print("Using DynamicScaler for float16 precision with rampde")
         return scaler, scaler_name, scaler
-    elif args.odeint == 'torchmpnode' and args.precision == 'float16' and args.grad_scaler and not args.dynamic_scaler:
-        # torchmpnode + float16 + GradScaler + safe mode (dynamic scaler off)
+    elif args.odeint == 'rampde' and args.precision == 'float16' and args.grad_scaler and not args.dynamic_scaler:
+        # rampde + float16 + GradScaler + safe mode (dynamic scaler off)
         from torch.amp import GradScaler
         scaler = GradScaler('cuda')
         scaler_name = 'grad'
-        print(f"Using PyTorch GradScaler for float16 precision with torchmpnode (safe mode, DynamicScaler disabled) (initial scale: {scaler.get_scale()})")
+        print(f"Using PyTorch GradScaler for float16 precision with rampde (safe mode, DynamicScaler disabled) (initial scale: {scaler.get_scale()})")
         return scaler, scaler_name, None
     else:
         # All other cases: no scaling
@@ -329,7 +329,7 @@ def main():
     # Get precision settings
     precision = get_precision_dtype(args.precision)
     
-    # Get base directory (torchmpnode root)
+    # Get base directory (rampde root)
     base_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), '../..'))
     
     # Setup experiment directories and logging
@@ -405,7 +405,7 @@ def main():
                     
                     # Prepare odeint arguments
                     odeint_kwargs = {'method': args.method}
-                    if args.odeint == 'torchmpnode' and loss_scaler_for_odeint is not None:
+                    if args.odeint == 'rampde' and loss_scaler_for_odeint is not None:
                         odeint_kwargs['loss_scaler'] = loss_scaler_for_odeint
                     
                     # Single odeint call

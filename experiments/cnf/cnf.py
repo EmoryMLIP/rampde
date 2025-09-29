@@ -43,14 +43,14 @@ def create_parser():
     # ODE solver arguments
     parser.add_argument('--method', type=str, choices=['rk4', 'euler'], default='rk4')
     parser.add_argument('--precision', type=str, choices=['tfloat32', 'float32', 'float16', 'bfloat16'], default='float32')
-    parser.add_argument('--odeint', type=str, choices=['torchdiffeq', 'torchmpnode'], default='torchmpnode')
+    parser.add_argument('--odeint', type=str, choices=['torchdiffeq', 'rampde'], default='rampde')
     parser.add_argument('--adjoint', action='store_true')
     
     # Gradient scaling arguments
     parser.add_argument('--no_grad_scaler', action='store_true',
                         help='Disable GradScaler for torchdiffeq with float16 (default: enabled)')
     parser.add_argument('--no_dynamic_scaler', action='store_true',
-                        help='Disable DynamicScaler for torchmpnode with float16 (default: enabled)')
+                        help='Disable DynamicScaler for rampde with float16 (default: enabled)')
     
     # Data arguments
     parser.add_argument('--data', choices=['swissroll', '8gaussians', 'pinwheel', 'circles', 'moons', '2spirals', 'checkerboard', 'rings'],
@@ -232,7 +232,7 @@ def main():
             from torchdiffeq import odeint_adjoint as odeint_func
             print("Warning: Using torchdiffeq with adjoint method, which is not recommended for low precision training.")
         except ImportError:
-            print("torchdiffeq not available, continuing with torchmpnode")
+            print("torchdiffeq not available, continuing with rampde")
     
     # Import utilities after setting up the path
     from common import RunningAverageMeter, RunningMaximumMeter, AverageMeter, count_parameters
@@ -297,7 +297,7 @@ def main():
         bwd_time_meter = AverageMeter()
         mem_meter = RunningMaximumMeter()
 
-        # Setup solver kwargs for training (DynamicScaler for torchmpnode)
+        # Setup solver kwargs for training (DynamicScaler for rampde)
         solver_kwargs = {}
         if loss_scaler_for_odeint is not None:
             # This is a DynamicScaler instance or False for safe mode

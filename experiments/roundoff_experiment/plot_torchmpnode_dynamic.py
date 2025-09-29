@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Plot roundoff experiment results showing only torchmpnode with specified precision and scaling
+Plot roundoff experiment results showing only rampde with specified precision and scaling
 with empty torchdiffeq panels as requested. Now supports multiple experiment types.
 """
 
@@ -62,7 +62,7 @@ def get_error_columns(experiment):
         raise ValueError(f"Unknown experiment type: {experiment}")
 
 def main():
-    parser = argparse.ArgumentParser(description='Plot torchmpnode roundoff experiment results')
+    parser = argparse.ArgumentParser(description='Plot rampde roundoff experiment results')
     parser.add_argument('--experiment', type=str, default='cnf', 
                        choices=['cnf', 'otflow'],
                        help='Experiment type (default: cnf)')
@@ -84,7 +84,7 @@ def main():
     
     df = pd.read_csv(csv_file)
 
-    # Filter for torchmpnode + specified precision + specified scaler only
+    # Filter for rampde + specified precision + specified scaler only
     # Handle NaN values in scaler_type for some experiments (like bfloat16)
     if args.scaler == 'none':
         scaler_filter = (df['scaler_type'].isna()) | (df['scaler_type'] == 'none')
@@ -93,15 +93,15 @@ def main():
     
     df_filtered = df[
         (df['precision'] == args.precision) & 
-        (df['odeint_type'] == 'torchmpnode') & 
+        (df['odeint_type'] == 'rampde') & 
         scaler_filter
     ].copy()
     
     if df_filtered.empty:
-        print(f"No data found for torchmpnode + {args.precision} + {args.scaler}")
+        print(f"No data found for rampde + {args.precision} + {args.scaler}")
         return
 
-    print(f"Plotting torchmpnode + {args.precision} + {args.scaler} configuration")
+    print(f"Plotting rampde + {args.precision} + {args.scaler} configuration")
     print(f"Found {len(df_filtered)} rows of data")
 
     # Get error columns and labels for this experiment type
@@ -126,25 +126,25 @@ def main():
     gs = fig.add_gridspec(2, 3, width_ratios=[1, 1, 0.3])
 
     axes = [
-        fig.add_subplot(gs[0, 0]),  # torchmpnode RK4
+        fig.add_subplot(gs[0, 0]),  # rampde RK4
         fig.add_subplot(gs[0, 1]),  # torchdiffeq RK4 (empty)
-        fig.add_subplot(gs[1, 0]),  # torchmpnode Euler
+        fig.add_subplot(gs[1, 0]),  # rampde Euler
         fig.add_subplot(gs[1, 1])   # torchdiffeq Euler (empty)
     ]
 
     legend_ax = fig.add_subplot(gs[:, 2])
 
     # Set title based on configuration
-    fig.suptitle(f'{args.experiment.upper()} Roundoff Error Analysis: {args.precision} Precision - torchmpnode + {args.scaler} scaling', fontsize=16)
+    fig.suptitle(f'{args.experiment.upper()} Roundoff Error Analysis: {args.precision} Precision - rampde + {args.scaler} scaling', fontsize=16)
 
     # Extract unique timestep values for x-axis
     timesteps = sorted(df_filtered['n_timesteps'].unique())
 
-    # Plot configurations - only torchmpnode data
+    # Plot configurations - only rampde data
     plot_configs = [
-        ('torchmpnode', 'rk4', 'torchmpnode - RK4'),
+        ('rampde', 'rk4', 'rampde - RK4'),
         ('empty', 'rk4', 'torchdiffeq - RK4 (not applicable)'),
-        ('torchmpnode', 'euler', 'torchmpnode - Euler'),
+        ('rampde', 'euler', 'rampde - Euler'),
         ('empty', 'euler', 'torchdiffeq - Euler (not applicable)')
     ]
 
@@ -199,7 +199,7 @@ def main():
             if args.scaler == 'dynamic':
                 explanation = 'Not applicable:\ntorchdiffeq does not have\ndynamic scaling'
             else:
-                explanation = f'Not applicable:\nShowing only torchmpnode\nwith {args.scaler} scaler'
+                explanation = f'Not applicable:\nShowing only rampde\nwith {args.scaler} scaler'
             ax.text(0.5, 0.5, explanation, 
                    ha='center', va='center', transform=ax.transAxes, 
                    fontsize=12, style='italic', color='gray')
@@ -230,7 +230,7 @@ def main():
     legend_ax.legend(handles, labels, loc='center', fontsize=10)
 
     # Generate filename based on configuration
-    filename = f'{args.experiment}_roundoff_comparison_{args.precision}_torchmpnode_{args.scaler}.png'
+    filename = f'{args.experiment}_roundoff_comparison_{args.precision}_rampde_{args.scaler}.png'
 
     # Adjust layout and save
     plt.tight_layout()
@@ -238,13 +238,13 @@ def main():
     plt.show()
 
     # Print summary for solution errors only
-    print(f"\nSummary of solution error means for torchmpnode + {args.precision} + {args.scaler}:")
+    print(f"\nSummary of solution error means for rampde + {args.precision} + {args.scaler}:")
     for method in ['rk4', 'euler']:
         subset = df_filtered[df_filtered['method'] == method]
         if not subset.empty:
             errors = [subset[subset['n_timesteps'] == n]['sol_error_mean'].iloc[0] 
                      for n in timesteps if not subset[subset['n_timesteps'] == n].empty]
-            print(f"torchmpnode {method}: {errors}")
+            print(f"rampde {method}: {errors}")
     
     print(f"\nPlot saved as: {filename}")
 

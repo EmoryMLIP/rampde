@@ -21,7 +21,7 @@ TupleOrTensor = Union[torch.Tensor, Tuple[torch.Tensor, ...]]
 
 # Add parent directory for imports
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-# Add torchmpnode root directory for torchmpnode imports
+# Add rampde root directory for rampde imports
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
 from common import setup_environment, get_precision_dtype
 
@@ -161,12 +161,12 @@ class RoundoffAnalyzer:
                 # Standard forward pass
                 with autocast(device_type='cuda', dtype=dtype):
                     if scaler is not None and scaler is not False:
-                        if odeint_type == 'torchmpnode':
+                        if odeint_type == 'rampde':
                             sol = odeint_fn(func_copy, y0_copy, t_copy, method=method, loss_scaler=scaler)
                         else:
                             sol = odeint_fn(func_copy, y0_copy, t_copy, method=method)
-                    elif scaler is False and odeint_type == 'torchmpnode':
-                        # Explicitly disable scaling for torchmpnode
+                    elif scaler is False and odeint_type == 'rampde':
+                        # Explicitly disable scaling for rampde
                         sol = odeint_fn(func_copy, y0_copy, t_copy, method=method, loss_scaler=False)
                     else:
                         sol = odeint_fn(func_copy, y0_copy, t_copy, method=method)
@@ -261,9 +261,9 @@ class RoundoffAnalyzer:
         t = torch.linspace(0.0, t_final, n_timesteps + 1, device=self.device, dtype=torch.float64)
         
         # Get ODE integrator
-        if odeint_type == 'torchmpnode':
-            from torchmpnode import odeint
-            from torchmpnode.loss_scalers import DynamicScaler
+        if odeint_type == 'rampde':
+            from rampde import odeint
+            from rampde.loss_scalers import DynamicScaler
         else:
             from torchdiffeq import odeint
             DynamicScaler = None
@@ -289,7 +289,7 @@ class RoundoffAnalyzer:
             p.grad = None
         
         # Run reference in fp64
-        # For torchdiffeq, it preserves float64. For torchmpnode, we need to handle the conversion
+        # For torchdiffeq, it preserves float64. For rampde, we need to handle the conversion
         sol_ref = odeint(func_ref, y0_ref, t, method=method)
         
         # Handle tuple outputs (e.g., CNF returns (z, logp))
@@ -328,11 +328,11 @@ class RoundoffAnalyzer:
         # Setup scaler if needed
         scaler = None
         if precision == 'float16':
-            if odeint_type == 'torchmpnode':
+            if odeint_type == 'rampde':
                 if scaler_type == 'dynamic' and DynamicScaler is not None:
                     scaler = DynamicScaler(dtype)
                 elif scaler_type == 'grad':
-                    # For torchmpnode, grad scaling uses default (DynamicScaler)
+                    # For rampde, grad scaling uses default (DynamicScaler)
                     scaler = None  # This triggers default DynamicScaler
                 elif scaler_type == 'none':
                     scaler = False  # Explicitly disable scaling
@@ -456,13 +456,13 @@ class RoundoffAnalyzer:
                 else:
                     with autocast(device_type='cuda', dtype=dtype):
                         if scaler is not None and scaler is not False:
-                            if odeint_type == 'torchmpnode':
+                            if odeint_type == 'rampde':
                                 sol_run = odeint(func_run, y0_run, t_run, method=method, 
                                                loss_scaler=scaler)
                             else:
                                 sol_run = odeint(func_run, y0_run, t_run, method=method)
-                        elif scaler is False and odeint_type == 'torchmpnode':
-                            # Explicitly disable scaling for torchmpnode
+                        elif scaler is False and odeint_type == 'rampde':
+                            # Explicitly disable scaling for rampde
                             sol_run = odeint(func_run, y0_run, t_run, method=method, 
                                            loss_scaler=False)
                         else:

@@ -34,7 +34,7 @@ parser.add_argument('--test_batch_size', type=int, default=1000)
 # new arguments
 parser.add_argument('--method', type=str, choices=['rk4', 'dopri5'], default='rk4')
 parser.add_argument('--precision', type=str, choices=['float32', 'float16','bfloat16'], default='float16')
-parser.add_argument('--odeint', type=str, choices=['torchdiffeq', 'torchmpnode'], default='torchmpnode')
+parser.add_argument('--odeint', type=str, choices=['torchdiffeq', 'rampde'], default='rampde')
 
 parser.add_argument('--results_dir', type=str, default='./results')
 parser.add_argument('--seed', type=int, default=0)
@@ -43,12 +43,12 @@ parser.add_argument('--gpu', type=int, default=0)
 args = parser.parse_args()
 
 
-if args.odeint == 'torchmpnode':
-    print("Using torchmpnode")
+if args.odeint == 'rampde':
+    print("Using rampde")
     assert args.method == 'rk4' 
     import sys
     sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
-    from torchmpnode import odeint
+    from rampde import odeint
 else:    
     print("using torchdiffeq")
     try:
@@ -57,7 +57,7 @@ else:
         else:
             from torchdiffeq import odeint
     except ImportError:
-        print("Error: torchdiffeq not available. Install with 'pip install torchdiffeq' or use --odeint=torchmpnode")
+        print("Error: torchdiffeq not available. Install with 'pip install torchdiffeq' or use --odeint=rampde")
         sys.exit(1)
 
 precision_map = {

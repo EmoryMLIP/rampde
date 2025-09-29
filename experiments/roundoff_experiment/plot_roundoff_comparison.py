@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Plot roundoff experiment results comparing torchmpnode vs torchdiffeq
+Plot roundoff experiment results comparing rampde vs torchdiffeq
 for RK4 and Euler methods with configurable precision and scaler.
 Shows all error metrics with distinct line styles.
 Supports CNF, STL10, and OTFLOW experiments.
@@ -123,9 +123,9 @@ def main():
     gs = fig.add_gridspec(2, 3, width_ratios=[1, 1, 0.3])
 
     axes = [
-        fig.add_subplot(gs[0, 0]),  # torchmpnode RK4
+        fig.add_subplot(gs[0, 0]),  # rampde RK4
         fig.add_subplot(gs[0, 1]),  # torchdiffeq RK4  
-        fig.add_subplot(gs[1, 0]),  # torchmpnode Euler
+        fig.add_subplot(gs[1, 0]),  # rampde Euler
         fig.add_subplot(gs[1, 1])   # torchdiffeq Euler
     ]
 
@@ -142,9 +142,9 @@ def main():
 
     # Plot configurations
     plot_configs = [
-        ('torchmpnode', 'rk4', 'torchmpnode - RK4'),
+        ('rampde', 'rk4', 'rampde - RK4'),
         ('torchdiffeq', 'rk4', 'torchdiffeq - RK4'),
-        ('torchmpnode', 'euler', 'torchmpnode - Euler'),
+        ('rampde', 'euler', 'rampde - Euler'),
         ('torchdiffeq', 'euler', 'torchdiffeq - Euler')
     ]
 
@@ -225,7 +225,7 @@ def main():
 
     # Print summary for solution errors only
     print(f"\nSummary of solution error means for {args.experiment} ({args.precision}):")
-    for odeint_type in ['torchmpnode', 'torchdiffeq']:
+    for odeint_type in ['rampde', 'torchdiffeq']:
         for method in ['rk4', 'euler']:
             subset = df_filtered[(df_filtered['odeint_type'] == odeint_type) & 
                                 (df_filtered['method'] == method)]

@@ -1,5 +1,5 @@
 #!/bin/bash
-# run_test_experiments.sh - Master script for quick test runs of all torchmpnode experiments
+# run_test_experiments.sh - Master script for quick test runs of all rampde experiments
 # Usage: chmod +x run_test_experiments.sh && ./run_test_experiments.sh
 #
 # Purpose: Run all experiments with reduced iterations/epochs to:
@@ -9,7 +9,7 @@
 # 4. Get 2-3 validation/CSV rows per experiment for analysis
 
 echo "=========================================="
-echo "torchmpnode Test Experiments Runner"
+echo "rampde Test Experiments Runner"
 echo "=========================================="
 echo "This script runs shortened versions of all experiments to test functionality"
 echo "and generate initial performance data."
@@ -31,7 +31,7 @@ echo ""
 # Time tracking
 start_time=$(date +%s)
 
-echo "Starting torchmpnode test experiment suite at $(date)"
+echo "Starting rampde test experiment suite at $(date)"
 echo ""
 
 # Function to run a test script and track time
