@@ -40,7 +40,7 @@ class FixedGridODESolverDynamic(FixedGridODESolverBase):
     """
 
     @staticmethod
-    @custom_bwd
+    @custom_bwd(device_type="cuda")
     def backward(ctx: Any, at: torch.Tensor) -> Tuple[Optional[torch.Tensor], ...]:
         """
         Dynamic scaling backward pass.
