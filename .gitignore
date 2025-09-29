@@ -231,3 +231,25 @@ experiments/otflowlarge/data/data/power/data.npy
 experiments/stl10/.data/mnist/MNIST/raw/t10k-images-idx3-ubyte
 experiments/stl10/.data/mnist/MNIST/raw/t10k-labels-idx1-ubyte
 experiments/stl10/.data/mnist/MNIST/raw/train-images-idx3-ubyte
+experiments/results/
+experiments/results_*
+experiments/otflowlarge/results/
+experiments/cnf/results/
+experiments/mnist/results/
+experiments/stl10/results/
+experiments/stl10/2025-*
+
+# Experiment results and generated content
+experiments/roundoff_experiment/*.png
+experiments/roundoff_experiment/data/
+experiments/roundoff_experiment/results/
+experiments/roundoff_experiment/logs/
+experiments/roundoff_experiment/*.err
+experiments/roundoff_experiment/*.out
+experiments/roundoff_experiment/monitor.log
+
+# Demo output
+demos/results_*/
+
+# Test results
+experiments/stl10/tests/gradient_test_results/
