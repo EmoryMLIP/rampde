@@ -1,5 +1,5 @@
 """
-torchmpnode: Mixed precision Neural ODE solvers for PyTorch.
+rampde: Mixed precision Neural ODE solvers for PyTorch.
 
 This package provides seamless drop-in replacements for torchdiffeq with automatic
 mixed precision support via PyTorch's autocast. Key features:
