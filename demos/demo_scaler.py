@@ -31,9 +31,9 @@ if args.odeint == 'rampde':
     import sys
     sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '../..')))
     from rampde import odeint
-    from rampde import NoScaler, DynamicScaler
+    from rampde import DynamicScaler
     scaler_map = {
-        'noscaler': NoScaler(dtype_low=args.precision),
+        'noscaler': None,  # Use unscaled solver variants
         'dynamicscaler': DynamicScaler(dtype_low=args.precision)
     }
     scaler = scaler_map[args.scaler]

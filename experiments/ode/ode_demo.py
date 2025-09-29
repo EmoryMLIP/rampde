@@ -150,9 +150,9 @@ def visualize_compare(true_y, func_d, itr, result_dir, odeintfn):
 
     with torch.no_grad():
         if odeintfn == 'rampde':
-            from rampde import NoScaler, DynamicScaler
+            from rampde import DynamicScaler
             scaler_map = {
-                'noscaler': NoScaler(dtype_low=args.precision),
+                'noscaler': None,  # Use unscaled solver variants
                 'dynamicscaler': DynamicScaler(dtype_low=args.precision)
             }
             scaler = scaler_map[args.scaler]
@@ -256,9 +256,9 @@ else:
 
         with autocast(device_type='cuda', dtype=args.precision):
             if args.odeint == 'rampde':
-                from rampde import NoScaler, DynamicScaler
+                from rampde import DynamicScaler
                 scaler_map = {
-                    'noscaler': NoScaler(dtype_low=args.precision),
+                    'noscaler': None,  # Use unscaled solver variants
                     'dynamicscaler': DynamicScaler(dtype_low=args.precision)
                 }
                 scaler = scaler_map[args.scaler]

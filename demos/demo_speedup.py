@@ -13,7 +13,7 @@ from contextlib import nullcontext
 
 import torch
 # from torchdiffeq import odeint
-from rampde import odeint, NoScaler
+from rampde import odeint
 
 torch.backends.cuda.matmul.allow_tf32 = False
 torch.backends.cudnn.allow_tf32 = False

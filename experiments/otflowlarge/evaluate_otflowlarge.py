@@ -94,13 +94,13 @@ def setup_environment(args):
     if args.odeint == 'rampde':
         print("Using rampde for evaluation")
         from rampde import odeint
-        from rampde.loss_scalers import DynamicScaler, NoScaler
-        
+        from rampde.loss_scalers import DynamicScaler
+
         # Determine appropriate scaler
         if args.precision == 'float16' and args.dynamic_scaler:
             ScalerClass = DynamicScaler
         else:
-            ScalerClass = NoScaler
+            ScalerClass = None  # Use unscaled solver variants
             
         return odeint, ScalerClass
     else:
