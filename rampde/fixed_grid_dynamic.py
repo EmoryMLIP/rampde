@@ -191,20 +191,37 @@ class FixedGridODESolverDynamic(FixedGridODESolverBase):
                     grad_t[i].add_(scale_factor * (gti - gdti)).sub_(gdti2_hi)
                     grad_t[i + 1].add_(scale_factor * gdti).add_(gdti2_hi)
                 
-                # Check for overflow in accumulated gradients
+                # Check for overflow in accumulated gradients with enhanced error reporting
                 if _is_any_infinite((a, grad_t, grad_theta)):
-                    # print isfinite for a, grad_t, grad_theta
+                    # Collect diagnostic information
+                    error_details = []
                     if not a.isfinite().all():
-                        print(f"Gradient a is not finite at time step i={i}: {a}")
-                    if grad_t is not None and not grad_t[i].isfinite().all():
-                        print(f"Gradient grad_t[{i}] is not finite: {grad_t[i]}")
-                    if grad_t is not None and not grad_t[i + 1].isfinite().all():
-                        print(f"Gradient grad_t[{i + 1}] is not finite: {grad_t[i + 1]}")
+                        n_inf = torch.isinf(a).sum().item()
+                        n_nan = torch.isnan(a).sum().item()
+                        error_details.append(f"adjoint: {n_inf} inf, {n_nan} nan")
+
+                    if grad_t is not None:
+                        if not grad_t[i].isfinite().all():
+                            n_inf = torch.isinf(grad_t[i]).sum().item()
+                            n_nan = torch.isnan(grad_t[i]).sum().item()
+                            error_details.append(f"time_grad[{i}]: {n_inf} inf, {n_nan} nan")
+                        if i + 1 < grad_t.shape[0] and not grad_t[i + 1].isfinite().all():
+                            n_inf = torch.isinf(grad_t[i + 1]).sum().item()
+                            n_nan = torch.isnan(grad_t[i + 1]).sum().item()
+                            error_details.append(f"time_grad[{i + 1}]: {n_inf} inf, {n_nan} nan")
+
                     if any(not g.isfinite().all() for g in grad_theta):
-                        print(f"Gradient grad_theta is not finite at time step i={i}: {[g for g in grad_theta if not g.isfinite().all()]}")
-                    raise RuntimeError(
-                        f"Gradients are not representable at time step i={i}"
+                        bad_params = sum(1 for g in grad_theta if not g.isfinite().all())
+                        error_details.append(f"param_grads: {bad_params}/{len(grad_theta)} tensors")
+
+                    # Enhanced error message with actionable suggestions
+                    error_msg = (
+                        f"Gradients became non-finite at time step {i}/{len(t)-1}.\n"
+                        f"Scale factor: {scaler.S:.2e}, attempt: {attempts}/{self.max_scale_attempts}\n"
+                        f"Non-finite: {', '.join(error_details)}\n"
+                        f"Try: reduce learning rate, gradient clipping, check ODE stability, or use float32"
                     )
+                    raise RuntimeError(error_msg)
                 
                 # Adjust upward scaling if the norm is too small
                 if attempts == 0 and scaler.check_for_increase(a):
