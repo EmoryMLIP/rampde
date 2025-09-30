@@ -14,6 +14,7 @@ Key points:
 import torch
 import unittest
 import numpy as np
+import random
 import sys
 import os
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
@@ -24,6 +25,18 @@ from torch.amp import autocast
 class TestFixedGridODESolver(unittest.TestCase):
 
     def setUp(self):
+        # Set deterministic seeds for reproducible tests
+        torch.manual_seed(42)
+        np.random.seed(42)
+        random.seed(42)
+        if torch.cuda.is_available():
+            torch.cuda.manual_seed(42)
+            torch.cuda.manual_seed_all(42)
+
+        # Set deterministic algorithms for reproducibility
+        torch.backends.cudnn.deterministic = True
+        torch.backends.cudnn.benchmark = False
+
         self.dtype = torch.float64
         self.device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
         self.A = torch.randn(2, 2, dtype=self.dtype, device=self.device)
@@ -53,7 +66,7 @@ class TestFixedGridODESolver(unittest.TestCase):
     
     def test_convergence(self):
         solvers = [Euler(), RK4()]
-        quiet = os.environ.get("TORCHMPNODE_TEST_QUIET", "0") == "1"
+        quiet = os.environ.get("RAMPDE_TEST_QUIET", "0") == "1"
         for solver in solvers:
             with self.subTest(solver=solver):
                 order = solver.order

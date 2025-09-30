@@ -200,7 +200,7 @@ class TestGradientPrecisionComparison(unittest.TestCase):
         # Print results in a markdown-like table format
         table_lines = ["| dtype | Scaler | RelErr y(T) | RelErr ∂y0 | RelErr ∂a | RelErr ∂b | RelErr ∂c |",
                "|-------|--------|--------------|-------------|-------------|-------------|-------------|"]
-        quiet = os.environ.get("TORCHMPNODE_TEST_QUIET", "0") == "1"
+        quiet = os.environ.get("RAMPDE_TEST_QUIET", "0") == "1"
         for row in results:
             table_lines.append("| " + " | ".join(row) + " |")
         if not quiet:

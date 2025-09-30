@@ -5,14 +5,19 @@ import os
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
 from rampde import odeint
 import math
+import random
+import numpy as np
 
 from torch.amp import autocast
 
 # Define our nonlinear ODE as a module.
 # Its parameters (A, B, b) are registered as nn.Parameters and are kept in float32.
 class NonlinearODE(torch.nn.Module):
-    def __init__(self, dim):
+    def __init__(self, dim, seed=None):
         super(NonlinearODE, self).__init__()
+        # Set seed for deterministic parameter initialization
+        if seed is not None:
+            torch.manual_seed(seed)
         # Always stored in float32.
         self.A = torch.nn.Parameter(torch.randn(dim, dim, dtype=torch.float32))
         self.B = torch.nn.Parameter(torch.randn(dim, dim, dtype=torch.float32))
@@ -27,11 +32,30 @@ class TestTaylorExpansionODE(unittest.TestCase):
     def setUp(self):
         if not torch.cuda.is_available():
             self.skipTest("CUDA not available; skipping GPU tests.")
+
+        # Set comprehensive seeds for deterministic behavior
+        self.seed = 42
+        torch.manual_seed(self.seed)
+        torch.cuda.manual_seed(self.seed)
+        torch.cuda.manual_seed_all(self.seed)
+        np.random.seed(self.seed)
+        random.seed(self.seed)
+
+        # Enable deterministic algorithms for reproducibility
+        torch.backends.cudnn.deterministic = True
+        torch.backends.cudnn.benchmark = False
+
         self.device = torch.device("cuda:0")
         self.dim = 2         # small state dimension
         self.n_time = 10     # few time steps to keep the integration fast
         self.t0 = 0.0
         self.t1 = 1.0
+
+    def tearDown(self):
+        """Restore default random behavior after each test"""
+        # Reset to default random behavior to avoid affecting other tests
+        torch.backends.cudnn.deterministic = False
+        torch.backends.cudnn.benchmark = True
 
     def _run_taylor_test(self, method, precision, scale_input=0, scale_weights=0, scale_time=0):
         """
@@ -50,32 +74,37 @@ class TestTaylorExpansionODE(unittest.TestCase):
         if scale_time: test_name.append("time")
         test_name = "+".join(test_name) if test_name else "none"
         
-        quiet = os.environ.get("TORCHMPNODE_TEST_QUIET", "0") == "1"
+        quiet = os.environ.get("RAMPDE_TEST_QUIET", "0") == "1"
         if not quiet:
             print(f"\n\nTesting method {method} at precision {precision} for {test_name}")
         dtype = precision
         
-        # Create our ODE model; its parameters are in float32.
-        model = NonlinearODE(self.dim).to(self.device)
-        
+        # Create our ODE model with deterministic seed; its parameters are in float32.
+        model = NonlinearODE(self.dim, seed=self.seed).to(self.device)
+
+        # Reseed before each random tensor generation for complete determinism
+        torch.manual_seed(self.seed + 1)  # Use seed+1 for initial state
         # Create an initial state x0 with requires_grad if we're differentiating wrt input
         x0 = torch.randn(self.dim, device=self.device, dtype=dtype, requires_grad=(scale_input > 0))
-        
+
         # Create a time tensor on [t0,t1] with requires_grad if we're differentiating wrt time
         t = torch.linspace(self.t0, self.t1, self.n_time, device=self.device, dtype=dtype, requires_grad=(scale_time > 0))
-        
+
         # Create perturbation vectors for each variable
         # Input perturbation
+        torch.manual_seed(self.seed + 2)  # Use seed+2 for input perturbation
         v_x = torch.randn(self.dim, device=self.device, dtype=dtype)
         v_x = v_x / torch.norm(v_x) * scale_input  # Scale by input factor
-        
+
         # Weight perturbation
         theta0 = {k: v.clone() for k, v in model.named_parameters()}
+        torch.manual_seed(self.seed + 3)  # Use seed+3 for weight perturbations
         v_theta = {k: torch.randn_like(v) for k, v in theta0.items()}
         v_theta_norm = torch.sqrt(sum(torch.sum(v_i ** 2) for v_i in v_theta.values()))
         v_theta = {k: v_i / v_theta_norm * scale_weights for k, v_i in v_theta.items()}
-        
+
         # Time perturbation
+        torch.manual_seed(self.seed + 4)  # Use seed+4 for time perturbation
         v_t = .45 * (torch.rand_like(t) - 0.5) * ((self.t1 - self.t0) / self.n_time)
         v_t = v_t / torch.norm(v_t) * scale_time
         
@@ -172,15 +201,16 @@ def _add_test(method, precision, scale_input, scale_weights, scale_time):
     setattr(TestTaylorExpansionODE, name, test)
 
 # Add all test cases (no for-loops in test methods)
+# Set seeds for deterministic combined random direction generation
+np.random.seed(42)
+random.seed(42)
+
 for method in ['euler', 'rk4']:
     for precision in [torch.float16, torch.float32]:
         _add_test(method, precision, 1, 0, 0)  # input
         _add_test(method, precision, 0, 1, 0)  # weights
         _add_test(method, precision, 0, 0, 1)  # time
-        # Combined random direction
-        import random
-        import numpy as np
-        np.random.seed(42)
+        # Combined random direction with fixed seed for determinism
         scales = np.random.rand(3)
         scales = scales / np.linalg.norm(scales)
         _add_test(method, precision, float(scales[0]), float(scales[1]), float(scales[2]))

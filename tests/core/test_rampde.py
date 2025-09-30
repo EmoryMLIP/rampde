@@ -22,6 +22,8 @@ import unittest
 import torch
 import torch.nn as nn
 import os, sys, copy
+import random
+import numpy as np
 from rampde import odeint as mpodeint
 
 # Try to import torchdiffeq, skip all tests if not available
@@ -37,10 +39,24 @@ except ImportError:
 class TestODEintEquivalence(unittest.TestCase):
 
     def setUp(self):
+        # Set comprehensive seeds for deterministic behavior
+        self.seed = 42
+        torch.manual_seed(self.seed)
+        if torch.cuda.is_available():
+            torch.cuda.manual_seed(self.seed)
+            torch.cuda.manual_seed_all(self.seed)
+        np.random.seed(self.seed)
+        random.seed(self.seed)
+
+        # Enable deterministic algorithms for reproducibility
+        torch.backends.cudnn.deterministic = True
+        torch.backends.cudnn.benchmark = False
+
         # Define the linear ODE function: dx/dt = -(Aᵀ (A x))*1e-2
         class LinearODEFunc(torch.nn.Module):
             def __init__(self, d=10):
                 super(LinearODEFunc, self).__init__()
+                # Parameters initialized using current random state from setUp
                 self.A = torch.nn.Parameter(torch.randn(d, d))
             def forward(self, t, x):
                 return -(self.A.transpose(0, 1) @ (self.A @ x)) * 1e-2
@@ -50,6 +66,7 @@ class TestODEintEquivalence(unittest.TestCase):
         class ODEFunc(nn.Module):
             def __init__(self):
                 super(ODEFunc, self).__init__()
+                # Parameters initialized using current random state from setUp
                 self.net = nn.Sequential(
                     nn.Linear(2, 50),
                     nn.Tanh(),
@@ -64,13 +81,19 @@ class TestODEintEquivalence(unittest.TestCase):
                 return self.net(y**3)
         self.ODEFunc = ODEFunc  # save the class (a factory)
 
+    def tearDown(self):
+        """Restore default random behavior after each test"""
+        # Reset to default random behavior to avoid affecting other tests
+        torch.backends.cudnn.deterministic = False
+        torch.backends.cudnn.benchmark = True
+
     def _run_test(self, func_factory, x0, t, device, method='rk4'):
         """
         This helper creates two instances (with identical initial parameters)
         using the passed factory, and then runs both torchdiffeq and mpodeint.
         It compares both the final solution and the gradients.
         """
-        # Create two identical instances.
+        # Create two identical instances (determinism ensured by setUp seeding)
         f1 = func_factory()
         f2 = func_factory()
 
@@ -97,7 +120,7 @@ class TestODEintEquivalence(unittest.TestCase):
         loss(my_solution).backward()
         my_grad_params = [p.grad for p in f2.parameters() if p.requires_grad]
 
-        quiet = os.environ.get("TORCHMPNODE_TEST_QUIET", "0") == "1"
+        quiet = os.environ.get("RAMPDE_TEST_QUIET", "0") == "1"
         if not quiet:
             print("Torchdiffeq grads:")
             for name, param in f1.named_parameters():
@@ -127,7 +150,7 @@ class TestODEintEquivalence(unittest.TestCase):
         d = 10
         x0 = torch.ones(d)
         t = torch.linspace(0, 10, 100)
-        # Pass a lambda that creates a new LinearODEFunc instance.
+        # Pass a lambda that creates a new LinearODEFunc instance
         self._run_test(lambda: self.LinearODEFunc(d), x0, t, device, method='euler')
 
     def test_neural_odefunc_on_cpu(self):
@@ -136,7 +159,7 @@ class TestODEintEquivalence(unittest.TestCase):
         # ODEFunc expects an input of size 2.
         x0 = torch.ones(2)
         t = torch.linspace(0., 25., 1000).to(device)
-            
+
         self._run_test(lambda: self.ODEFunc(), x0, t, device, method='euler')
 
     def test_linear_odefunc_on_cuda(self):

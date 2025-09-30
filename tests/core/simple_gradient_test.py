@@ -5,10 +5,24 @@ This is a standalone script that doesn't depend on the full STL10 model.
 """
 
 import torch
+import numpy as np
+import random
 import math
 
 def gradient_check_simple():
     """Simple gradient check for a basic function."""
+    # Set deterministic seeds for reproducible tests
+    torch.manual_seed(42)
+    np.random.seed(42)
+    random.seed(42)
+    if torch.cuda.is_available():
+        torch.cuda.manual_seed(42)
+        torch.cuda.manual_seed_all(42)
+
+    # Set deterministic algorithms for reproducibility
+    torch.backends.cudnn.deterministic = True
+    torch.backends.cudnn.benchmark = False
+
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     dtype = torch.float64
     

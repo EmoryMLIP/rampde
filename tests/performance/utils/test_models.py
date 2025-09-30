@@ -6,6 +6,8 @@ import os
 import sys
 import torch
 import torch.nn as nn
+import numpy as np
+import random
 
 # Add paths for imports
 base_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), '../../..'))
@@ -17,12 +19,22 @@ from Phi import Phi
 
 class SimpleODE(nn.Module):
     """Simple test ODE: y'(t) = A @ tanh(B @ y + b)"""
-    
-    def __init__(self, dim):
+
+    def __init__(self, dim, seed=None):
         super().__init__()
+
+        # Set deterministic seeds if provided
+        if seed is not None:
+            torch.manual_seed(seed)
+            np.random.seed(seed)
+            random.seed(seed)
+            if torch.cuda.is_available():
+                torch.cuda.manual_seed(seed)
+                torch.cuda.manual_seed_all(seed)
+
         self.A = nn.Linear(dim, dim, bias=False)
         self.B = nn.Linear(dim, dim, bias=True)
-        
+
         # Initialize parameters
         nn.init.xavier_uniform_(self.A.weight)
         nn.init.xavier_uniform_(self.B.weight)
@@ -58,41 +70,73 @@ class OTFlowODE(nn.Module):
         return grad[:, :-1]  # Remove time component
 
 
-def create_simple_ode_model(dim=32):
+def create_simple_ode_model(dim=32, seed=42):
     """Create a simple ODE model for testing"""
-    return SimpleODE(dim)
+    # Set deterministic seeds for reproducible model creation
+    torch.manual_seed(seed)
+    np.random.seed(seed)
+    random.seed(seed)
+    if torch.cuda.is_available():
+        torch.cuda.manual_seed(seed)
+        torch.cuda.manual_seed_all(seed)
+
+    # Set deterministic algorithms for reproducibility
+    torch.backends.cudnn.deterministic = True
+    torch.backends.cudnn.benchmark = False
+
+    return SimpleODE(dim, seed=seed)
 
 
-def create_otflow_model(d=256, m=128, nt=8):
+def create_otflow_model(d=256, m=128, nt=8, seed=42):
     """Create OTFlow model for complex testing"""
+    # Set deterministic seeds for reproducible model creation
+    torch.manual_seed(seed)
+    np.random.seed(seed)
+    random.seed(seed)
+    if torch.cuda.is_available():
+        torch.cuda.manual_seed(seed)
+        torch.cuda.manual_seed_all(seed)
+
+    # Set deterministic algorithms for reproducibility
+    torch.backends.cudnn.deterministic = True
+    torch.backends.cudnn.benchmark = False
+
     phi = Phi(nTh=nt, d=d, m=m, alph=[1.0, 100.0, 15.0])
     return OTFlowODE(phi)
 
 
-def create_test_data(model_type, device='cuda:0'):
+def create_test_data(model_type, device='cuda:0', seed=42):
     """Create test data for different model types"""
+    # Set deterministic seeds for reproducible data creation
+    torch.manual_seed(seed)
+    np.random.seed(seed)
+    random.seed(seed)
+    if torch.cuda.is_available():
+        torch.cuda.manual_seed(seed)
+        torch.cuda.manual_seed_all(seed)
+
     if model_type == 'simple':
         # Simple ODE test data - match the model dimensions
         batch_size = 64
         dim = 32  # This should match the model dim
         nt = 14
-        
+
         x = torch.randn(batch_size, dim, device=device, dtype=torch.float32)
         t = torch.linspace(0, 1, nt, device=device)
-        
+
         return x, t
-    
+
     elif model_type == 'otflow':
         # OTFlow test data
         batch_size = 128
         dim = 256
         nt = 8
-        
+
         x = torch.randn(batch_size, dim, device=device, dtype=torch.float32)
         t = torch.linspace(0, 1, nt, device=device)
-        
+
         return x, t
-    
+
     else:
         raise ValueError(f"Unknown model type: {model_type}")
 

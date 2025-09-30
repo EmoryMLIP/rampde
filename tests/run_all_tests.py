@@ -3,13 +3,45 @@ import sys
 import os
 import subprocess
 import argparse
+import numpy as np
+import torch
+
+def set_deterministic_mode(seed=42):
+    """Set deterministic mode for reproducible test results.
+
+    Args:
+        seed (int): Random seed to use for all random number generators.
+    """
+    print(f"Setting deterministic mode with seed={seed}")
+
+    # Set random seeds
+    torch.manual_seed(seed)
+    np.random.seed(seed)
+
+    # Set CUDA seeds if available
+    if torch.cuda.is_available():
+        torch.cuda.manual_seed(seed)
+        torch.cuda.manual_seed_all(seed)
+
+    # Set deterministic behavior
+    torch.backends.cudnn.deterministic = True
+    torch.backends.cudnn.benchmark = False
+
+    # Use deterministic algorithms (with warning only to avoid failures)
+    try:
+        torch.use_deterministic_algorithms(True, warn_only=True)
+    except AttributeError:
+        # Fallback for older PyTorch versions
+        pass
+
+    print("Deterministic mode enabled for reproducible testing")
 
 def run_unittest_suite(test_dir, pattern="test_*.py"):
     """Run unittest suite for a directory."""
     print(f"Running tests in {test_dir}...")
     
     # Set environment variable to suppress printouts in tests
-    os.environ["TORCHMPNODE_TEST_QUIET"] = "1"
+    os.environ["RAMPDE_TEST_QUIET"] = "1"
     loader = unittest.TestLoader()
     suite = loader.discover(test_dir, pattern=pattern)
     runner = unittest.TextTestRunner(verbosity=2)
@@ -108,14 +140,19 @@ def main():
                       help="Run only performance tests")
     parser.add_argument("--verbose", "-v", action="store_true",
                       help="Verbose output")
+    parser.add_argument("--seed", type=int, default=42,
+                      help="Random seed for deterministic testing (default: 42)")
     
     args = parser.parse_args()
-    
+
+    # Set deterministic mode for reproducible testing
+    set_deterministic_mode(seed=args.seed)
+
     # Determine what tests to run
     run_unit_tests = not args.performance_only
     run_perf_tests = args.include_performance or args.performance_only
-    
-    print("rampde Test Suite")
+
+    print("\nrampde Test Suite")
     print("=" * 60)
     
     unittest_result = None

@@ -26,7 +26,7 @@ sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..')
 from rampde import odeint
 
 # Control test output verbosity
-QUIET = os.environ.get('TORCHMPNODE_TEST_QUIET', '0') == '1'
+QUIET = os.environ.get('RAMPDE_TEST_QUIET', '0') == '1'
 
 class SpeedTest(unittest.TestCase):
     """Test case for performance benchmarking of rampde."""
@@ -48,6 +48,10 @@ class SpeedTest(unittest.TestCase):
 
         # Set random seed for reproducibility
         torch.manual_seed(42)
+
+        # Note: We do NOT enable cudnn.deterministic mode for performance tests
+        # to get accurate speed measurements. Deterministic mode can significantly
+        # slow down GPU operations and would skew benchmarking results.
         
         # Store device
         cls.device = "cuda"

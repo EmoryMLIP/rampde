@@ -80,8 +80,8 @@ python tests/run_all_tests.py --include-performance
 # Run specific core test file
 python tests/core/test_rampde.py
 
-# Run tests with verbose output (remove TORCHMPNODE_TEST_QUIET env var)
-TORCHMPNODE_TEST_QUIET=0 python tests/core/test_rampde.py
+# Run tests with verbose output (remove RAMPDE_TEST_QUIET env var)
+RAMPDE_TEST_QUIET=0 python tests/core/test_rampde.py
 
 # Run gradient quality tests
 python tests/core/test_backward.py

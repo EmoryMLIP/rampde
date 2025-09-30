@@ -1,5 +1,7 @@
 import unittest
 import torch
+import numpy as np
+import random
 
 import os, sys
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
@@ -17,6 +19,18 @@ except ImportError:
 class TestODEintEquivalence(unittest.TestCase):
 
     def setUp(self):
+        # Set deterministic seeds for reproducible tests
+        torch.manual_seed(42)
+        np.random.seed(42)
+        random.seed(42)
+        if torch.cuda.is_available():
+            torch.cuda.manual_seed(42)
+            torch.cuda.manual_seed_all(42)
+
+        # Set deterministic algorithms for reproducibility
+        torch.backends.cudnn.deterministic = True
+        torch.backends.cudnn.benchmark = False
+
         # Define a simple linear ODE: dx/dt = x
         class CoupledODEFunc(torch.nn.Module):
             def __init__(self,d=10):
@@ -71,7 +85,7 @@ class TestODEintEquivalence(unittest.TestCase):
         torch_solution = torch.cat([sol.reshape(-1) for sol in torch_solution])
         my_solution = torch.cat([sol.reshape(-1) for sol in my_solution])
         
-        quiet = os.environ.get("TORCHMPNODE_TEST_QUIET", "0") == "1"
+        quiet = os.environ.get("RAMPDE_TEST_QUIET", "0") == "1"
         if not quiet:
             print(f"torch_solution: {torch_solution[-30:]}")
             print(f"my_solution: {my_solution[-30:]}")

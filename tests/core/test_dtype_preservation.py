@@ -9,16 +9,22 @@ maintain the expected precision.
 import unittest
 import torch
 import torch.nn as nn
+import random
+import numpy as np
 from rampde import odeint
 
 
 class SimpleDtypeCheckingODE(nn.Module):
     """ODE that checks dtype of all intermediates."""
-    def __init__(self, dim=10, target_dtype=torch.float32):
+    def __init__(self, dim=10, target_dtype=torch.float32, seed=None):
         super().__init__()
         self.target_dtype = target_dtype
         self.dim = dim
-        
+
+        # Set seed for deterministic parameter initialization
+        if seed is not None:
+            torch.manual_seed(seed)
+
         # Initialize weights in target dtype
         self.W1 = nn.Parameter(torch.randn(64, dim, dtype=target_dtype) * 0.1)
         self.b1 = nn.Parameter(torch.zeros(64, dtype=target_dtype))
@@ -46,6 +52,21 @@ class SimpleDtypeCheckingODE(nn.Module):
 
 
 class TestDtypePreservation(unittest.TestCase):
+
+    def setUp(self):
+        """Set up deterministic environment for reproducible tests."""
+        # Set comprehensive seeds for deterministic behavior
+        self.seed = 42
+        torch.manual_seed(self.seed)
+        if torch.cuda.is_available():
+            torch.cuda.manual_seed(self.seed)
+            torch.cuda.manual_seed_all(self.seed)
+        np.random.seed(self.seed)
+        random.seed(self.seed)
+
+        # Enable deterministic algorithms for reproducibility
+        torch.backends.cudnn.deterministic = True
+        torch.backends.cudnn.benchmark = False
     
     def _test_dtype_preservation(self, dtype, device='cpu'):
         """Helper to test dtype preservation for a specific dtype."""
@@ -54,10 +75,15 @@ class TestDtypePreservation(unittest.TestCase):
             self.skipTest("CUDA not available")
         if dtype == torch.bfloat16 and device == 'cuda' and not torch.cuda.is_bf16_supported():
             self.skipTest("bfloat16 not supported on this GPU")
-            
-        # Create ODE with target dtype
-        func = SimpleDtypeCheckingODE(dim=10, target_dtype=dtype).to(device)
-        
+
+        # Reseed for deterministic random tensor generation
+        torch.manual_seed(self.seed)
+        if torch.cuda.is_available():
+            torch.cuda.manual_seed(self.seed)
+
+        # Create ODE with target dtype and deterministic initialization
+        func = SimpleDtypeCheckingODE(dim=10, target_dtype=dtype, seed=self.seed).to(device)
+
         # Create inputs with target dtype
         y0 = torch.randn(10, dtype=dtype, device=device)
         t = torch.linspace(0, 1, 10, dtype=dtype, device=device)
@@ -96,9 +122,13 @@ class TestDtypePreservation(unittest.TestCase):
         """Test that gradients preserve float64."""
         if not torch.cuda.is_available():
             self.skipTest("CUDA not available")
-            
-        func = SimpleDtypeCheckingODE(dim=10, target_dtype=torch.float64).cuda()
-        
+
+        # Reseed for deterministic random tensor generation
+        torch.manual_seed(self.seed)
+        torch.cuda.manual_seed(self.seed)
+
+        func = SimpleDtypeCheckingODE(dim=10, target_dtype=torch.float64, seed=self.seed).cuda()
+
         y0 = torch.randn(10, dtype=torch.float64, device='cuda', requires_grad=True)
         t = torch.linspace(0, 1, 10, dtype=torch.float64, device='cuda')
         
@@ -116,12 +146,16 @@ class TestDtypePreservation(unittest.TestCase):
         """Test float16 with DynamicScaler (uses FixedGridODESolverDynamic)."""
         if not torch.cuda.is_available():
             self.skipTest("CUDA not available")
-            
+
         from rampde.loss_scalers import DynamicScaler
-        
+
+        # Reseed for deterministic random tensor generation
+        torch.manual_seed(self.seed)
+        torch.cuda.manual_seed(self.seed)
+
         # Create ODE with float16
-        func = SimpleDtypeCheckingODE(dim=10, target_dtype=torch.float16).cuda()
-        
+        func = SimpleDtypeCheckingODE(dim=10, target_dtype=torch.float16, seed=self.seed).cuda()
+
         # Create float16 inputs with requires_grad for gradient computation
         y0 = torch.randn(10, dtype=torch.float16, device='cuda', requires_grad=True)
         t = torch.linspace(0, 1, 10, dtype=torch.float16, device='cuda')
@@ -149,10 +183,14 @@ class TestDtypePreservation(unittest.TestCase):
         """Test float16 without scaler (uses FixedGridODESolverUnscaledSafe)."""
         if not torch.cuda.is_available():
             self.skipTest("CUDA not available")
-            
+
+        # Reseed for deterministic random tensor generation
+        torch.manual_seed(self.seed)
+        torch.cuda.manual_seed(self.seed)
+
         # Create ODE with float16
-        func = SimpleDtypeCheckingODE(dim=10, target_dtype=torch.float16).cuda()
-        
+        func = SimpleDtypeCheckingODE(dim=10, target_dtype=torch.float16, seed=self.seed).cuda()
+
         # Create float16 inputs with requires_grad for gradient computation
         y0 = torch.randn(10, dtype=torch.float16, device='cuda', requires_grad=True)
         t = torch.linspace(0, 1, 10, dtype=torch.float16, device='cuda')

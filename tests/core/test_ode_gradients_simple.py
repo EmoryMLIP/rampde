@@ -6,6 +6,8 @@ This test creates minimal versions of the ODE components to test gradient flow.
 
 import torch
 import torch.nn as nn
+import numpy as np
+import random
 import math
 
 
@@ -73,7 +75,10 @@ def gradient_check(func, inputs, names=None, eps=1e-6, rtol=1e-6, atol=1e-8):
         
         # Sample a subset of elements for large tensors
         n_samples = min(20, inp_flat.numel())
-        indices = torch.randperm(inp_flat.numel())[:n_samples]
+        # Use a generator with fixed seed for deterministic sampling
+        generator = torch.Generator()
+        generator.manual_seed(42)
+        indices = torch.randperm(inp_flat.numel(), generator=generator)[:n_samples]
         
         max_error = 0.0
         failed_count = 0
@@ -124,7 +129,19 @@ def gradient_check(func, inputs, names=None, eps=1e-6, rtol=1e-6, atol=1e-8):
 def test_simple_ode_func():
     """Test gradients for SimpleODEFunc."""
     print("=== Testing SimpleODEFunc Gradients ===")
-    
+
+    # Set deterministic seeds for reproducible tests
+    torch.manual_seed(42)
+    np.random.seed(42)
+    random.seed(42)
+    if torch.cuda.is_available():
+        torch.cuda.manual_seed(42)
+        torch.cuda.manual_seed_all(42)
+
+    # Set deterministic algorithms for reproducibility
+    torch.backends.cudnn.deterministic = True
+    torch.backends.cudnn.benchmark = False
+
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     dtype = torch.float64  # Use double precision for accurate gradients
     
@@ -167,7 +184,19 @@ def test_simple_ode_func():
 def test_precision_robustness():
     """Test how gradient accuracy changes with precision."""
     print("\n=== Testing Precision Robustness ===")
-    
+
+    # Set deterministic seeds for reproducible tests
+    torch.manual_seed(42)
+    np.random.seed(42)
+    random.seed(42)
+    if torch.cuda.is_available():
+        torch.cuda.manual_seed(42)
+        torch.cuda.manual_seed_all(42)
+
+    # Set deterministic algorithms for reproducibility
+    torch.backends.cudnn.deterministic = True
+    torch.backends.cudnn.benchmark = False
+
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     precisions = [torch.float64, torch.float32, torch.float16]
     
