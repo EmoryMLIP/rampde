@@ -49,9 +49,12 @@ class SpeedTest(unittest.TestCase):
         # Set random seed for reproducibility
         torch.manual_seed(42)
 
-        # Note: We do NOT enable cudnn.deterministic mode for performance tests
+        # CRITICAL: Disable deterministic mode for performance tests
+        # The test runner may enable it globally, but we need to disable it here
         # to get accurate speed measurements. Deterministic mode can significantly
         # slow down GPU operations and would skew benchmarking results.
+        torch.backends.cudnn.deterministic = False
+        torch.backends.cudnn.benchmark = True
         
         # Store device
         cls.device = "cuda"

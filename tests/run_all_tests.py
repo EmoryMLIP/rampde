@@ -142,22 +142,24 @@ def main():
                       help="Verbose output")
     parser.add_argument("--seed", type=int, default=42,
                       help="Random seed for deterministic testing (default: 42)")
-    
-    args = parser.parse_args()
 
-    # Set deterministic mode for reproducible testing
-    set_deterministic_mode(seed=args.seed)
+    args = parser.parse_args()
 
     # Determine what tests to run
     run_unit_tests = not args.performance_only
     run_perf_tests = args.include_performance or args.performance_only
 
+    # Set deterministic mode for reproducible testing
+    # Note: Individual test classes can override this in their setUp if needed
+    # (e.g., performance tests disable it for accurate speed measurements)
+    set_deterministic_mode(seed=args.seed)
+
     print("\nrampde Test Suite")
     print("=" * 60)
-    
+
     unittest_result = None
     performance_results = None
-    
+
     # Run unit tests
     if run_unit_tests:
         # Run core tests from the new core directory
