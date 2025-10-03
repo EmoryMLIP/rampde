@@ -1,0 +1,58 @@
+# Paper Directory .gitignore
+#
+# This gitignore excludes experiment-generated files that should not be tracked in git.
+
+# Experiment raw data directories (regenerated from run scripts)
+*/raw_data/
+cnf/raw_data/
+stl10/raw_data/
+otflowlarge/raw_data/
+roundoff/raw_data/
+adjoint_scaling/raw_data/
+
+# Backup directory (temporary)
+outputs_backup/
+
+# Python cache
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.Python
+
+# Jupyter Notebook checkpoints
+.ipynb_checkpoints
+
+# LaTeX auxiliary files
+**/*.aux
+**/*.log
+**/*.out
+**/*.toc
+**/*.synctex.gz
+**/*.fdb_latexmk
+**/*.fls
+**/*.bbl
+**/*.blg
+
+# SLURM logs
+**/slurm_logs/
+slurm-*.out
+
+# Temporary files
+*.tmp
+*.swp
+*~
+.DS_Store
+
+# Result directory tracking files
+result_dir.txt
+
+# Large checkpoint files
+**/*.pth
+**/*.ckpt
+
+# Downloaded datasets
+otflowlarge/data/
+
+# Optional: Comment out if you want to track generated outputs
+*/outputs/

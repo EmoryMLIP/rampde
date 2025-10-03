@@ -253,3 +253,6 @@ demos/results_*/
 
 # Test results
 experiments/stl10/tests/gradient_test_results/
+
+# Paper experiments - output directories (raw_data handled by paper/.gitignore)
+paper/*/outputs/
