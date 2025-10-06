@@ -189,7 +189,7 @@ def create_latex_table(data, output_file, width_filter=None, seed_filter=None):
         config_groups[group][solver][scaler] = row
 
     # Build column headers dynamically based on available data
-    precision_order = ['TF32', 'BF16', 'FP16']  # Skip FP32 as in OTFlowLarge
+    precision_order = ['FP32', 'TF32', 'BF16', 'FP16']
     available_precisions = [p for p in precision_order if p in config_groups]
 
     # Count columns for each precision type

@@ -50,7 +50,7 @@ for odeint in "torchdiffeq" "rampde"; do
     --no_dynamic_scaler
   )
   echo "Submitting: $odeint float32 no-scaling"
-  sbatch --account=mathg3 job_ode_stl10.sbatch "${fixed_args[@]}" "${test_args[@]}"
+  sbatch job_ode_stl10.sbatch "${fixed_args[@]}" "${test_args[@]}"
 done
 
 # Test different precision types  
@@ -69,7 +69,7 @@ for precision in "float16" "bfloat16" "tfloat32"; do
     --no_dynamic_scaler
   )
   echo "Submitting: torchdiffeq $precision no-scaling"
-  sbatch --account=mathg3 job_ode_stl10.sbatch "${fixed_args[@]}" "${test_args[@]}"
+  sbatch job_ode_stl10.sbatch "${fixed_args[@]}" "${test_args[@]}"
 
   # torchdiffeq precision + grad scaler
   fixed_args=(
@@ -81,7 +81,7 @@ for precision in "float16" "bfloat16" "tfloat32"; do
     --no_dynamic_scaler
   )
   echo "Submitting: torchdiffeq $precision with-grad-scaler"
-  sbatch --account=mathg3 job_ode_stl10.sbatch "${fixed_args[@]}" "${test_args[@]}"
+  sbatch job_ode_stl10.sbatch "${fixed_args[@]}" "${test_args[@]}"
 
   # rampde precision + no scaling
   fixed_args=(
@@ -94,7 +94,7 @@ for precision in "float16" "bfloat16" "tfloat32"; do
     --no_dynamic_scaler
   )
   echo "Submitting: rampde $precision no-scaling"
-  sbatch --account=mathg3 job_ode_stl10.sbatch "${fixed_args[@]}" "${test_args[@]}"
+  sbatch job_ode_stl10.sbatch "${fixed_args[@]}" "${test_args[@]}"
 
   # rampde precision + dynamic scaler only
   fixed_args=(
@@ -106,7 +106,7 @@ for precision in "float16" "bfloat16" "tfloat32"; do
     --no_grad_scaler
   )
   echo "Submitting: rampde $precision with-dynamic-scaler"
-  sbatch --account=mathg3 job_ode_stl10.sbatch "${fixed_args[@]}" "${test_args[@]}"
+  sbatch job_ode_stl10.sbatch "${fixed_args[@]}" "${test_args[@]}"
 
   # rampde precision + grad scaler only
   fixed_args=(
@@ -118,7 +118,7 @@ for precision in "float16" "bfloat16" "tfloat32"; do
     --no_dynamic_scaler
   )
   echo "Submitting: rampde $precision with-grad-scaler"
-  sbatch --account=mathg3 job_ode_stl10.sbatch "${fixed_args[@]}" "${test_args[@]}"
+  sbatch job_ode_stl10.sbatch "${fixed_args[@]}" "${test_args[@]}"
 done
 
 echo ""

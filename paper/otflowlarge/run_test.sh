@@ -58,7 +58,7 @@ for dataset in "${datasets[@]}"; do
     )
     extra_args=${test_dataset_args[$dataset]}
     echo "Submitting: $odeint float32 no-scaling - $dataset"
-    sbatch --account=mathg3 job_otflowlarge.sbatch "${fixed_args[@]}" $extra_args
+    sbatch job_otflowlarge.sbatch "${fixed_args[@]}" $extra_args
   done
 done
 
@@ -78,8 +78,8 @@ for dataset in "${datasets[@]}"; do
   )
   extra_args=${test_dataset_args[$dataset]}
   echo "Submitting: torchdiffeq float16 no-scaling - $dataset"
-  sbatch --account=mathg3 job_otflowlarge.sbatch "${fixed_args[@]}" $extra_args
-  
+  sbatch job_otflowlarge.sbatch "${fixed_args[@]}" $extra_args
+
   # torchdiffeq float16 + grad scaler
   fixed_args=(
     --precision "float16"
@@ -92,8 +92,8 @@ for dataset in "${datasets[@]}"; do
   )
   extra_args=${test_dataset_args[$dataset]}
   echo "Submitting: torchdiffeq float16 with-grad-scaler - $dataset"
-  sbatch --account=mathg3 job_otflowlarge.sbatch "${fixed_args[@]}" $extra_args
-  
+  sbatch job_otflowlarge.sbatch "${fixed_args[@]}" $extra_args
+
   # rampde float16 + no scaling
   fixed_args=(
     --precision "float16"
@@ -107,8 +107,8 @@ for dataset in "${datasets[@]}"; do
   )
   extra_args=${test_dataset_args[$dataset]}
   echo "Submitting: rampde float16 no-scaling - $dataset"
-  sbatch --account=mathg3 job_otflowlarge.sbatch "${fixed_args[@]}" $extra_args
-  
+  sbatch job_otflowlarge.sbatch "${fixed_args[@]}" $extra_args
+
   # rampde float16 + dynamic scaler only
   fixed_args=(
     --precision "float16"
@@ -121,8 +121,8 @@ for dataset in "${datasets[@]}"; do
   )
   extra_args=${test_dataset_args[$dataset]}
   echo "Submitting: rampde float16 with-dynamic-scaler - $dataset"
-  sbatch --account=mathg3 job_otflowlarge.sbatch "${fixed_args[@]}" $extra_args
-  
+  sbatch job_otflowlarge.sbatch "${fixed_args[@]}" $extra_args
+
   # rampde float16 + grad scaler only
   fixed_args=(
     --precision "float16"
@@ -135,7 +135,7 @@ for dataset in "${datasets[@]}"; do
   )
   extra_args=${test_dataset_args[$dataset]}
   echo "Submitting: rampde float16 with-grad-scaler - $dataset"
-  sbatch --account=mathg3 job_otflowlarge.sbatch "${fixed_args[@]}" $extra_args
+  sbatch job_otflowlarge.sbatch "${fixed_args[@]}" $extra_args
 done
 
 # tfloat32 tests (no scaling needed)
@@ -154,7 +154,7 @@ for dataset in "${datasets[@]}"; do
     )
     extra_args=${test_dataset_args[$dataset]}
     echo "Submitting: $odeint tfloat32 no-scaling - $dataset"
-    sbatch --account=mathg3 job_otflowlarge.sbatch "${fixed_args[@]}" $extra_args
+    sbatch job_otflowlarge.sbatch "${fixed_args[@]}" $extra_args
   done
 done
 
@@ -174,7 +174,7 @@ for dataset in "${datasets[@]}"; do
     )
     extra_args=${test_dataset_args[$dataset]}
     echo "Submitting: $odeint bfloat16 no-scaling - $dataset"
-    sbatch --account=mathg3 job_otflowlarge.sbatch "${fixed_args[@]}" $extra_args
+    sbatch job_otflowlarge.sbatch "${fixed_args[@]}" $extra_args
   done
 done
 

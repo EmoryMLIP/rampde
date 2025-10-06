@@ -5,33 +5,12 @@
 #SBATCH --time=03:00:00
 #SBATCH --gres=gpu:1
 #SBATCH --mem=4G
-#SBATCH --account=mathg3
 
-# Load your conda environment
-source /local/scratch/lruthot/miniconda3/etc/profile.d/conda.sh
-# Determine which conda environment to use based on the --odeint flag
-ODEINT=""
-prev=""
-for arg in "$@"; do
-  if [[ "$prev" == "--odeint" ]]; then
-    ODEINT="$arg"
-    break
-  fi
-  if [[ "$arg" == "--odeint" ]]; then
-    prev="--odeint"
-  else
-    prev=""
-  fi
-done
+# Load conda - use HOME to be machine-independent
+source ${HOME}/miniconda3/etc/profile.d/conda.sh
 
-if [[ "$ODEINT" == "torchdiffeq" ]]; then
-  conda activate torch26
-elif [[ "$ODEINT" == "rampde" ]]; then
-  conda activate torch27
-else
-  echo "Error: unrecognized odeint value '$ODEINT'" >&2
-  exit 1
-fi
+# Activate torch28 environment (used for all experiments)
+conda activate torch28
 
 
 echo "Job ID: $SLURM_JOB_ID"

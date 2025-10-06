@@ -41,8 +41,8 @@ Dataset: STL10 (96×96 color images, 10 classes)
 ./run_experiment.sh
 ```
 
-**Expected runtime**: ~8-12 hours per configuration
-**What it does**: Trains neural ODE classifier for 100 epochs across precision/solver combinations
+**Expected runtime**: ~3-12 hours per configuration depending on your GPU
+**What it does**: Trains neural ODE classifier for 160 epochs across precision/solver combinations
 
 ## Expected Outputs
 
@@ -91,9 +91,9 @@ Default hyperparameters:
 
 ## Notes
 
-- Test script uses `seed=999` and 2 epochs for quick validation
-- Production runs use `seed=32` and 100 epochs
-- SLURM account `mathg3` is hardcoded
+- Test script uses `seed=26` and 5 epochs for quick validation
+- Production runs use `seed=25` and 160 epochs
+- SLURM account configured in `job_ode_stl10.sbatch`
 - Results saved to `./raw_data` by default
-- Requires GPU, CUDA, and conda environment `torch26`
+- Requires GPU, CUDA, and conda environment `torch28`
 - STL10 dataset will be downloaded automatically to `~/data/stl10`

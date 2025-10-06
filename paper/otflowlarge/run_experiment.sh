@@ -63,8 +63,8 @@ for dataset in "${datasets[@]}"; do
   )
   extra_args=${dataset_args[$dataset]}
   echo "Submitting: torchdiffeq float16 no-grad-scaler - ${fixed_args[*]} $extra_args"
-  sbatch --account=mathg3 job_otflowlarge.sbatch "${fixed_args[@]}" $extra_args
-  
+  sbatch job_otflowlarge.sbatch "${fixed_args[@]}" $extra_args
+
   # torchdiffeq fp16 with grad scaling
   fixed_args=(
     --precision "float16"
@@ -76,7 +76,7 @@ for dataset in "${datasets[@]}"; do
   )
   extra_args=${dataset_args[$dataset]}
   echo "Submitting: torchdiffeq float16 with-grad-scaler - ${fixed_args[*]} $extra_args"
-  sbatch --account=mathg3 job_otflowlarge.sbatch "${fixed_args[@]}" $extra_args
+  sbatch job_otflowlarge.sbatch "${fixed_args[@]}" $extra_args
 done
 
 # Remove wait commands since we're using sbatch instead of background jobs
@@ -97,8 +97,8 @@ for dataset in "${datasets[@]}"; do
   )
   extra_args=${dataset_args[$dataset]}
   echo "Submitting: rampde float16 no-scaling - ${fixed_args[*]} $extra_args"
-  sbatch --account=mathg3 job_otflowlarge.sbatch "${fixed_args[@]}" $extra_args
-  
+  sbatch job_otflowlarge.sbatch "${fixed_args[@]}" $extra_args
+
   # rampde fp16 with only grad scaling
   fixed_args=(
     --precision "float16"
@@ -111,8 +111,8 @@ for dataset in "${datasets[@]}"; do
   )
   extra_args=${dataset_args[$dataset]}
   echo "Submitting: rampde float16 only-grad-scaler - ${fixed_args[*]} $extra_args"
-  sbatch --account=mathg3 job_otflowlarge.sbatch "${fixed_args[@]}" $extra_args
-  
+  sbatch job_otflowlarge.sbatch "${fixed_args[@]}" $extra_args
+
   # rampde fp16 with only dynamic scaling (default)
   fixed_args=(
     --precision "float16"
@@ -125,7 +125,7 @@ for dataset in "${datasets[@]}"; do
   )
   extra_args=${dataset_args[$dataset]}
   echo "Submitting: rampde float16 only-dynamic-scaler - ${fixed_args[*]} $extra_args"
-  sbatch --account=mathg3 job_otflowlarge.sbatch "${fixed_args[@]}" $extra_args
+  sbatch job_otflowlarge.sbatch "${fixed_args[@]}" $extra_args
 done
 
 # Remove wait commands since we're using sbatch instead of background jobs

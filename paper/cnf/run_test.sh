@@ -53,7 +53,7 @@ for dataset in "${datasets[@]}"; do
     )
     extra_args=${test_dataset_args[$dataset]}
     echo "Submitting: $odeint float32 no-scaling - $dataset"
-    sbatch --account=mathg3 job_cnf.sbatch "${fixed_args[@]}" $extra_args
+    sbatch job_cnf.sbatch "${fixed_args[@]}" $extra_args
   done
 done
 
@@ -76,7 +76,7 @@ for precision in "bfloat16" "tfloat32"; do
       )
       extra_args=${test_dataset_args[$dataset]}
       echo "Submitting: $odeint $precision no-scaling - $dataset"
-      sbatch --account=mathg3 job_cnf.sbatch "${fixed_args[@]}" $extra_args
+      sbatch job_cnf.sbatch "${fixed_args[@]}" $extra_args
     done
   done
 done
@@ -98,7 +98,7 @@ for dataset in "${datasets[@]}"; do
   )
   extra_args=${test_dataset_args[$dataset]}
   echo "Submitting: torchdiffeq float16 no-scaling - $dataset"
-  sbatch --account=mathg3 job_cnf.sbatch "${fixed_args[@]}" $extra_args
+  sbatch job_cnf.sbatch "${fixed_args[@]}" $extra_args
   
   # torchdiffeq float16 + grad scaler
   fixed_args=(
@@ -113,7 +113,7 @@ for dataset in "${datasets[@]}"; do
   )
   extra_args=${test_dataset_args[$dataset]}
   echo "Submitting: torchdiffeq float16 with-grad-scaler - $dataset"
-  sbatch --account=mathg3 job_cnf.sbatch "${fixed_args[@]}" $extra_args
+  sbatch job_cnf.sbatch "${fixed_args[@]}" $extra_args
   
   # rampde float16 + no scaling
   fixed_args=(
@@ -129,7 +129,7 @@ for dataset in "${datasets[@]}"; do
   )
   extra_args=${test_dataset_args[$dataset]}
   echo "Submitting: rampde float16 no-scaling - $dataset"
-  sbatch --account=mathg3 job_cnf.sbatch "${fixed_args[@]}" $extra_args
+  sbatch job_cnf.sbatch "${fixed_args[@]}" $extra_args
   
   # rampde float16 + dynamic scaler only
   fixed_args=(
@@ -144,7 +144,7 @@ for dataset in "${datasets[@]}"; do
   )
   extra_args=${test_dataset_args[$dataset]}
   echo "Submitting: rampde float16 with-dynamic-scaler - $dataset"
-  sbatch --account=mathg3 job_cnf.sbatch "${fixed_args[@]}" $extra_args
+  sbatch job_cnf.sbatch "${fixed_args[@]}" $extra_args
 done
 
 # Test 2: Additional rampde float16 scaling strategies
@@ -165,7 +165,7 @@ for dataset in "${datasets[@]}"; do
   )
   extra_args=${test_dataset_args[$dataset]}
   echo "Submitting: rampde float16 with-grad-scaler - $dataset"
-  sbatch --account=mathg3 job_cnf.sbatch "${fixed_args[@]}" $extra_args
+  sbatch job_cnf.sbatch "${fixed_args[@]}" $extra_args
 done
 
 echo ""
