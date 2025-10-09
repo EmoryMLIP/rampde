@@ -8,9 +8,8 @@ This experiment evaluates:
 - `torchdiffeq` vs `rampde` ODE solvers
 - Different precision modes (float32, float16, bfloat16)
 - Gradient scaling strategies for mixed precision
-- Network width effects (64, 128, 256)
 
-Dataset: STL10 (96×96 color images, 10 classes)
+Dataset: STL10 (96×96 color images upsampled to 128x128 for better CUDA utilization, 10 classes)
 
 ## Files
 

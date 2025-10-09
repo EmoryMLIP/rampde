@@ -8,7 +8,10 @@
 #SBATCH --mem=16G
 
 # Activate conda environment
-source /local/scratch/lruthot/miniconda3/bin/activate torch26
+source /local/scratch/lruthot/miniconda3/bin/activate torch28
+
+echo "Job ID: $SLURM_JOB_ID"
+echo "Running on nodes: $SLURM_NODELIST"
 
 # Run evaluation script
-python evaluate_checkpoints.py "$@"
+python -u evaluate_checkpoints.py "$@"

@@ -35,15 +35,28 @@ fi
 mkdir -p outputs/tab_otflowlarge_results
 
 echo ""
-echo "Step 1: Filtering results by seed..."
-# Filter the summary CSV by seed
+echo "Step 1: Creating summary CSV (if not exists)..."
 input_csv="raw_data/otflowlarge/summary_otflowlarge.csv"
-filtered_csv="raw_data/otflowlarge/summary_otflowlarge_seed${SEED}.csv"
 
+# Check if summary CSV exists, if not create it
 if [ ! -f "$input_csv" ]; then
-    echo "✗ Error: Summary CSV not found: $input_csv"
-    exit 1
+    echo "Summary CSV not found, aggregating results from individual experiments..."
+    python aggregate_otflowlarge_results.py --raw-data-dir raw_data/otflowlarge --output "$input_csv"
+
+    if [ $? -eq 0 ]; then
+        echo "✓ Summary CSV created successfully"
+    else
+        echo "✗ Failed to create summary CSV"
+        exit 1
+    fi
+else
+    echo "✓ Summary CSV already exists: $input_csv"
 fi
+
+echo ""
+echo "Step 2: Filtering results by seed..."
+# Filter the summary CSV by seed
+filtered_csv="raw_data/otflowlarge/summary_otflowlarge_seed${SEED}.csv"
 
 # Filter by seed using grep (keep header + matching rows)
 head -1 "$input_csv" > "$filtered_csv"
@@ -60,7 +73,7 @@ else
 fi
 
 echo ""
-echo "Step 2: Generating OTFlowLarge results table (Table 3)..."
+echo "Step 3: Generating OTFlowLarge results table (Table 3)..."
 python generate_otflowlarge_table.py --input "$filtered_csv"
 
 if [ $? -eq 0 ]; then
@@ -71,7 +84,7 @@ else
 fi
 
 echo ""
-echo "Step 3: Compiling PDF..."
+echo "Step 4: Compiling PDF..."
 cd outputs/tab_otflowlarge_results
 pdflatex -interaction=batchmode otflowlarge_table_standalone.tex > /dev/null 2>&1
 if [ $? -eq 0 ]; then
@@ -82,7 +95,7 @@ fi
 cd ../..
 
 echo ""
-echo "Step 4: Creating accessible CSV summary..."
+echo "Step 5: Creating accessible CSV summary..."
 # Copy the filtered summary CSV to outputs for easy access
 cp "$filtered_csv" outputs/otflowlarge_results_seed${SEED}.csv
 if [ $? -eq 0 ]; then
