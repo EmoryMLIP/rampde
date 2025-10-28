@@ -1,0 +1,19 @@
+# Exact package versions used for paper experiments
+# Install with: pip install -r requirements-paper.txt
+# Or create conda environment: conda create -n rampde-paper python=3.11
+# Then: pip install -r requirements-paper.txt
+
+# Core dependencies (pinned for reproducibility)
+torch==2.8.0
+numpy==2.3.3
+
+# Optional dependencies for experiments
+torchdiffeq==0.2.5
+matplotlib>=3.0
+
+# Testing dependencies
+pytest>=7.0
+pytest-cov>=4.0
+
+# Install rampde in editable mode
+# Run: pip install -e .
