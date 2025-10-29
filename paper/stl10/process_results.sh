@@ -22,7 +22,7 @@
 #   - outputs/tab_stl10_results/stl10_results_table_standalone.pdf
 
 # Parse command line arguments
-SEED=25  # Default to seed 25 (160 epochs production runs)
+SEED=${1:-23}  # Default to seed 23 if not provided
 
 echo "=================================="
 echo "STL10 Results Processing"

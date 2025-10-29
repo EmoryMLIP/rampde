@@ -1,6 +1,10 @@
 # rampde
 
-rampde is a PyTorch-compatible library designed to provide automatic mixed-precision solvers for Neural Ordinary Differential Equations (ODEs). The package integrates seamlessly with PyTorch’s ecosystem, allowing users to replace standard solvers with mixed-precision alternatives for faster computation and reduced memory usage.
+[![CI - Fast Tests](https://github.com/EmoryMLIP/rampde/actions/workflows/ci.yml/badge.svg)](https://github.com/EmoryMLIP/rampde/actions/workflows/ci.yml)
+[![Code Quality](https://github.com/EmoryMLIP/rampde/actions/workflows/quality.yml/badge.svg)](https://github.com/EmoryMLIP/rampde/actions/workflows/quality.yml)
+[![Full Test Suite](https://github.com/EmoryMLIP/rampde/actions/workflows/test-full.yml/badge.svg)](https://github.com/EmoryMLIP/rampde/actions/workflows/test-full.yml)
+
+rampde is a PyTorch-compatible library designed to provide automatic mixed-precision solvers for Neural Ordinary Differential Equations (ODEs). The package integrates seamlessly with PyTorch's ecosystem, allowing users to replace standard solvers with mixed-precision alternatives for faster computation and reduced memory usage.
 
 Key features include:
 

@@ -1,0 +1,55 @@
+name: CI - Fast Tests
+
+on:
+  push:
+    branches: [ main, develop ]
+  pull_request:
+    branches: [ main, develop ]
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+
+    - name: Set up Python
+      uses: actions/setup-python@v5
+      with:
+        python-version: "3.11"
+        cache: 'pip'
+
+    - name: Install dependencies
+      run: |
+        python -m pip install --upgrade pip
+        pip install torch --index-url https://download.pytorch.org/whl/cpu
+        pip install -e ".[testing]"
+
+    - name: Run fast CPU tests
+      env:
+        RAMPDE_TEST_QUIET: 1
+      run: |
+        python -m pytest tests/core/test_odeint.py -v
+        python -m pytest tests/core/test_dtype_preservation.py -v -k "cpu"
+        python -m pytest tests/core/simple_gradient_test.py -v
+        python -m pytest tests/core/test_ode_gradients_simple.py -v
+
+    - name: Test package import
+      run: |
+        python -c "import rampde; print(f'rampde version: {rampde._version.__version__}')"
+        python -c "from rampde import odeint; print('Successfully imported odeint')"
+
+    - name: Test basic functionality
+      run: |
+        python -c "import torch; import torch.nn as nn; from rampde import odeint
+        class SimpleFunc(nn.Module):
+         def forward(self, t, y): return -y
+        func = SimpleFunc()
+        y0 = torch.tensor([1.0])
+        t = torch.linspace(0, 1, 10)
+        y = odeint(func, y0, t, method='euler')
+        print(f'Solution shape: {y.shape}')
+        print(f'Final value: {y[-1].item():.4f}')
+        assert y.shape == (10, 1), 'Shape mismatch'
+        print('✓ Basic functionality test passed!')"

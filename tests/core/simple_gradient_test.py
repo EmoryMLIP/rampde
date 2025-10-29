@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
 Simple test to verify the gradient checking functionality works.
-This is a standalone script that doesn't depend on the full STL10 model.
+This tests basic PyTorch gradient computation using numerical differentiation.
 """
 
 import torch
@@ -9,7 +9,8 @@ import numpy as np
 import random
 import math
 
-def gradient_check_simple():
+
+def test_gradient_check_simple():
     """Simple gradient check for a basic function."""
     # Set deterministic seeds for reproducible tests
     torch.manual_seed(42)
@@ -75,12 +76,10 @@ def gradient_check_simple():
     print(f"Expected gradient:   {expected_grad}")
     print(f"Error vs expected:   {expected_error:.2e}")
     
-    if error < 1e-6:
-        print("✓ Gradient check PASSED")
-        return True
-    else:
-        print("✗ Gradient check FAILED")
-        return False
+    assert error < 1e-6, f"Gradient check FAILED: error={error:.2e} >= 1e-6"
+    print("✓ Gradient check PASSED")
+
 
 if __name__ == "__main__":
-    gradient_check_simple()
+    # Allow running as standalone script
+    test_gradient_check_simple()

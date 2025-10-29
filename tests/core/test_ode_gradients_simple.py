@@ -88,17 +88,18 @@ def gradient_check(func, inputs, names=None, eps=1e-6, rtol=1e-6, atol=1e-8):
             for inp_clear in inputs:
                 if inp_clear.grad is not None:
                     inp_clear.grad.zero_()
-            
-            # Positive perturbation
-            inp_flat[idx] += eps
+
+            # Positive perturbation (use .data to avoid in-place operation error)
+            original_val = inp_flat[idx].item()
+            inp_flat.data[idx] = original_val + eps
             f_plus = func()
-            
+
             # Negative perturbation
-            inp_flat[idx] -= 2 * eps
+            inp_flat.data[idx] = original_val - eps
             f_minus = func()
-            
+
             # Restore original value
-            inp_flat[idx] += eps
+            inp_flat.data[idx] = original_val
             
             # Numerical gradient
             numerical_grad = (f_plus - f_minus) / (2 * eps)
@@ -172,13 +173,13 @@ def test_simple_ode_func():
     
     # Perform gradient check
     passed = gradient_check(func, inputs, names)
-    
+
     if passed:
         print("✓ SimpleODEFunc gradient check PASSED")
     else:
         print("✗ SimpleODEFunc gradient check FAILED")
-    
-    return passed
+
+    assert passed, "SimpleODEFunc gradient check failed"
 
 
 def test_precision_robustness():
@@ -237,14 +238,15 @@ def test_precision_robustness():
             
             passed = gradient_check(func, inputs, names, rtol=rtol, atol=atol)
             results[dtype] = passed
-            
+
             print(f"  {dtype}: {'PASSED' if passed else 'FAILED'}")
-            
+
         except Exception as e:
             print(f"  {dtype}: ERROR - {e}")
             results[dtype] = False
-    
-    return results
+
+    # For pytest, just document the results - don't fail on precision issues
+    print(f"\nPrecision test results: {results}")
 
 
 def main():

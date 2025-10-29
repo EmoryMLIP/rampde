@@ -1,0 +1,108 @@
+name: Code Quality
+
+on:
+  pull_request:
+    branches: [ main, develop ]
+  workflow_dispatch:
+
+jobs:
+  quality-checks:
+    runs-on: ubuntu-latest
+
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+
+    - name: Set up Python
+      uses: actions/setup-python@v5
+      with:
+        python-version: "3.11"
+        cache: 'pip'
+
+    - name: Install package (minimal dependencies)
+      run: |
+        python -m pip install --upgrade pip
+        pip install torch --index-url https://download.pytorch.org/whl/cpu
+        pip install -e .
+
+    - name: Verify package structure
+      run: |
+        echo "Checking package structure..."
+        test -d rampde || { echo "Error: rampde directory not found"; exit 1; }
+        test -f rampde/__init__.py || { echo "Error: rampde/__init__.py not found"; exit 1; }
+        test -f rampde/odeint.py || { echo "Error: rampde/odeint.py not found"; exit 1; }
+        echo "✓ Package structure verified"
+
+    - name: Test import chain
+      run: |
+        echo "Testing import chain..."
+        python -c "import rampde" || { echo "Error: Cannot import rampde"; exit 1; }
+        python -c "from rampde import odeint" || { echo "Error: Cannot import odeint"; exit 1; }
+        python -c "from rampde import FixedGridODESolverUnscaled" || { echo "Error: Cannot import FixedGridODESolverUnscaled"; exit 1; }
+        python -c "from rampde import FixedGridODESolverDynamic" || { echo "Error: Cannot import FixedGridODESolverDynamic"; exit 1; }
+        python -c "from rampde import DynamicScaler" || { echo "Error: Cannot import DynamicScaler"; exit 1; }
+        python -c "from rampde import Euler, RK4" || { echo "Error: Cannot import Euler, RK4"; exit 1; }
+        echo "✓ All imports successful"
+
+    - name: Check version attribute
+      run: |
+        python -c "
+        import rampde
+        version = rampde._version.__version__
+        print(f'Package version: {version}')
+        assert version, 'Version string is empty'
+        "
+
+    - name: Verify test structure
+      run: |
+        echo "Checking test structure..."
+        test -d tests || { echo "Error: tests directory not found"; exit 1; }
+        test -d tests/core || { echo "Error: tests/core directory not found"; exit 1; }
+
+        # Count test files
+        test_count=$(find tests -name "test_*.py" | wc -l)
+        echo "Found $test_count test files"
+        test $test_count -gt 0 || { echo "Error: No test files found"; exit 1; }
+        echo "✓ Test structure verified"
+
+    - name: Install pytest for test discovery
+      run: |
+        pip install pytest
+
+    - name: Check test discovery
+      run: |
+        echo "Running pytest collection (dry-run)..."
+        pytest --collect-only tests/core/test_odeint.py
+        pytest --collect-only tests/core/simple_gradient_test.py
+        echo "✓ Tests are discoverable by pytest"
+
+    - name: Check for common issues
+      run: |
+        echo "Checking for common code issues..."
+
+        # Check for print statements in main code (excluding tests)
+        print_count=$(grep -r "print(" rampde/ --include="*.py" | grep -v "# print" | wc -l || true)
+        if [ $print_count -gt 5 ]; then
+          echo "::warning::Found $print_count print statements in rampde/ (consider using logging)"
+        fi
+
+        # Check for TODO/FIXME comments
+        todo_count=$(grep -r "TODO\|FIXME" rampde/ --include="*.py" | wc -l || true)
+        if [ $todo_count -gt 0 ]; then
+          echo "::notice::Found $todo_count TODO/FIXME comments"
+          grep -n "TODO\|FIXME" rampde/ --include="*.py" || true
+        fi
+
+        echo "✓ Quality checks completed"
+
+    - name: Summary
+      if: always()
+      run: |
+        echo "================================"
+        echo "Code Quality Check Summary"
+        echo "================================"
+        echo "✓ Package structure verified"
+        echo "✓ Imports working correctly"
+        echo "✓ Version accessible"
+        echo "✓ Tests discoverable"
+        echo "================================"

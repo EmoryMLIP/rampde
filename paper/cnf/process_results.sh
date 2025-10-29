@@ -19,7 +19,7 @@
 #   - outputs/tab_cnf_results/cnf_table_standalone.pdf
 
 # Parse command line arguments
-SEED=42  # Default to seed 24 (test runs)
+SEED=${1:-23}  # Default to seed 23 if not provided
 
 echo "=================================="
 echo "CNF Results Processing"
