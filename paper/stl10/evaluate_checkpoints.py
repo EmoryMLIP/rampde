@@ -13,6 +13,9 @@ from pathlib import Path
 import torch
 import torch.nn as nn
 from torch.amp import autocast
+from torch.utils.data import DataLoader
+from torchvision.datasets import STL10
+import torchvision.transforms as transforms
 
 # Add parent directory to path for common imports
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
@@ -20,7 +23,7 @@ from experiment_runtime import setup_environment, get_precision_dtype
 
 # Import from ode_stl10
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-from ode_stl10 import MPNODE_STL10, get_stl10_loaders, accuracy
+from ode_stl10 import MPNODE_STL10, accuracy, worker_init_fn
 
 
 def evaluate_checkpoint(ckpt_path, device='cuda:0'):
@@ -58,12 +61,21 @@ def evaluate_checkpoint(ckpt_path, device='cuda:0'):
         model.load_state_dict(checkpoint['state_dict'])
         model.eval()
 
-        # Get test loader
-        _, test_loader, _ = get_stl10_loaders(
-            batch_size=args.batch_size,
-            test_batch_size=args.test_batch_size,
-            seed=args.seed
-        )
+        # Build loader for the official STL-10 test split (8,000 images).
+        # Matches the eval-time transform in ode_stl10.get_stl10_loaders.
+        mean = (0.4467, 0.4398, 0.4066)
+        std = (0.2241, 0.2210, 0.2239)
+        test_transform = transforms.Compose([
+            transforms.Resize(128),
+            transforms.CenterCrop(128),
+            transforms.ToTensor(),
+            transforms.Normalize(mean, std),
+        ])
+        test_set = STL10(root='.data/stl10', split='test',
+                         download=True, transform=test_transform)
+        test_loader = DataLoader(test_set, batch_size=args.test_batch_size,
+                                 shuffle=False, num_workers=2,
+                                 worker_init_fn=worker_init_fn)
 
         # Evaluate
         with torch.no_grad():

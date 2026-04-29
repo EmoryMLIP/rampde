@@ -13,7 +13,7 @@ import unittest
 
 # Add project root to path
 SCRIPT_DIR = pathlib.Path(__file__).resolve().parent
-PROJECT_ROOT = SCRIPT_DIR.parent
+PROJECT_ROOT = SCRIPT_DIR.parent.parent  # Go up two levels: adjoint_scaling -> paper -> rampde
 sys.path.insert(0, str(PROJECT_ROOT))
 
 # Import the test module

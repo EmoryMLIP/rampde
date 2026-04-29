@@ -1,0 +1,236 @@
+% Stability probe: 2x3 consolidated figure for the R2.1 reviewer response.
+% Row 1 (top):    forward stability  -- final ||y^N||/||y^0|| vs alpha
+% Row 2 (middle): gradient direction -- angle(g_mode, g_fp64) vs alpha
+% Row 3 (bottom): gradient magnitude -- | ||g_mode|| - ||g_fp64|| | / ||g_fp64||
+%
+% Two block variants (see stability_probe.py): the linearized block
+% isolates the Dahlquist test equation; the parabolic block carries the
+% state-dependent ReLU mask.  Both share a symmetric NSD Jacobian.
+%
+% Design philosophy (mirrors paper/stl10/.../stl10_train_loss_convergence.tex):
+%   Color      = precision family (fp64 black, fp32 gray, bf16 blue, fp16 orange)
+%   Line style = solver design   (solid = rampde with fp32 accumulator,
+%                                 densely dotted = naive-mixed without)
+%   Markers    = extra visual anchor per trace; always solid strokes.
+% Consequence: blue-solid vs blue-dotted puts rampde vs naive-mixed bf16
+% side by side, and orange-solid vs orange-dotted does the same for fp16.
+%
+% Compile with:  bash ../process_results.sh   (two pdflatex passes).
+\documentclass[tikz,border=2pt]{standalone}
+\usepackage{pgfplots}
+\usepackage{pgfplotstable}
+\pgfplotsset{compat=1.18}
+\usepgfplotslibrary{groupplots,fillbetween}
+
+% ── Precision-based colors ────────────────────────────────────────────────
+% Blue / orange chosen from the STL10 convergence figure so the stability
+% probe visually ties to the training plots (same palette per precision).
+\definecolor{cBF}{RGB}{31,119,180}   % bf16
+\definecolor{cFP}{RGB}{255,127,14}   % fp16
+\definecolor{cR32}{RGB}{90,90,90}    % fp32 reference
+\definecolor{cR64}{RGB}{0,0,0}        % fp64 reference
+
+\pgfplotsset{
+  fp64/.style         ={cR64,  mark=o,         mark size=2.2pt,
+                        line width=0.9pt, solid,
+                        mark options={solid,draw=cR64}},
+  fp32/.style         ={cR32,  mark=square,    mark size=2.0pt,
+                        line width=0.9pt, dashed,
+                        mark options={solid,draw=cR32}},
+  opbf/.style         ={cBF,   mark=triangle*, mark size=2.4pt,
+                        line width=0.9pt, solid,
+                        mark options={solid,draw=cBF}},
+  naivebf/.style      ={cBF,   mark=triangle,  mark size=2.4pt,
+                        line width=0.9pt, densely dotted,
+                        mark options={solid,draw=cBF}},
+  opfp/.style         ={cFP,   mark=diamond*,  mark size=2.4pt,
+                        line width=0.9pt, solid,
+                        mark options={solid,draw=cFP}},
+  naivefp/.style      ={cFP,   mark=diamond,   mark size=2.4pt,
+                        line width=0.9pt, densely dotted,
+                        mark options={solid,draw=cFP}},
+}
+\tikzset{
+  dahlquist/.style    ={gray!60!black, dashed, line width=0.6pt},
+  empbound/.style     ={red!70!black,  densely dotted, line width=0.6pt},
+}
+
+% ── Data tables ────────────────────────────────────────────────────────────
+\pgfplotstableread[col sep=comma]{../raw_data/stability_linearized.csv}\Slin
+\pgfplotstableread[col sep=comma]{../raw_data/stability_parabolic.csv}\Spar
+\pgfplotstableread[col sep=comma]{../raw_data/gradient_angle_linearized.csv}\Alin
+\pgfplotstableread[col sep=comma]{../raw_data/gradient_angle_parabolic.csv}\Apar
+\pgfplotstableread[col sep=comma]{../raw_data/gradient_relerr_linearized.csv}\Mlin
+\pgfplotstableread[col sep=comma]{../raw_data/gradient_relerr_parabolic.csv}\Mpar
+
+% Empirical blowup boundaries (first-NaN alpha, read off CSVs).
+\def\LinEmp{1}
+\def\ParEmp{6.5}  % start shading at last finite alpha to close the gap
+
+\begin{document}
+\begin{tikzpicture}
+\begin{groupplot}[
+    group style={group size=2 by 3,
+                 horizontal sep=1.3cm, vertical sep=1.4cm,
+                 x descriptions at=edge bottom,
+                },
+    width=5.8cm, height=4.4cm,
+    xmode=log, ymode=log,
+    xmin=0.4, xmax=10,
+    grid=both, grid style={gray!20, very thin},
+    major grid style={gray!35, thin},
+    tick align=outside,
+    xlabel={$\alpha = \Delta t\,\rho(J)/2$},
+    title style={font=\small, yshift=2pt},
+    every tick label/.append style={font=\footnotesize},
+    every axis label/.append style={font=\footnotesize},
+]
+
+% ══════════════════════════════════════════════════════════════════════════
+%  ROW 1 -- forward stability
+% ══════════════════════════════════════════════════════════════════════════
+% At alpha=1 the linearized block is AT the Dahlquist boundary and is
+% formally unstable for all precisions.  fp64/fp32 accumulate the marginal
+% instability to O(1e5), bf16 to O(10), fp16 overflows -- different
+% numerical signatures of the SAME blowup.  We restrict the curves to
+% alpha<1; the red shaded band from alpha>=1 rightward carries the
+% message that the boundary itself is crossed.
+\nextgroupplot[
+    title={linearized block},
+    ylabel={$\|y^{N}\| \,/\, \|y^{0}\|$},
+    ymin=0.6, ymax=3, xmax=2,
+    restrict x to domain=-inf:0.999,
+]
+  \fill [red!8] (axis cs:\LinEmp,0.6) rectangle (axis cs:2,3);
+  \addplot [fp64]     table [x=alpha, y=fp64]             {\Slin}; \label{plot:fp64}
+  \addplot [fp32]     table [x=alpha, y=fp32]             {\Slin}; \label{plot:fp32}
+  \addplot [opbf]     table [x=alpha, y=rampde]         {\Slin}; \label{plot:opbf}
+  \addplot [naivebf]  table [x=alpha, y=naive_mixed]      {\Slin}; \label{plot:naivebf}
+  \addplot [opfp]     table [x=alpha, y=rampde_fp16]    {\Slin}; \label{plot:opfp}
+  \addplot [naivefp]  table [x=alpha, y=naive_mixed_fp16] {\Slin}; \label{plot:naivefp}
+  \draw [dahlquist] (axis cs:1,0.6) -- (axis cs:1,3);
+  \node [red!70!black, font=\scriptsize, anchor=north east]
+    at (rel axis cs:0.98,0.98) {blowup};
+
+\nextgroupplot[
+    title={parabolic block},
+    ymin=0.6, ymax=3,
+]
+  \fill [red!8] (axis cs:\ParEmp,0.6) rectangle (axis cs:10,3);
+  \addplot [fp64]     table [x=alpha, y=fp64]             {\Spar};
+  \addplot [fp32]     table [x=alpha, y=fp32]             {\Spar};
+  \addplot [opbf]     table [x=alpha, y=rampde]         {\Spar};
+  \addplot [naivebf]  table [x=alpha, y=naive_mixed]      {\Spar};
+  \addplot [opfp]     table [x=alpha, y=rampde_fp16]    {\Spar};
+  \addplot [naivefp]  table [x=alpha, y=naive_mixed_fp16] {\Spar};
+  \draw [dahlquist] (axis cs:1,0.6) -- (axis cs:1,3);
+  \draw [empbound]  (axis cs:\ParEmp,0.6) -- (axis cs:\ParEmp,3);
+  \node [gray!60!black, font=\scriptsize, anchor=north west]
+    at (rel axis cs:0.02,0.98) {self-stabilizes};
+
+% ══════════════════════════════════════════════════════════════════════════
+%  ROW 2 -- gradient direction
+% ══════════════════════════════════════════════════════════════════════════
+\nextgroupplot[
+    ylabel={$\angle(g_{\mathrm{mode}}, g_{\mathrm{fp64}})$ [rad]},
+    ymin=1e-4, ymax=4, xmax=2,
+    restrict x to domain=-inf:0.999,
+]
+  \fill [red!8] (axis cs:\LinEmp,1e-4) rectangle (axis cs:2,4);
+  \addplot [fp32]     table [x=alpha, y=fp32]             {\Alin};
+  \addplot [opbf]     table [x=alpha, y=rampde]         {\Alin};
+  \addplot [naivebf]  table [x=alpha, y=naive_mixed]      {\Alin};
+  \addplot [opfp]     table [x=alpha, y=rampde_fp16]    {\Alin};
+  \addplot [naivefp]  table [x=alpha, y=naive_mixed_fp16] {\Alin};
+  \draw [dahlquist] (axis cs:1,1e-4) -- (axis cs:1,4);
+
+\nextgroupplot[
+    ymin=1e-4, ymax=4,
+]
+  \fill [red!8] (axis cs:\ParEmp,1e-4) rectangle (axis cs:10,4);
+  \addplot [fp32]     table [x=alpha, y=fp32]             {\Apar};
+  \addplot [opbf]     table [x=alpha, y=rampde]         {\Apar};
+  \addplot [naivebf]  table [x=alpha, y=naive_mixed]      {\Apar};
+  \addplot [opfp]     table [x=alpha, y=rampde_fp16]    {\Apar};
+  \addplot [naivefp]  table [x=alpha, y=naive_mixed_fp16] {\Apar};
+  \draw [dahlquist] (axis cs:1,1e-4) -- (axis cs:1,4);
+  \draw [empbound]  (axis cs:\ParEmp,1e-4) -- (axis cs:\ParEmp,4);
+
+% ══════════════════════════════════════════════════════════════════════════
+%  ROW 3 -- gradient magnitude (relative norm error to fp64)
+% ══════════════════════════════════════════════════════════════════════════
+\nextgroupplot[
+    ylabel={$\big|\|g_{\mathrm{mode}}\|-\|g_{\mathrm{fp64}}\|\big|\,/\,\|g_{\mathrm{fp64}}\|$},
+    ymin=1e-7, ymax=2, xmax=2,
+    restrict x to domain=-inf:0.999,
+]
+  \fill [red!8] (axis cs:\LinEmp,1e-7) rectangle (axis cs:2,2);
+  \addplot [fp32]     table [x=alpha, y=fp32]             {\Mlin};
+  \addplot [opbf]     table [x=alpha, y=rampde]         {\Mlin};
+  \addplot [naivebf]  table [x=alpha, y=naive_mixed]      {\Mlin};
+  \addplot [opfp]     table [x=alpha, y=rampde_fp16]    {\Mlin};
+  \addplot [naivefp]  table [x=alpha, y=naive_mixed_fp16] {\Mlin};
+  \draw [dahlquist] (axis cs:1,1e-7) -- (axis cs:1,2);
+
+\nextgroupplot[
+    ymin=1e-7, ymax=2,
+]
+  \fill [red!8] (axis cs:\ParEmp,1e-7) rectangle (axis cs:10,2);
+  \addplot [fp32]     table [x=alpha, y=fp32]             {\Mpar};
+  \addplot [opbf]     table [x=alpha, y=rampde]         {\Mpar};
+  \addplot [naivebf]  table [x=alpha, y=naive_mixed]      {\Mpar};
+  \addplot [opfp]     table [x=alpha, y=rampde_fp16]    {\Mpar};
+  \addplot [naivefp]  table [x=alpha, y=naive_mixed_fp16] {\Mpar};
+  \draw [dahlquist] (axis cs:1,1e-7) -- (axis cs:1,2);
+  \draw [empbound]  (axis cs:\ParEmp,1e-7) -- (axis cs:\ParEmp,2);
+
+\end{groupplot}
+
+% ── Tiered legend, right of the groupplot ────────────────────────────────
+% Sidebar legend plus a block-equation key beneath it.  The legend groups
+% traces by precision family (reference / bf16 / fp16) and states the
+% linestyle convention (solid = rampde, dotted = naive-mixed); the key
+% below names the three right-hand sides whose results appear in the
+% three columns of the figure above.
+\node[
+    anchor=north west,
+    inner sep=0.6em,
+    draw=gray!30, rounded corners=2pt,
+    fill=white, fill opacity=0.95, text opacity=1,
+    font=\footnotesize,
+    align=left,
+] (legend) at ($(group c2r1.north east) + (0.9cm, 0)$) {%
+  \textbf{reference} \\[0.25em]
+  \quad \ref{plot:fp64}~fp64 \\
+  \quad \ref{plot:fp32}~fp32 \\[0.8em]
+  \textcolor{cBF}{\textbf{bf16}} \\
+  \footnotesize\textit{solid: rampde} \\
+  \footnotesize\textit{dotted: naive-mixed} \\[0.25em]
+  \quad \ref{plot:opbf}~rampde \\
+  \quad \ref{plot:naivebf}~naive-mixed \\[0.8em]
+  \textcolor{cFP}{\textbf{fp16}} \\
+  \footnotesize\textit{solid: rampde (+DynScaler)} \\
+  \footnotesize\textit{dotted: naive-mixed} \\[0.25em]
+  \quad \ref{plot:opfp}~rampde \\
+  \quad \ref{plot:naivefp}~naive-mixed
+};
+
+\node[
+    anchor=north west,
+    inner sep=0.6em,
+    draw=gray!30, rounded corners=2pt,
+    fill=white, fill opacity=0.95, text opacity=1,
+    font=\footnotesize,
+    align=left,
+] at ($(legend.south west) + (0, -0.4cm)$) {%
+  \textbf{block variants} \\[0.25em]
+  \textit{linearized:} \\
+  \quad $\dot y = -K^\top \big(M \odot (K y)\big)$ \\[0.35em]
+  \textit{parabolic:} \\
+  \quad $\dot y = -K^\top \sigma(K y + b)$ \\[0.35em]
+  \footnotesize{$\sigma = \mathrm{ReLU}$} \\
+  \footnotesize{$M = \mathbf{1}\{K y^0 + b > 0\}$ frozen at $y^0$}
+};
+
+\end{tikzpicture}
+\end{document}

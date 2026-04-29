@@ -1,0 +1,50 @@
+\documentclass{standalone}
+\usepackage{graphicx} % for \rotatebox
+\usepackage{xcolor}
+\usepackage{array}
+\usepackage{tikz}
+% convenient boxed label macro
+\newcommand{\labelbox}[1]{%
+  \tikz[baseline]{\node[draw=gray, rounded corners=3pt, fill=gray!15, inner sep=4pt, text depth=0pt]{\Large\bfseries #1};}%
+}
+\usepackage{pgfplots,pgfplotstable}
+
+% \usepackage[paperwidth=60cm, paperheight=20cm, margin=0cm]{geometry}
+\usetikzlibrary{positioning,calc}
+\pgfplotsset{compat=1.17}
+\begin{document}
+\begin{tikzpicture}
+\begin{axis}[
+    width=12cm, height=7cm,
+    xlabel={$t$},
+    ylabel={},
+    ymode=log,
+    log basis y={10},
+    xmin=0, xmax=2.65,
+    legend style={
+        at={(1.02,1)}, anchor=north west,
+        font=\footnotesize,
+        draw=none, fill=none,
+    },
+    grid=major,
+    thick,
+]
+% min/max normal float16
+\addplot [black, dashed, domain=0:3] {6.10352e-5};
+\addlegendentry{float16 min normal}
+\addplot [black, dashed, domain=0:3] {65504};
+\addlegendentry{float16 max normal}
+% Analytic
+\addplot [black, thick] table [x=t, y=y_analytic, col sep=comma] {state_curve.csv};
+\addlegendentry{$|y(t)|$, analytic}
+% FP32
+% FP16 scaled
+\addplot [red!60!black, thick, dashed] table [x=t, y=y_rk4_fp16_scaled, col sep=comma] {state_curve.csv};
+\addlegendentry{$y_i$, RK4 float16}
+
+\addplot [blue!60!black, thick] table [x=t, y=velocity, col sep=comma] {velocity_curve.csv};
+\addlegendentry{$|y'(t)|$, velocity}
+
+\end{axis}
+\end{tikzpicture}
+\end{document}

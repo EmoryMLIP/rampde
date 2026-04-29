@@ -181,7 +181,7 @@ class MPNODE_STL10(nn.Module):
         # Create t_grid on the appropriate device
         device = torch.device('cuda:' + str(args.gpu) if torch.cuda.is_available() else 'cpu')
         t_grid = torch.linspace(0, 1.0, 5, device=device)
-        # 1) stem: 3×96×96 -> 64×96×96
+        # 1) stem: 3×128×128 -> ch×128×128 (inputs upsampled from STL10's native 96² to 128² for Tensor Core alignment)
         self.stem = nn.Conv2d(3, ch, 3, padding=1, bias=True)
         self.norm1 = nn.InstanceNorm2d(ch, affine=True)
 
@@ -226,7 +226,7 @@ class MPNODE_STL10(nn.Module):
         self.act = nn.ReLU(inplace=True)
         # 5) global avg-pool + FC
         self.head = nn.Sequential(
-            nn.AdaptiveAvgPool2d(1),           # 128×1×1
+            nn.AdaptiveAvgPool2d(1),           # 4*ch×1×1
             nn.Flatten(),
             nn.Linear(4*ch, 10)
         )
